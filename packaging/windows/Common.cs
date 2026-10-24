@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.4.0";
+    internal const string Version = "0.4.1";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
     internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16777216 };
     internal static string Root { get { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar); } }
@@ -88,6 +88,37 @@ internal static class Shared {
             if(!process.WaitForExit(seconds * 1000)) throw new TimeoutException("AI HQ did not respond in time. Check its data folder before retrying; no unrelated process was terminated.");
             System.Threading.Tasks.Task.WaitAll(stdout, stderr);
             code = process.ExitCode; return stdout.Result + stderr.Result;
+        }
+    }
+    // Delete only the files an install inventory lists, then directories left empty. Unknown files survive.
+    internal static void RemoveRecorded(string root, System.Collections.IEnumerable entries) {
+        var paths=new List<string>();var directories=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach(object entry in entries) {
+            string file=Path.GetFullPath(Path.Combine(root,Convert.ToString(entry).Replace('/',Path.DirectorySeparatorChar)));
+            if(!Inside(file,root))throw new IOException("Unsafe uninstall inventory; no files were removed.");
+            RejectLinks(Path.GetDirectoryName(file));
+            if(File.Exists(file) && (File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)throw new IOException("A program file is a link; inspect it manually before uninstall.");
+            paths.Add(file);DirectoryInfo parent=new DirectoryInfo(Path.GetDirectoryName(file));
+            while(parent!=null && Inside(parent.FullName,root)){directories.Add(parent.FullName);parent=parent.Parent;}
+        }
+        foreach(string path in paths)if(File.Exists(path)){File.SetAttributes(path,FileAttributes.Normal);File.Delete(path);}
+        var ordered=new List<string>(directories);ordered.Sort((a,b)=>b.Length.CompareTo(a.Length));
+        foreach(string directory in ordered)if(Directory.Exists(directory)&&Directory.GetFileSystemEntries(directory).Length==0)Directory.Delete(directory);
+        if(Directory.Exists(root)&&Directory.GetFileSystemEntries(root).Length==0)Directory.Delete(root);
+    }
+    // Upgrades move the old program folder aside as "<target>.previous-<guid>". Once the new copy is in place,
+    // remove each verified AI HQ backup's recorded files; a backup holding unknown files keeps only those.
+    internal static void RemovePreviousCopies(string target) {
+        string parent=Path.GetDirectoryName(target), prefix=Path.GetFileName(target)+".previous-";
+        foreach(string folder in Directory.GetDirectories(parent,prefix+"*")) {
+            try {
+                if(Path.GetFileName(folder).Length!=prefix.Length+32) continue;
+                RejectLinks(folder);
+                var record=ReadJson(Path.Combine(folder,"aihq-install.json"));
+                if((string)record["app_id"]!=AppId) continue;
+                AssertStopped(folder);
+                RemoveRecorded(Full(folder),(System.Collections.IEnumerable)record["files"]);
+            } catch(Exception) {} // A backup that cannot be verified or fully removed is left in place.
         }
     }
     internal static void Shortcut(string path, string target, string arguments) {

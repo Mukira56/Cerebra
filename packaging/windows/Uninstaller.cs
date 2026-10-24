@@ -8,7 +8,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Uninstall AI Development HQ")]
-[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyVersion("0.4.1.0")]
 
 internal static class Uninstall {
     [STAThread] private static int Main(string[] args) {
@@ -44,15 +44,8 @@ internal static class Uninstall {
     }
     private static void Remove(string root) {
         var record=Validate(root);Shared.AssertStopped(root);
-        var paths=new List<string>();var directories=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach(object entry in (IEnumerable)record["files"]) {
-            string file=Path.GetFullPath(Path.Combine(root,Convert.ToString(entry).Replace('/',Path.DirectorySeparatorChar)));
-            if(!Shared.Inside(file,root))throw new IOException("Unsafe uninstall inventory; no files were removed.");
-            Shared.RejectLinks(Path.GetDirectoryName(file));
-            if(File.Exists(file) && (File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)throw new IOException("A program file is a link; inspect it manually before uninstall.");
-            paths.Add(file);DirectoryInfo parent=new DirectoryInfo(Path.GetDirectoryName(file));
-            while(parent!=null && Shared.Inside(parent.FullName,root)){directories.Add(parent.FullName);parent=parent.Parent;}
-        }
+        // Validates the whole inventory before deleting anything, so shortcuts go only after files do.
+        Shared.RemoveRecorded(root,(IEnumerable)record["files"]);
         string menu=(string)record["menu"], desktop=(string)record["desktop"];
         string expectedMenu=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),(string)record["registry"]==Shared.RegistryPath?"AI Development HQ":"AI HQ InstallerTest");
         if(!string.IsNullOrEmpty(menu) && string.Equals(menu,expectedMenu,StringComparison.OrdinalIgnoreCase)) {
@@ -62,10 +55,6 @@ internal static class Uninstall {
         }
         string expectedDesktop=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"AI Development HQ.lnk");
         if(desktop==expectedDesktop)Shared.RemoveShortcut(desktop,Path.Combine(root,"AIHQ.exe"));
-        foreach(string path in paths)if(File.Exists(path)){File.SetAttributes(path,FileAttributes.Normal);File.Delete(path);}
-        var ordered=new List<string>(directories);ordered.Sort((a,b)=>b.Length.CompareTo(a.Length));
-        foreach(string directory in ordered)if(Directory.Exists(directory)&&Directory.GetFileSystemEntries(directory).Length==0)Directory.Delete(directory);
-        if(Directory.Exists(root)&&Directory.GetFileSystemEntries(root).Length==0)Directory.Delete(root);
         Registry.CurrentUser.DeleteSubKeyTree((string)record["registry"],false);
     }
 }

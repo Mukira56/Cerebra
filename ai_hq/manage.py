@@ -13,6 +13,8 @@ import time
 import webbrowser
 from .config import ROOT, Settings
 
+STARTUP_TIMEOUT=60  # seconds to wait for /health after spawning the server
+
 def process_identity(pid):
     if os.name != "nt":
         os.kill(pid,0)
@@ -69,7 +71,9 @@ def start(settings,open_browser=True,desktop=False):
     identity=process_identity(child.pid);identity["port"]=settings.port
     temp=settings.data_dir/"server.json.tmp";temp.write_text(json.dumps(identity));temp.replace(settings.data_dir/"server.json")
     from urllib.request import urlopen
-    for _ in range(100):
+    # Time-based: a cold start on a busy laptop can take far longer than a fixed number of polls.
+    deadline=time.monotonic()+STARTUP_TIMEOUT
+    while time.monotonic()<deadline:
         if child.poll() is not None: raise RuntimeError(f"Server exited. Inspect {log_path}")
         try:
             with urlopen(f"http://127.0.0.1:{settings.port}/health",timeout=0.4) as response:

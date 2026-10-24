@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("AI Development HQ Setup")]
-[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyVersion("0.4.1.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
@@ -92,9 +92,10 @@ internal static class Setup {
                 Shared.Shortcut(Path.Combine(menu,"Uninstall AI HQ.lnk"),Path.Combine(options.Target,"Uninstall.exe"),"");
                 if(options.Desktop) Shared.Shortcut(desktop,Path.Combine(options.Target,"AIHQ.exe"),"");
             }
+            // Remove recorded program files from earlier copies; anything unknown stays in its backup folder.
+            Shared.RemovePreviousCopies(options.Target);
             progress(100);
-            // Keep prior files in a clearly named backup rather than deleting unknown user additions.
-            if(backup!=null) File.WriteAllText(Path.Combine(options.Target,"previous-install.txt"),backup);
+            if(backup!=null && Directory.Exists(backup)) File.WriteAllText(Path.Combine(options.Target,"previous-install.txt"),backup);
         } catch {
             if(!committed && backup!=null && !Directory.Exists(options.Target)) Directory.Move(backup,options.Target);
             throw;

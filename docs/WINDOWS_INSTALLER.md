@@ -2,7 +2,7 @@
 
 Windows 10/11 x64. This personal build includes its own Python 3.13 runtime and application dependencies. It does not require a separate Python, npm, or PowerShell setup command. Git is required for project work; Codex and Claude Code must be installed and signed in separately for live agents. No provider credentials or project data are included in the installer.
 
-Run AI-HQ-Setup-0.4.0-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\AI HQ. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
+Run AI-HQ-Setup-0.4.1-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\AI HQ. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
 
 Your project data stays outside the program directory. If this account already has AI HQ at %USERPROFILE%\AI-Development-HQ\data, setup selects that existing data location without copying, moving or deleting it. Keep that folder: registered repositories and Git worktrees can contain absolute paths. On a new account, data defaults to %LOCALAPPDATA%\AI HQ\data.
 
@@ -12,7 +12,7 @@ Open AI Development HQ from the Start menu or desktop. The app opens its own Win
 
 Fresh installations keep live execution disabled. The tray's Enable live agents action explains the usage and confinement policy and requires an explicit decision. It does not install coding CLIs or handle provider keys. Each task still requires its plan and live execution approvals, and merging has its own approval. Existing installations retain their recorded policy in the original data location.
 
-Uninstall through Windows Settings > Apps > Installed apps, or the Start menu's Uninstall AI HQ entry. Exit the running tray app first. Uninstall removes only recorded program files and its own matching shortcuts/registration. It keeps project repositories, SQLite history, settings and logs. Unknown files added to the program directory are not removed. Updates preserve the previous program directory in a clearly named .previous-* folder rather than deleting unknown user additions.
+Uninstall through Windows Settings > Apps > Installed apps, or the Start menu's Uninstall AI HQ entry. Exit the running tray app first. Uninstall removes only recorded program files and its own matching shortcuts/registration. It keeps project repositories, SQLite history, settings and logs. Unknown files added to the program directory are not removed. An update moves the previous program directory aside, then deletes only the files that copy's own install record lists. If you had added unknown files there, they stay in a clearly named .previous-* folder. Older .previous-* folders left by versions before 0.4.1 are cleaned the same way.
 
 This installer is unsigned: Windows identifies its publisher as unknown. It is a local personal build, not a Microsoft Store package. Python and dependency license notices are included with the installed files. No Windows security setting, firewall rule, PATH entry, service, execution policy, or automatic-start task is changed by setup.
 

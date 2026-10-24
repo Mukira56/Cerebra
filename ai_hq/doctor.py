@@ -37,9 +37,11 @@ def inspect(settings=None):
                 detail=(result.stdout or result.stderr).strip()[:400]
             else: detail=executable
             check(name,"PASS",detail)
+    # pip is only needed to change a source environment; the installed private runtime omits it.
     for package in ["pip","fastapi","pydantic","sqlalchemy","uvicorn","pytest","httpx"]:
         try: check(package,"PASS",importlib.metadata.version(package))
-        except importlib.metadata.PackageNotFoundError: check(package,"FAIL","Missing from this Python environment")
+        except importlib.metadata.PackageNotFoundError:
+            check(package,"WARN" if package=="pip" else "FAIL","Not included (optional)" if package=="pip" else "Missing from this Python environment")
     disk=shutil.disk_usage(settings.data_dir)
     check("Free disk","WARN" if disk.free < 2*1024**3 else "PASS",f"{disk.free/1024**2:.0f} MiB free; no cleanup performed")
     probes=AgentRegistry(executable_paths={"codex":settings.codex_path,"claude":settings.claude_path},allow_live=settings.live_enabled,
