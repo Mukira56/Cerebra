@@ -22,25 +22,45 @@ def run(args,**kwargs):
     if result.returncode: raise RuntimeError(str(args[0])+': '+result.stdout+'\n'+result.stderr)
     return result.stdout.strip()
 
-MOCK_TEST=r'''
-import json,secrets
+PIPELINE_TEST=r'''
+# The installed app ships no simulated agents. This test-only stand-in replaces the provider CLIs
+# inside this one process, so the full pipeline runs with real Git and real pytest and no AI usage.
+import json,secrets,subprocess,sys
+from pathlib import Path
 from fastapi.testclient import TestClient
+from ai_hq.agents import AgentRegistry,AgentResult
 from ai_hq.api import create_app
 from ai_hq.config import Settings
+class StandIn(AgentRegistry):
+    def probe(self,authenticate=False): return {n:{'name':n,'available':True,'execution_allowed':True} for n in ('codex','claude')}
+    def execute(self,name,request,cancel_event=None):
+        if request.role=='implement': (Path(request.workdir)/'calculator.py').write_text('def add(a, b):\n    return a + b\n',encoding='utf-8')
+        return AgentResult(True,json.dumps({'findings':[],'summary':'stand-in'}),[])
 key=secrets.token_urlsafe(32)
 app=create_app(Settings(),bootstrap_key=key,start_worker=False)
+app.state.supervisor.registry=StandIn()
 with TestClient(app) as c:
     r=c.post('/api/session',json={'key':key});r.raise_for_status();c.headers['X-CSRF-Token']=r.json()['csrf_token']
-    r=c.post('/api/demo',json={});r.raise_for_status();task_id=r.json()['task']['id']
+    project=c.post('/api/projects',json={'name':'Installer check','create_new':True,'authorize':True,'test_commands':[[sys.executable,'-m','pytest','-q','-p','no:cacheprovider']]});project.raise_for_status();project=project.json()
+    root=Path(project['path'])
+    (root/'calculator.py').write_text('def add(a, b):\n    return a - b\n',encoding='utf-8')
+    (root/'test_calculator.py').write_text('from calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_negative():\n    assert add(-2, -3) == -5\n',encoding='utf-8')
+    (root/'.gitignore').write_text('__pycache__/\n',encoding='utf-8')
+    for args in (['add','.'],['-c','user.name=T','-c','user.email=t@example.invalid','commit','-m','base']): subprocess.run(['git','-C',str(root),*args],check=True,capture_output=True)
+    c.post('/api/permissions',json={'enabled':True,'acknowledge_provider_usage':True,'acknowledge_residual_read_risk':True}).raise_for_status()
+    task=c.post('/api/tasks',json={'project_id':project['id'],'description':'Fix calculator addition','allowed_paths':['calculator.py']});task.raise_for_status();task_id=task.json()['id']
     c.post('/api/tasks/'+task_id+'/approve-plan',json={}).raise_for_status()
+    c.post('/api/tasks/'+task_id+'/start',json={}).raise_for_status()
+    consent=next(a for a in c.get('/api/tasks/'+task_id).json()['approvals'] if a['kind']=='live_execution')
+    c.post('/api/approvals/'+consent['id'],json={'approve':True}).raise_for_status()
     c.post('/api/tasks/'+task_id+'/start',json={}).raise_for_status()
     app.state.supervisor.run_until_idle()
     task=c.get('/api/tasks/'+task_id).json()
     assert task['state']=='AWAITING_APPROVAL',task
     assert task['results']['verified'] and task['reviews'] and all(t['passed'] for t in task['test_results'])
-    assert all(run['simulated'] for run in task['runs'])
-    assert app.state.settings.live_enabled is False
-    print(json.dumps({'task_id':task_id,'state':task['state'],'tests':task['test_results'][0]['stdout'],'agents_simulated':True}))
+    assert [r['role'] for r in task['runs']]==['plan','implement','review']
+    report=c.get('/api/reports/'+task_id).json();assert report['headline']=='Finished and waiting for you'
+    print(json.dumps({'task_id':task_id,'state':task['state'],'tests':task['test_results'][0]['stdout'],'agents':'test stand-in (no AI usage)'}))
 '''
 
 def main():
@@ -64,7 +84,7 @@ def main():
     env=os.environ.copy();env['PYTHONPATH']=r'C:\Users\ADMIN\AI-Development-HQ';env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
     code="import ai_hq,fastapi,pydantic,sqlalchemy,pytest,httpx,json,sys;print(json.dumps({'file':ai_hq.__file__,'version':ai_hq.__version__,'path':sys.path}))"
     modules=json.loads(run([python,'-X','utf8','-c',code],cwd=target,env=env))
-    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.4.1'
+    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.5.0'
     assert r'C:\Users\ADMIN\AI-Development-HQ' not in modules['path']
     assert not any('__editable__' in p.name for p in target.rglob('*'))
     print('Private runtime imports application/dependencies without source Python...',flush=True)
@@ -75,7 +95,7 @@ def main():
         began=time.monotonic();run([launcher,'--start-no-browser'],cwd=target,timeout=120);started=True
         startup_seconds=round(time.monotonic()-began,2)
         with urlopen('http://127.0.0.1:18765/health',timeout=10) as response:health=json.load(response)
-        assert health['version']=='0.4.1'
+        assert health['version']=='0.5.0'
         with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'AI HQ' in response.read()
         try:urlopen('http://127.0.0.1:18765/api/overview',timeout=10);raise AssertionError('Unauthenticated API allowed')
         except HTTPError as error:assert error.code==401
@@ -86,12 +106,12 @@ def main():
     print('Native launcher start, health, protected API and managed stop passed...',flush=True)
     run([launcher,'--desktop-smoke'],cwd=target,timeout=180)
     desktop=json.loads((data/'desktop-smoke.json').read_text(encoding='utf-8'))
-    assert desktop.get('authenticated') and desktop.get('logo') and desktop.get('native') and desktop.get('model_matrix_connected'),desktop
+    assert desktop.get('authenticated') and desktop.get('logo') and desktop.get('native') and desktop.get('system_view_connected'),desktop
     assert (data/'desktop-smoke.png').stat().st_size>10000
     assert not json.loads(run([launcher,'--status'],cwd=target))['running']
     print('Actual embedded desktop window authenticated, rendered, and closed without an external browser...',flush=True)
-    proof=json.loads(run([python,'-X','utf8','-c',MOCK_TEST],cwd=target,env=env,timeout=360))
-    print('Packaged mock agents, Git worktrees, actual pytest and review passed...',flush=True)
+    proof=json.loads(run([python,'-X','utf8','-c',PIPELINE_TEST],cwd=target,env=env,timeout=360))
+    print('Packaged pipeline (plan, code, real pytest, review, report) passed with a test stand-in agent...',flush=True)
     # Upgrade in place: recorded old program files are removed; an unknown file keeps only its backup folder.
     (target/'upgrade-note.txt').write_text('Unknown file present during upgrade',encoding='utf-8')
     run([args.installer,'--quiet','--dir',target,'--data',data,'--port','18765','--no-desktop','--test-registration'],timeout=360)
@@ -112,7 +132,7 @@ def main():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY):raise AssertionError('Test uninstall registration was not removed')
     except FileNotFoundError:pass
-    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':'0.4.1','private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'mock_workflow':proof,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
+    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':'0.5.0','private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'pipeline':proof,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
     (ROOT/'work/windows-build/installer-test-results.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(json.dumps(report),flush=True)
 

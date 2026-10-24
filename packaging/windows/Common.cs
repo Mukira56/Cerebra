@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.4.1";
+    internal const string Version = "0.5.0";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
     internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16777216 };
     internal static string Root { get { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar); } }

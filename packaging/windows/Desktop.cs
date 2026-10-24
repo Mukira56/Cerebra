@@ -56,15 +56,15 @@ internal sealed class DesktopWindow : Form {
                 var decoded=Shared.Json.Deserialize<string>(result);
                 var proof=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(decoded);
                 if(!Convert.ToBoolean(proof["logo"]) || !Convert.ToBoolean(proof["authenticated"])) throw new Exception("Native window did not load the authenticated workspace.");
-                await view.CoreWebView2.ExecuteScriptAsync("location.hash='matrix'");
-                bool matrix=false;
+                await view.CoreWebView2.ExecuteScriptAsync("location.hash='system'");
+                bool system=false;
                 for(int checkIndex=0;checkIndex<100;checkIndex++) {
-                    string connectedMatrix=await view.CoreWebView2.ExecuteScriptAsync("!!document.querySelector('.matrix-footer')?.textContent.includes('CONNECTED / LOCAL TELEMETRY') && document.querySelectorAll('.matrix-station').length===6");
-                    if(connectedMatrix=="true") {matrix=true;break;}
+                    string connectedSystem=await view.CoreWebView2.ExecuteScriptAsync("document.querySelectorAll('.diagram .node').length===12 && document.querySelectorAll('.diagram .node.ok').length>=2");
+                    if(connectedSystem=="true") {system=true;break;}
                     await Task.Delay(200);
                 }
-                if(!matrix)throw new Exception("The native model matrix did not connect to telemetry.");
-                proof["model_matrix_connected"]=true;
+                if(!system)throw new Exception("The native system view did not connect to telemetry.");
+                proof["system_view_connected"]=true;
                 var blocked=new TaskCompletionSource<bool>();
                 EventHandler<CoreWebView2NavigationStartingEventArgs> check=delegate(object sender,CoreWebView2NavigationStartingEventArgs args) { if(!Local(args.Uri)) blocked.TrySetResult(args.Cancel); };
                 view.CoreWebView2.NavigationStarting+=check;

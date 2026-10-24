@@ -6,7 +6,7 @@ AI HQ uses a project-local Python environment. It does not require administrator
 
 - Windows with PowerShell, Python 3.13+, and Git available on PATH.
 - Enough free disk for the Python environment, SQLite data, repositories, and Git worktrees. The initial inspection found less than 1 GB free on `C:`; inspect current capacity before expanding usage.
-- Claude Code and Codex are optional for mock workflows. Real execution requires the respective supported CLI and an authenticated provider session.
+- Claude Code and Codex are required to run tasks and chat. Install them from **Toolchain** and sign in from **Models & sign-in**.
 
 ## Install project packages
 
@@ -58,7 +58,7 @@ For backup, stop AI HQ first, then copy the application and its complete data di
 
 ## Missing agents
 
-Doctor reports absent optional agents as warnings, and the dashboard keeps mock execution available. Run doctor for the current installed versions; `environment-report.md` preserves the original inspection and the progress record tracks later changes. Do not install external software or start provider login without explicit user approval. Node.js/npm are not required by this dashboard itself.
+Doctor reports absent agents as warnings; tasks cannot run until they are installed and signed in. Run doctor for the current installed versions; `environment-report.md` preserves the original inspection and the progress record tracks later changes. Do not install external software or start provider login without explicit user approval. Node.js/npm are not required by this dashboard itself.
 
 To configure an already installed CLI, enter its executable path in **Settings**, save, and run doctor again. Doctor probes versions and supported help output without extracting provider credentials. Paths do not enable live mode. The dashboard distinguishes capabilities, effective execution policy, and authentication; a detected executable is not a successful live run.
 
@@ -74,6 +74,6 @@ Live execution requires separate live/confinement policies and task approval. Th
 | Doctor reports low disk | Free space through your normal reviewed process, or choose an authorized data drive. AI HQ performs no cleanup. |
 | Repository registration rejected | Supply an exact absolute Git root; avoid linked/junction paths, drive roots, and your profile root. |
 | No verification commands | Register the project with reviewed command argument arrays. No commands means no verified completion. |
-| Agent unavailable | Use mock mode until the CLI installation, capabilities, and authentication have been separately approved and verified. |
+| Agent unavailable | Install it from Toolchain, press Sign in on Models & sign-in, then Re-check tools. |
 | Server fails to launch | Inspect `data\server.log` and run doctor. Do not paste credentials from unrelated logs. |
 | Start/stop identity mismatch | Do not force termination. Inspect the recorded and running process identity before acting. |

@@ -8,12 +8,13 @@ import time
 import pytest
 from sqlalchemy import select
 
-from ai_hq.agents import AgentRegistry, AgentResult
+from ai_hq.agents import AgentResult
 from ai_hq.config import Settings
 from ai_hq.db import Database
 from ai_hq.models import Agent, Approval, Event, Finding, Project, Review, Run, Task, Worktree
 from ai_hq.supervisor import Supervisor, TRANSITIONS
 from ai_hq.processes import ProcessResult
+from fakes import FixtureRegistry
 
 
 def git(directory, *args):
@@ -34,7 +35,7 @@ def hq(tmp_path):
     (repo / "test_calculator.py").write_text("from calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_negative():\n    assert add(-2, -4) == -6\n", encoding="utf-8")
     git(repo, "add", ".")
     git(repo, "commit", "-m", "Isolated test baseline")
-    settings = Settings(data_dir=tmp_path / "data", test_timeout=20)
+    settings = Settings(data_dir=tmp_path / "data", test_timeout=20, live_enabled=True, cli_confinement_accepted=True)
     db = Database(settings.db_path)
     db.init()
     with db.Session.begin() as session:
@@ -42,7 +43,7 @@ def hq(tmp_path):
         session.add(project)
         session.flush()
         project_id = project.id
-    supervisor = Supervisor(db, settings)
+    supervisor = Supervisor(db, settings, registry=FixtureRegistry())
     yield supervisor, project_id, repo, db, settings
     supervisor.shutdown()
     db.close()
@@ -53,11 +54,19 @@ def proposed(hq, **kwargs):
     return supervisor.propose(project_id, "Fix the calculator addition demonstration", allowed_paths=["calculator.py"], **kwargs)
 
 
+def consent(hq, task_id):
+    """Start asks once for agent consent; approve it and start again, as the dashboard does."""
+    supervisor, db = hq[0], hq[3]
+    supervisor.start(task_id)
+    supervisor.resolve_approval(pending_approval(db, task_id, "live_execution").id, True)
+    supervisor.start(task_id)
+
+
 def ready(hq, **kwargs):
     supervisor = hq[0]
     task = proposed(hq, **kwargs)
     supervisor.approve_plan(task.id)
-    supervisor.start(task.id)
+    consent(hq, task.id)
     return task.id
 
 
@@ -73,18 +82,18 @@ def test_end_to_end_actual_tests_independent_review_and_merge_approval(hq):
     assert supervisor.run_until_idle() == 1
     task = supervisor.get(task_id)
     assert task.state == "AWAITING_APPROVAL"
-    assert task.results["verified"] and task.results["simulated"]
+    assert task.results["verified"]
     assert task.test_results[-1]["passed"] is True
     assert "2 passed" in task.test_results[-1]["stdout"]
     assert git(repo, "rev-parse", "HEAD") == baseline
     assert "a - b" in (repo / "calculator.py").read_text()
     with db.Session() as session:
         runs = session.scalars(select(Run).where(Run.task_id == task_id)).all()
-        assert [(r.agent, r.role) for r in runs] == [("codex", "implement"), ("claude", "review")]
-        assert all(r.simulated for r in runs)
+        assert [(r.agent, r.role) for r in runs] == [("claude", "plan"), ("codex", "implement"), ("claude", "review")]
+        assert not any(r.simulated for r in runs)
         trees = session.scalars(select(Worktree).where(Worktree.task_id == task_id)).all()
-        assert len(trees) == 2 and trees[0].path != trees[1].path
-        assert session.scalars(select(Review).where(Review.task_id == task_id)).one().simulated
+        assert len({t.path for t in trees}) == 3
+        assert not session.scalars(select(Review).where(Review.task_id == task_id)).one().simulated
     merged = supervisor.resolve_approval(pending_approval(db, task_id).id, True)
     assert merged.state == "COMPLETED"
     assert "a + b" in (repo / "calculator.py").read_text()
@@ -93,11 +102,28 @@ def test_end_to_end_actual_tests_independent_review_and_merge_approval(hq):
 
 def test_reverse_roles_route_to_independent_opposite_reviewer(hq):
     supervisor, _, _, db, _ = hq
-    task_id = ready(hq, assigned_agent="claude")
+    task_id = ready(hq, implementer="claude")
     supervisor.run_until_idle()
     with db.Session() as session:
         runs = session.scalars(select(Run).where(Run.task_id == task_id)).all()
-        assert [(r.agent, r.role) for r in runs] == [("claude", "implement"), ("codex", "review")]
+        assert [(r.agent, r.role) for r in runs] == [("claude", "plan"), ("claude", "implement"), ("codex", "review")]
+
+
+def test_reviewer_must_be_a_different_provider(hq):
+    with pytest.raises(ValueError, match="different AI provider"):
+        proposed(hq, implementer="codex", reviewer="codex")
+
+
+def test_chosen_models_reach_the_agents(hq):
+    from ai_hq.profiles import add_profile
+    supervisor, _, _, db, _ = hq
+    with db.Session.begin() as session:
+        add_profile(session, "claude", "opus", "Claude Opus")
+    task_id = ready(hq, reviewer="claude-opus")
+    supervisor.run_until_idle()
+    models = {request.role: (name, request.model) for name, request in supervisor.registry.requests}
+    assert models == {"plan": ("claude", ""), "implement": ("codex", ""), "review": ("claude", "opus")}
+    assert supervisor.get(task_id).results["models"]["reviewer"]["profile"] == "claude-opus"
 
 
 def test_plan_approval_is_mandatory_and_transitions_validated(hq):
@@ -118,22 +144,23 @@ def test_actual_test_failures_drive_validated_repair_and_rerun(hq):
     supervisor, project_id, _, db, _ = hq
     task = supervisor.propose(project_id, "Fix calculator addition [demo:needs-repair]", allowed_paths=["calculator.py"])
     supervisor.approve_plan(task.id)
-    supervisor.start(task.id)
+    consent(hq, task.id)
     supervisor.run_until_idle()
     stored = supervisor.get(task.id)
     assert stored.state == "AWAITING_APPROVAL"
     assert stored.retry_count == 1
     assert [r["passed"] for r in stored.test_results] == [False, True]
     with db.Session() as session:
+        # Failing tests alone drive repair; unproven model findings are never auto-validated.
         findings = session.scalars(select(Finding).join(Review, Finding.review_id == Review.id).where(Review.task_id == task.id)).all()
-        assert any(f.validated for f in findings)
+        assert not any(f.validated for f in findings)
         assert len(session.scalars(select(Review).where(Review.task_id == task.id)).all()) == 2
 
 
-class FailingAgentRegistry(AgentRegistry):
+class FailingAgentRegistry(FixtureRegistry):
     def execute(self, name, request, cancel_event=None):
         if request.role == "implement":
-            return AgentResult(False, "[SIMULATED] fixture failure", simulated=True, error="fixture process failed")
+            return AgentResult(False, "[SIMULATED] fixture failure", error="fixture process failed")
         return super().execute(name, request, cancel_event)
 
 
@@ -145,16 +172,16 @@ def test_agent_failure_is_persistent_and_visible(hq):
     assert supervisor.get(task_id).state == "FAILED"
     assert "fixture process failed" in supervisor.get(task_id).results["error"]
     with db.Session() as session:
-        run = session.scalars(select(Run).where(Run.task_id == task_id)).one()
+        run = session.scalars(select(Run).where(Run.task_id == task_id, Run.role == "implement")).one()
         assert run.status == "failed" and run.finished_at
 
 
-class WrongAgentRegistry(AgentRegistry):
+class WrongAgentRegistry(FixtureRegistry):
     def execute(self, name, request, cancel_event=None):
         if request.role == "implement":
             # Change source each time so the retry-limit check is exercised separately from stagnation.
             (Path(request.workdir) / "calculator.py").write_text(f"def add(a, b):\n    return a - b - {request.attempt + 1}\n", encoding="utf-8")
-            return AgentResult(True, "[SIMULATED] Incorrect fixture implementation", simulated=True)
+            return AgentResult(True, "[SIMULATED] Incorrect fixture implementation")
         return super().execute(name, request, cancel_event)
 
 
@@ -203,15 +230,15 @@ def test_recovery_preserves_records_and_requires_explicit_resume(hq):
     with db.Session.begin() as session:
         task = session.get(Task, task_id)
         task.state = "RUNNING"
-        session.add(Run(task_id=task_id, agent="codex", role="implement", status="running", output="retained history", simulated=True))
-    restarted = Supervisor(db, settings)
+        session.add(Run(task_id=task_id, agent="codex", role="implement", status="running", output="retained history"))
+    restarted = Supervisor(db, settings, registry=FixtureRegistry())
     restarted.recover()
     task = restarted.get(task_id)
     assert task.state == "BLOCKED" and task.results["blocked_reason"] == "interrupted_restart"
     assert restarted.tick() is False
     with db.Session() as session:
-        run = session.scalars(select(Run).where(Run.task_id == task_id)).one()
-        assert run.status == "interrupted" and run.output == "retained history"
+        run = session.scalars(select(Run).where(Run.task_id == task_id, Run.output == "retained history")).one()
+        assert run.status == "interrupted"
     assert restarted.resume(task_id).state == "READY"
     restarted.start(task_id)
     restarted.run_until_idle()
@@ -224,7 +251,7 @@ def test_pause_resume_and_cancel_keep_approval_and_history(hq):
     assert supervisor.pause(task.id).state == "BLOCKED"
     assert supervisor.resume(task.id).state == "AWAITING_APPROVAL"
     supervisor.approve_plan(task.id)
-    supervisor.start(task.id)
+    consent(hq, task.id)
     assert supervisor.pause(task.id).pause_requested
     assert supervisor.tick() is False
     assert supervisor.resume(task.id).state == "READY"
@@ -234,7 +261,7 @@ def test_pause_resume_and_cancel_keep_approval_and_history(hq):
         supervisor.start(task.id)
 
 
-class WaitingAgentRegistry(AgentRegistry):
+class WaitingAgentRegistry(FixtureRegistry):
     started = None
     def __init__(self):
         super().__init__()
@@ -242,7 +269,7 @@ class WaitingAgentRegistry(AgentRegistry):
     def execute(self, name, request, cancel_event=None):
         self.started.set()
         assert cancel_event.wait(10), "Expected the supervisor to propagate cancellation"
-        return AgentResult(False, "[SIMULATED] Stopped", simulated=True, error="cancelled")
+        return AgentResult(False, "[SIMULATED] Stopped", error="cancelled")
 
 
 def test_active_cancellation_propagates_to_adapter(hq):
@@ -291,7 +318,7 @@ def test_unknown_review_claim_requires_human_triage(hq):
     original = supervisor.registry.execute
     def execute(name, request, cancel_event=None):
         if request.role == "review":
-            return AgentResult(True, "[SIMULATED] Unverified finding", [{"severity": "high", "path": "calculator.py", "line": 2, "message": "Unproven security concern", "evidence": "return a + b"}], simulated=True)
+            return AgentResult(True, "[SIMULATED] Unverified finding", [{"severity": "high", "path": "calculator.py", "line": 2, "message": "Unproven security concern", "evidence": "return a + b"}])
         return original(name, request, cancel_event)
     supervisor.registry.execute = execute
     task_id = ready(hq)
@@ -312,17 +339,28 @@ def test_unauthorized_scope_is_rejected(hq, scope):
 
 def test_live_execution_never_runs_without_explicit_configuration(hq):
     supervisor = hq[0]
-    task = proposed(hq, mode="live")
+    hq[4].live_enabled = False
+    task = proposed(hq)
     supervisor.approve_plan(task.id)
-    with pytest.raises(ValueError, match="Live execution is disabled"):
+    with pytest.raises(ValueError, match="AI agents are switched off"):
         supervisor.start(task.id)
 
 
-def test_arbitrary_objective_is_not_falsely_completed_in_demo(hq):
+def test_retired_demo_tasks_cannot_start(hq):
+    supervisor, _, _, db, _ = hq
+    task = proposed(hq)
+    supervisor.approve_plan(task.id)
+    with db.Session.begin() as session:
+        session.get(Task, task.id).mode = "mock"
+    with pytest.raises(ValueError, match="retired simulated demo"):
+        supervisor.start(task.id)
+
+
+def test_agent_that_changes_nothing_is_not_falsely_completed(hq):
     supervisor, project_id, *_ = hq
     task = supervisor.propose(project_id, "Build an entire booking website", allowed_paths=["."])
     supervisor.approve_plan(task.id)
-    supervisor.start(task.id)
+    consent(hq, task.id)
     supervisor.run_until_idle()
     assert supervisor.get(task.id).state == "FAILED"
     assert "only the calculator" in supervisor.get(task.id).results["error"]
@@ -330,18 +368,18 @@ def test_arbitrary_objective_is_not_falsely_completed_in_demo(hq):
 
 def test_agent_output_and_error_are_redacted_before_persistence(hq):
     supervisor, _, _, db, _ = hq
-    supervisor.registry.execute = lambda *args, **kwargs: AgentResult(False, "password=supersecretvalue", simulated=True, error="api_key=anothersecretvalue")
+    supervisor.registry.execute = lambda *args, **kwargs: AgentResult(False, "password=supersecretvalue", error="api_key=anothersecretvalue")
     task_id = ready(hq)
     supervisor.run_until_idle()
     with db.Session() as session:
-        run = session.scalars(select(Run).where(Run.task_id == task_id)).one()
+        run = session.scalars(select(Run).where(Run.task_id == task_id)).first()
         events = session.scalars(select(Event).where(Event.task_id == task_id)).all()
         combined = str(supervisor.get(task_id).results) + run.output + run.error + str([e.message for e in events])
         assert "supersecretvalue" not in combined and "anothersecretvalue" not in combined
         assert "[REDACTED]" in combined
 
 
-class SelfCommittingRegistry(AgentRegistry):
+class SelfCommittingRegistry(FixtureRegistry):
     def execute(self, name, request, cancel_event=None):
         if request.role == "implement":
             root = Path(request.workdir)
@@ -393,28 +431,11 @@ def test_target_branch_switch_after_review_invalidates_approval(hq):
     assert "a - b" in (repo / "calculator.py").read_text()
 
 
-class FixtureLiveRegistry(AgentRegistry):
-    """In-process stand-in; no provider process, authentication or billing is used."""
-    def __init__(self, planner_modifies=False):
-        super().__init__()
-        self.planner_modifies = planner_modifies
-    def probe(self, authenticate=False):
-        return {"claude": {"available": True, "fixture": True}, "codex": {"available": True, "fixture": True}}
-    def execute(self, name, request, cancel_event=None):
-        if request.role == "plan":
-            if self.planner_modifies:
-                (Path(request.workdir) / "calculator.py").write_text("def add(a, b):\n    return 0\n", encoding="utf-8")
-            return AgentResult(True, "Fixture architecture: retain calculator.add, correct its addition, verify actual registered tests. password=secretplanneroutput", simulated=False)
-        result = super().execute(f"mock-{name}", request, cancel_event)
-        # This fixture represents the live transport contract entirely in a temporary test database.
-        return AgentResult(result.success, result.output, result.findings, simulated=False, error=result.error)
-
-
 def test_live_workflow_gets_claude_architecture_after_consent_without_changing_plan(hq):
     supervisor, _, _, db, settings = hq
     settings.live_enabled = True
-    supervisor.registry = FixtureLiveRegistry()
-    task = proposed(hq, mode="live")
+    supervisor.registry = FixtureRegistry()
+    task = proposed(hq)
     original_plan = task.plan
     original_requirements = task.requirements
     supervisor.approve_plan(task.id)
@@ -447,8 +468,8 @@ def test_live_workflow_gets_claude_architecture_after_consent_without_changing_p
 def test_planner_cannot_modify_snapshot_or_dispatch_implementation(hq):
     supervisor, _, _, db, settings = hq
     settings.live_enabled = True
-    supervisor.registry = FixtureLiveRegistry(planner_modifies=True)
-    task = proposed(hq, mode="live")
+    supervisor.registry = FixtureRegistry(planner_modifies=True)
+    task = proposed(hq)
     supervisor.approve_plan(task.id)
     supervisor.start(task.id)
     supervisor.resolve_approval(pending_approval(db, task.id, "live_execution").id, True)
@@ -464,8 +485,8 @@ def test_planner_cannot_modify_snapshot_or_dispatch_implementation(hq):
 def test_forged_queue_cannot_dispatch_live_without_per_task_consent(hq):
     supervisor, _, _, db, settings = hq
     settings.live_enabled = True
-    supervisor.registry = FixtureLiveRegistry()
-    task = proposed(hq, mode="live")
+    supervisor.registry = FixtureRegistry()
+    task = proposed(hq)
     supervisor.approve_plan(task.id)
     with db.Session.begin() as session:
         stored = session.get(Task, task.id)
@@ -487,9 +508,9 @@ def test_architecture_extracts_claude_result_without_replacing_raw_run_output():
 def test_live_auth_failure_updates_generic_status_without_persisting_secret(hq):
     supervisor, _, _, db, settings = hq
     settings.live_enabled = True
-    supervisor.registry = FixtureLiveRegistry()
+    supervisor.registry = FixtureRegistry()
     supervisor.registry.execute = lambda *args, **kwargs: AgentResult(False, "password=providersecret", error="authentication_error: not logged in", simulated=False)
-    task = proposed(hq, mode="live")
+    task = proposed(hq)
     supervisor.approve_plan(task.id)
     supervisor.start(task.id)
     supervisor.resolve_approval(pending_approval(db, task.id, "live_execution").id, True)

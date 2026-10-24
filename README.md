@@ -1,73 +1,61 @@
-# AI Development HQ
+# AI HQ — Development Command Center
 
-A local Windows command center for a Python supervisor, isolated Git worktrees, AI agent adapters, real verification commands, independent review records, and human approvals. The dashboard uses a small HTML/CSS/JavaScript frontend with no Node.js or frontend build step.
+A Windows desktop command center where real AI coding agents build software with you, under your control.
 
-The application is installed at `C:\Users\ADMIN\AI-Development-HQ`. The requested `C:\Users\Work` profile does not match this computer; the detected `ADMIN` profile is used instead. Existing personal repositories are not automatically registered.
+- **Real agents, your accounts.** OpenAI Codex and Anthropic Claude Code plan, write and review code using your own ChatGPT/Claude sign-in. There are no API keys to paste and no demo mode.
+- **A supervisor, not a chatbot.** A deterministic Python supervisor gives each task to a planner, a coder and an *independent* reviewer from a different provider. It runs your project's real tests itself and repairs failures up to three times.
+- **You approve every step.** The plan, letting agents run, and merging the result each need your yes. Code is written in an isolated Git worktree; your project changes only when you approve the merge.
+- **See inside.** The *System view* is a live map of the backend: web server, supervisor, AI roles, working copy, test runner, approval gate, database and logs, lighting up as work flows through them.
+- **Explained simply.** Every task gets a plain-language *Report* that anyone can read: what was asked, who did what, whether the tests passed, and where everything is saved.
+- **Chat** with Codex or Claude about any project (read-only).
+- **Models & sign-in**: sign in from the dashboard, choose models, and add more model profiles.
+- **GitHub**: connect your account, clone repositories, publish and push.
+- **Toolchain**: check and install Git, Node.js, Python, .NET, Java, Go, Rust, Docker, VS Code and the AI CLIs in one place.
 
-The dashboard selects Live for new tasks when both providers and the explicitly enabled policies are ready. Each task still needs plan and live-execution approval. The built-in demonstration and API's unspecified mode remain Mock. Mock agent output is simulated and labeled; Git operations and configured test commands are real local operations. The user has selected CLI confinement with its residual read risk: it is **not** a verified operating-system sandbox. See the current [progress record](docs/progress.md) for genuine collaboration results.
+Everything except AI inference runs on `127.0.0.1`. Data stays in a local SQLite database.
 
-The supervisor, dashboard, Git workspaces, database, and logs are hosted locally. Codex and Claude still use their providers for inference; this is not an offline language-model implementation. Ollama is optional and does not replace the coding adapters.
+## Install (Windows 10/11 x64)
 
-## Start and stop
+Run `AI-HQ-Setup-<version>-Windows-x64.exe`. Setup installs for your account only, without administrator rights. It bundles its own Python runtime, needs Microsoft Edge WebView2 (preinstalled on Windows 11), and opens AI HQ in its own window. See [docs/WINDOWS_INSTALLER.md](docs/WINDOWS_INSTALLER.md).
 
-Open PowerShell:
+Then follow the *Get started* checklist on the Overview page, or read [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+
+## Run from source
 
 ```powershell
-Set-Location 'C:\Users\ADMIN\AI-Development-HQ'
-.\scripts\doctor.ps1
-.\scripts\start.ps1
-```
-
-The start script opens your default browser with a private, single-use session link. The server binds to `http://127.0.0.1:8765`. Keep the launch link private. After its browser session expires or is lost, stop and start AI HQ to get a new link.
-
-```powershell
+.\scripts\setup.ps1          # creates .venv from requirements.lock
+.\scripts\start.ps1          # opens the dashboard with a private one-time session link
 .\scripts\stop.ps1
 ```
 
-Stop verifies the managed server's process ID, executable image, and creation time before terminating its process tree. Task branches, worktrees, database history, and logs remain available.
+Python 3.13+ and Git are required.
 
-## First workflow
-
-1. Select **Try mock demo**, then **Create mock demo**. This creates a separate Python calculator repository with a known defect.
-2. Inspect the proposed task milestones and allowed paths. Select **Approve proposed plan**, then **Start approved task**.
-3. Inspect **Evidence**, **Git diff**, and **Runs & logs** in the task detail. The mock implementer changes the fixture; configured tests actually run; the mock independent reviewer records findings.
-4. Review the specific approval request under **Git & approvals**. Approving integration applies only to the recorded task and is checked by the backend.
-
-To work with your own repository, use **Projects → Add project**, enter an absolute Git repository path, supply test commands as JSON argument arrays, and explicitly authorize the project. The registration checkbox grants execution of those configured literal commands with your current Windows user's rights. Trust the project and test code: path allowlists and worktrees do not sandbox tests. A clean, committed repository and passing verification are prerequisites for a smooth integration.
-
-## Fresh installation
-
-Python 3.13+ and Git are required. Node.js, npm, Docker, and Ollama are not required. Setup installs only project-level Python packages inside `.venv`, constrained by `requirements.lock` when present; it changes no system security settings.
+## Build the installer
 
 ```powershell
-Set-Location 'C:\Users\ADMIN\AI-Development-HQ'
-.\scripts\setup.ps1
-.\.venv\Scripts\python.exe -m pytest -q
-.\scripts\start.ps1
+.\.venv\Scripts\python.exe scripts\build_windows.py --output dist
+.\.venv\Scripts\python.exe scripts\test_windows_installer.py dist\AI-HQ-Setup-<version>-Windows-x64.exe --test-root <empty folder>
 ```
 
-The initial computer inspection found very little free space on `C:`. Check the current disk report before adding projects or worktrees. No files are automatically deleted to reclaim space.
+The builder uses the project's Python environment and the Windows .NET Framework C# compiler, and downloads nothing. The installer is unsigned until you add a code-signing certificate.
 
-## Scope and limits
+## Tests
 
-- SQLite persists projects, task states, dependencies, agent runs, findings, reviews, approvals, worktrees, events, and settings metadata.
-- Plans are deterministic milestones. They do not represent a comprehensive architecture generated by a language model. Task dependency records are supported through the API; the current dashboard creates one task per objective.
-- The MVP permits one coding assignment at a time and at most three repair attempts. Failed or interrupted work remains inspectable.
-- Worktrees separate files; they are not an operating-system security sandbox. Allowed paths and Git checks reduce risk but cannot isolate arbitrary hostile project code.
-- Live execution uses the recorded policy. Under accepted CLI confinement, reads outside the repository remain possible; read-only mode and Git worktrees do not establish an OS security boundary. Policy acceptance and OS scope verification are tracked separately.
-- Roles can be reversed when the selected live implementer reports write capability. Claude implementation uses file Edit/Write tools limited by CLI rules; the supervisor runs configured tests separately. Mock role reversal is verified separately from genuine live collaboration; see the progress record for live validation.
-- Ollama is optional. Its interface does not replace the deterministic supervisor, and no models are downloaded.
-- No automatic GitHub push, remote publication, deployment, paid resource creation, or system software installation is implemented.
-- `.env.example` and `config.example.yaml` are reference files. They are not silently loaded. Dashboard settings persist in SQLite; `AIHQ_DATA_DIR` selects the data directory.
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Tests never launch a real AI CLI. They use the fixture agent in `tests/fakes.py`. The dashboard has a headless Edge test in `scripts/test_dashboard.cjs`.
 
 ## Documentation
 
-- [Installation and troubleshooting](docs/INSTALLATION.md)
-- [Dashboard and workflows](docs/USER_GUIDE.md)
-- [Architecture and task lifecycle](docs/ARCHITECTURE.md)
+- [User guide](docs/USER_GUIDE.md): setup, tasks, chat, models, GitHub, and where results are saved
 - [Security boundaries](docs/SECURITY.md)
-- [Development and tests](docs/DEVELOPMENT.md)
-- [Environment inspection](docs/environment-report.md)
-- [Implementation plan](docs/implementation-plan.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Windows installer](docs/WINDOWS_INSTALLER.md)
+- [Development](docs/DEVELOPMENT.md)
+- [Progress record](docs/progress.md)
 
-The accompanying environment report and progress document record actual validation results. This README describes behavior and should not be treated as a claim that live agent integration passed.
+## License
+
+Proprietary. All rights reserved. See [LICENSE](LICENSE).

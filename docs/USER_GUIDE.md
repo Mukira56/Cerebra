@@ -1,76 +1,95 @@
 # Using AI HQ
 
-Start AI HQ with `scripts/start.ps1` and use its private browser session. The dashboard polls the local backend every three seconds while the tab is visible. Metrics, projects, task states, and events come from persisted application records; there are no decorative progress percentages.
+AI HQ is a local command center where real AI coding agents work on your projects:
+- OpenAI **Codex** and Anthropic **Claude Code** do the work.
+- GitHub Copilot CLI and Gemini CLI can be installed and signed in, and their task support is coming later.
 
-## Understand the modes
+A plain Python **supervisor** directs every step, runs your project's real tests, and asks your permission before anything important happens. There is no demo or simulated mode: every task is real work on your accounts.
 
-After both live providers and your enabled policies are ready, the new-task form selects Live. Changing the mode does not start execution: plan approval, Start, and a separate live-execution approval are still required. The mock-demo button always creates a Mock task.
+## First-time setup (about 5 minutes)
 
-**Mock** means the coding and review agents are simulated. It lets you exercise the supervisor without provider usage. The isolated demo is a known calculator fixture, not a general autonomous website builder. Its tests and Git operations are real.
+The **Overview** page shows a *Get started* checklist:
 
-**Live** invokes actual coding CLIs and can consume provider usage. It requires supported authenticated CLIs, the live policy, an accepted confinement policy, and a specific task approval. The user selected CLI confinement: Codex uses workspace-write for implementation and read-only for review; Claude uses read-only planning/review tools and scoped file Edit/Write for implementation. Reads outside the repository remain possible under this policy. Acceptance is not a verified OS sandbox.
+1. **Toolchain**: check what is installed.
+   - Install anything that's missing: Git, Node.js, Python, the Codex CLI, Claude Code, the GitHub CLI and more.
+   - **Install** opens a visible window running the official installer (winget or npm). Restart AI HQ afterwards so it finds the new tools.
+2. **Models & sign-in**: press **Sign in** for Codex and for Claude.
+   - Each tool opens its own login window. Your password goes only to OpenAI or Anthropic; AI HQ never sees it, and you don't need API keys.
+   - Press **Check sign-in** to confirm.
+3. **Settings › Agent permissions**: tick both boxes and press **Switch agents on**. This is a one-time permission; every task still asks you before agents run.
+4. **Projects › Add project**: pick an existing folder, a new empty project, or **Clone from GitHub**.
+   - Add the project's **test commands**, for example `[["python","-m","pytest","-q"]]` or `[["npm","test"]]`. AI HQ uses them to prove that the AI's code works.
+5. **Tasks › New task**: describe what you want.
 
-The dashboard and orchestration are local. Live Codex/Claude inference still uses their providers. An installed CLI or configured policy is not evidence that a genuine task has completed; the current progress record distinguishes configuration from verified execution.
+## How a task works
 
-## Try the isolated demonstration
-
-1. In Overview, choose **Try mock demo**, then **Create mock demo**.
-2. Inspect **Plan & scope** in the task dialog. The objective is to repair addition in an isolated calculator repository. Check the requirements and allowed file path.
-3. Select **Approve proposed plan**, then **Start approved task**.
-4. Refresh the task evidence while it progresses. The supervisor creates a task branch/worktree, invokes mock implementation, runs configured tests, records mock independent review, and bounds any repairs.
-5. Inspect **Evidence** for test output and review records, **Git diff** for changes, and **Runs & logs** for labeled execution artifacts.
-6. In **Git & approvals**, inspect the specific integration request before approving or rejecting it. The backend revalidates integration conditions. Approval is a concrete action, not a general waiver for future tasks.
-
-## Register a project
-
-Use **Projects → Add project**. You may create a fresh managed repository or register an existing exact Git root. Registering an existing repository requires its absolute path and explicit authorization. AI HQ does not scan your computer for projects.
-
-Test commands are JSON lists of literal arguments:
-
-```json
-[["python", "-m", "pytest", "-q"]]
+```
+You describe it ─► Plan ─► you approve ─► Start ─► you allow agents ─► Planner AI ─► Coder AI ─► Tests ─► Reviewer AI ─► you approve merge ─► Done
+                                                                                                  ▲            │
+                                                                                                  └── repair ◄──┘ (if tests fail, up to 3 times)
 ```
 
-The registration checkbox explicitly grants execution of the configured literal commands with your current Windows user's rights. Trust the project and test code before authorizing them. Repository path allowlists and Git worktrees do not sandbox tests. Supply a suitable Python interpreter path if the project needs its own environment. The process runner performs no shell expansion, pipelines, or `&&` interpretation. A clean committed repository is the safest baseline; the app detects conditions that prevent safe integration rather than discarding user changes.
+- **Planner** (Claude by default) reads the project and writes an architecture plan. It cannot change files.
+- **Coder** (Codex by default) writes code in a *separate working copy* (a Git worktree on its own branch). It may only change the files you allowed. Codex's writes are sandboxed to that copy, and it has no network access.
+- **Tests**: the supervisor itself runs your test commands. The AI cannot fake this step.
+- **Reviewer** must be a *different* provider from the coder. It checks a frozen snapshot of the code and cannot change it.
+- **Merge**: only after you say yes is the finished code merged into your project's main branch. Nothing is pushed to GitHub unless you press **Push**.
 
-Select a project card to make it the default project for new tasks. Each project retains its own tests, task records, protected default branch, and execution artifacts. Storage and memory remain practical limits on project count.
+Watch it live in the **System view**, a map of every backend part that lights up as work flows through it. Click a part to see what it does and where it lives.
 
-## Submit an objective
+## Where results are saved
 
-Choose **New task**, select the project and agent roles, describe the requested outcome, add requirements and concrete acceptance criteria, and select allowed relative repository paths. The default roles are Codex implementing and Claude reviewing. Reversed live assignment is offered only when Claude reports file-write capability. Its implementation excludes shell/network/MCP tools, and the supervisor runs configured verification commands separately. A capability probe is not proof that a genuine reversed task has succeeded. Read-only tools alone cannot ensure personal files outside a repository remain inaccessible.
+Everything stays on this computer, in the data folder shown in **Settings › Where your data lives**:
 
-Leave allowed paths blank, or enter `.`, for the registered repository scope. Enter `calculator.py` to limit that task to the named file. Do not add a leading dot unless the filename itself starts with one; `.calculator.py` is a different filename. Multiple paths use commas.
+| What | Where | What it is |
+|---|---|---|
+| Every task, step, test result and decision | `data\hq.sqlite3` | A small database file |
+| The AI's working copies | `data\worktrees\…` | One folder per task, on branch `ai-hq/<task>-…` |
+| What each AI said | `data\logs\<run-id>.log` | One text file per AI run, with secrets removed |
+| The AI's plan | `data\artifacts\<task-id>\architecture.md` | A Markdown file |
+| Projects created or cloned here | `data\projects\…` | Normal Git repositories |
+| Backups made by the demo cleanup | `data\backups\…` | Database copies |
+| Your finished code | Your project folder | Merged only after your approval |
 
-The deterministic planner records a proposed sequence of milestones. Review it before approving. This MVP creates one task per dashboard objective; it does not silently turn an open-ended product brief into a complete verified product. Dependency identifiers are available through validated task API records; the dashboard does not yet expose a dependency editor.
+**Reports** explains each task in short, simple sentences:
+- what you asked for
+- who helped
+- what happened, step by step
+- whether the tests passed
+- which files changed
+- where everything is saved
+- what happens next
 
-Plan approval and task start are separate controls. A task cannot use another task's approval or an agent's self-reported success as proof. The supervisor records execution results, real test commands, captured diffs, and review findings.
+Open **Reports** from the sidebar, or press **Plain report** in any task. Each report opens on its own page that you can simply read through.
 
-For a live task, the first **Start** requests a separate `live_execution` approval. Approve that specific request, then select **Start** again. A configured CLI still needs valid authentication. Each approval shows the recorded scope, roles, and usage notice.
+## Chat
 
-## Pause, resume, and cancel
+**Chat** lets you talk to Codex or Claude about a project: ask how something works, plan a feature, or get a second opinion.
+- Chat is **read-only**: the agent can read the chosen project, but it never changes files. To change code, create a task.
+- Each message uses your provider account, just like a task.
+- Chats are saved, and you can delete them.
 
-Open the task dialog:
+## Models
 
-- **Request pause** marks the task blocked, requests cancellation of managed execution, and preserves its branch and history. Process cleanup may take a moment; it does not freeze an operating-system process in place.
-- **Resume task** continues paused or interrupted work after its state is inspected.
-- **Cancel task** requests cancellation and process-tree cleanup. Recorded output, branches, worktrees, and task history remain for inspection.
+In **Models & sign-in**:
+- **Add model** pairs a provider with a model name, for example Claude with `opus` or `sonnet`, or Codex with any model your plan offers. Leave the name blank for the tool's default.
+- **Default AI team** chooses who plans, codes and reviews new tasks. Each task can override these choices.
 
-To stop the whole application, run `scripts/stop.ps1`. Stopping while a task is active preserves its records; startup recovery marks interrupted work so it does not silently continue.
+## GitHub
 
-## Read evidence and approvals
+**GitHub › Connect GitHub** signs in through the official GitHub CLI. Then you can:
+- see your repositories, and clone one as a project
+- **Publish** a local project to a new private or public GitHub repository
+- **Push** a project's main branch after you have approved merges
 
-Task states are `PENDING`, `PLANNING`, `READY`, `RUNNING`, `VERIFYING`, `REVIEWING`, `NEEDS_CHANGES`, `AWAITING_APPROVAL`, `COMPLETED`, `FAILED`, `BLOCKED`, and `CANCELLED`. A completed mock workflow proves orchestration of that fixture; it does not prove real AI collaboration or general correctness.
+## Pause, resume, cancel
 
-Review findings carry severity and evidence. Repair attempts are bounded at three by default, and tests run again after repairs. Failed commands, missing tests, agent errors, and conflicts remain visible. No automatic Git push or deployment follows approval.
+Open a task:
+- **Pause** stops the current step and keeps everything.
+- **Resume** continues the task.
+- **Cancel** stops the task for good. Its history and branch are kept for inspection.
+- Stopping AI HQ from the tray keeps all records. Interrupted work waits for you to press Resume.
 
-## Agent and settings screens
+## Old demo data
 
-**AI agents** shows tool detection, available adapter information, and limitations. A detected executable is different from verified authentication or live end-to-end readiness. **Settings** controls supported executable paths, timeouts, and retry limits. The MVP enforces one active coding assignment. **Activity log** shows recent persisted events; task details show task-specific logs.
-
-Ollama is optional and not required to plan or execute a mock workflow. Entering an endpoint downloads no model and does not make it the supervisor. The app does not estimate actual provider billing.
-
-## Model matrix
-
-Open Model matrix in the desktop sidebar for the circuit-style orchestration view. Live runs displays genuine recorded provider work; Mock runs displays simulated agents and their actual local verification commands. Preview cycles illustrative signals without creating tasks or launching models. Node movement represents task stages, not model internals. Select a task to filter the feed or a node to inspect its measured history. Open a task card for the complete evidence.
-
-Telemetry refreshes every two seconds while the section is visible. Run counts and success rates cover at most 500 recent runs. Duration is wall-clock CLI time including startup and orchestration. The integration does not report token speed, cost, or cloud-model CPU/GPU utilization, so those values are not invented. CLI transcripts appear when a run finishes. Pause animation affects the drawing only. Expand view gives the circuit more screen space. A disconnected feed is labeled and live signal motion freezes. Human approvals remain in force.
+Versions before 0.5 had a simulated calculator demo. **Settings › Old demo data** removes those records after backing up the database. Your real projects and tasks are kept.

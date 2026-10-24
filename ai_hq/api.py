@@ -17,8 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from .config import Settings, apply_stored_policies
 from .db import Database
-from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid
-from .schemas import ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision
+from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
+from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup)
 from .security import redact
 from . import __version__
 
@@ -37,6 +38,17 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         apply_stored_policies(session, settings)
     from .supervisor import Supervisor
     supervisor = Supervisor(db, settings)
+    from .chat import ChatService
+    from .integrations import Integrations
+    def resolved_executable(name):
+        adapter = supervisor.registry.adapters.get(name)
+        return adapter._find() if adapter is not None else None
+    integrations = Integrations(settings, executables=resolved_executable)
+    def chat_registry():
+        supervisor._refresh_registry()
+        return supervisor.registry
+    chats = ChatService(db, settings, chat_registry)
+    chats.recover()
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
     bootstrap_used = False
     sessions = {}
@@ -52,6 +64,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     app = FastAPI(title="AI Development HQ", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
+    app.state.integrations, app.state.chats = integrations, chats
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -143,7 +156,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def public_settings():
         values = asdict(settings)
         values["data_dir"] = str(values["data_dir"])
-        values["cost_information"] = "No usage charges in mock mode. Real CLI usage depends on your provider account; costs are not estimated."
+        values["cost_information"] = "AI usage is billed by your provider account (ChatGPT, Claude, GitHub). AI HQ does not estimate costs."
         return values
 
     @app.get("/api/overview")
@@ -153,11 +166,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             tasks = [as_dict(row) for row in session.scalars(select(Task).order_by(Task.created_at.desc()).limit(500))]
             approvals = [as_dict(row) for row in session.scalars(select(Approval).order_by(Approval.created_at.desc()).limit(200))]
             events = [as_dict(row) for row in session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100))]
-            agents = [dict(as_dict(row)["status"], name=row.id) for row in session.scalars(select(Agent))]
+            agents = [dict(as_dict(row)["status"], name=row.id) for row in session.scalars(select(Agent)) if not row.id.startswith("mock-")]
+            from .profiles import list_profiles, default_roles
+            profiles, roles = list_profiles(session), default_roles(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -191,7 +206,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 if part.is_symlink() or (hasattr(part,"is_junction") and part.is_junction()): raise ValueError("Linked/junction repository paths are not permitted")
         info = git.inspect_repository(project_path)
         with db.Session.begin() as session:
-            project = Project(name=payload.name.strip(),path=str(project_path),default_branch=info["default_branch"],test_commands=payload.test_commands,mode=payload.mode,protected_branches=[info["default_branch"]])
+            project = Project(name=payload.name.strip(),path=str(project_path),default_branch=info["default_branch"],test_commands=payload.test_commands,mode="live",protected_branches=[info["default_branch"]])
             session.add(project); session.flush()
             session.add(Event(kind="project_registered", message="User authorized this repository and its configured test commands",data={"project_id":project.id,"path":str(project_path)}))
             return as_dict(project)
@@ -252,22 +267,216 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         for key,value in updates.items(): setattr(settings,key,value)
         return public_settings()
 
-    @app.post("/api/demo",status_code=201)
-    def demo():
-        project_path = settings.data_dir / "projects" / ("demo-" + uid()[:8])
-        project_path.mkdir(parents=True)
-        (project_path/"calculator.py").write_text("def add(a, b):\n    return a - b\n",encoding="utf-8")
-        (project_path/"test_calculator.py").write_text("from calculator import add\n\ndef test_add_positive():\n    assert add(2, 3) == 5\n\ndef test_add_negative():\n    assert add(-2, -3) == -5\n",encoding="utf-8")
-        (project_path/".ai-hq-demo.json").write_text(json.dumps({"kind":"calculator-addition-v1"}),encoding="utf-8")
-        (project_path/".gitignore").write_text("__pycache__/\n.pytest_cache/\n",encoding="utf-8")
-        from .processes import ProcessRunner
-        runner = ProcessRunner()
-        for args in (["git","init","--initial-branch=demo"],["git","add","--","."],["git","-c","user.name=AI HQ Demo","-c","user.email=demo@ai-hq.invalid","-c","commit.gpgsign=false","-c","core.hooksPath="+str(settings.data_dir/"disabled-hooks"),"commit","-m","Create isolated demo with failing addition tests"]):
-            result = runner.run(args,project_path,timeout=30)
-            if result.exit_code: raise ValueError("Demo initialization failed: "+result.stderr)
-        project = register(ProjectCreate(name="Calculator • isolated demo",path=str(project_path),authorize=True,test_commands=[[sys.executable,"-m","pytest","-q"]],mode="mock"))
-        task = supervisor.propose(project_id=project["id"],objective="Fix calculator.add so that it adds positive and negative numbers",assigned_agent="codex",mode="mock",requirements=["Correct calculator.add addition"],acceptance_criteria=["Both actual pytest tests pass"],dependencies=[],allowed_paths=["calculator.py"])
-        return {"project":project,"task":task}
+    # ---- models and providers ---------------------------------------------------------------
+    @app.get("/api/providers")
+    def providers():
+        from .integrations import PROVIDERS
+        with db.Session() as session:
+            rows = {row.id: row.status for row in session.scalars(select(Agent))}
+            sign_ins = session.get(Metadata, "sign_in_status")
+            sign_ins = sign_ins.value if sign_ins else {}
+        return [{"id": name, **{key: value for key, value in provider.items() if key not in {"login", "status"}},
+                 "status": rows.get(name, {}), "sign_in": sign_ins.get(name)} for name, provider in PROVIDERS.items()]
+
+    @app.post("/api/providers/{name}/sign-in")
+    def sign_in(name: str):
+        with db.Session.begin() as session:
+            session.add(Event(kind="sign_in", message=f"User opened the {name} sign-in window"))
+        return integrations.sign_in(name)
+
+    @app.post("/api/providers/{name}/check")
+    def check_sign_in(name: str):
+        status = integrations.sign_in_status(name)
+        with db.Session.begin() as session:
+            row = session.get(Metadata, "sign_in_status")
+            values = dict(row.value) if row else {}
+            values[name] = status
+            if row: row.value = values
+            else: session.add(Metadata(key="sign_in_status", value=values))
+        return status
+
+    @app.post("/api/providers/refresh")
+    def refresh_providers():
+        from .doctor import inspect
+        inspect(settings)
+        supervisor._refresh_registry()
+        for adapter in supervisor.registry.adapters.values(): adapter._capability = None
+        return providers()
+
+    @app.get("/api/models")
+    def models():
+        from .profiles import list_profiles, default_roles
+        with db.Session() as session:
+            return {"profiles": list_profiles(session), "roles": default_roles(session)}
+
+    @app.post("/api/models", status_code=201)
+    def add_model(payload: ProfileCreate):
+        from .profiles import add_profile
+        with db.Session.begin() as session:
+            profile = add_profile(session, payload.provider, payload.model, payload.label)
+            session.add(Event(kind="settings_changed", message=f"Added model profile {profile['label']}"))
+            return profile
+
+    @app.patch("/api/models/{identifier}")
+    def change_model(identifier: str, payload: ProfileUpdate):
+        from .profiles import update_profile
+        with db.Session.begin() as session:
+            profile = update_profile(session, identifier, payload.model, payload.label)
+            session.add(Event(kind="settings_changed", message=f"Changed model profile {profile['label']}"))
+            return profile
+
+    @app.delete("/api/models/{identifier}")
+    def remove_model(identifier: str):
+        from .profiles import delete_profile
+        with db.Session.begin() as session:
+            delete_profile(session, identifier)
+            session.add(Event(kind="settings_changed", message=f"Removed model profile {identifier}"))
+        return {"deleted": identifier}
+
+    @app.put("/api/models/roles")
+    def model_roles(payload: RolesUpdate):
+        from .profiles import set_default_roles
+        with db.Session.begin() as session:
+            return set_default_roles(session, payload.model_dump(exclude_none=True))
+
+    # ---- agent permissions ---------------------------------------------------------------------
+    @app.post("/api/permissions")
+    def permissions(payload: AgentPermissions):
+        """The dedicated, acknowledged switch for real agent execution. Each task still asks first."""
+        if payload.enabled and not (payload.acknowledge_provider_usage and payload.acknowledge_residual_read_risk):
+            raise ValueError("Tick both acknowledgements to switch AI agents on")
+        with db.Session.begin() as session:
+            for key, value in (("live_policy", {"enabled": payload.enabled}),
+                               ("sandbox_policy", {"mode": "cli-confinement", "residual_read_risk_acknowledged": True, "accepted_at": now()} if payload.enabled else {"mode": "none"})):
+                row = session.get(Metadata, key)
+                if row: row.value = value
+                else: session.add(Metadata(key=key, value=value))
+            session.add(Event(kind="policy", message="User switched AI agents on (each task still asks first)" if payload.enabled else "User switched AI agents off"))
+            apply_stored_policies(session, settings)
+        supervisor._refresh_registry()
+        for adapter in supervisor.registry.adapters.values(): adapter._capability = None
+        return public_settings()
+
+    # ---- toolchain ---------------------------------------------------------------------------
+    @app.get("/api/tools")
+    def tools(refresh: bool = False): return integrations.tools(refresh)
+
+    @app.post("/api/tools/{tool_id}/install")
+    def install_tool(tool_id: str):
+        result = integrations.install(tool_id)
+        with db.Session.begin() as session:
+            session.add(Event(kind="toolchain", message=f"User opened an install window for {tool_id}"))
+        return result
+
+    # ---- GitHub ------------------------------------------------------------------------------
+    @app.get("/api/github")
+    def github(): return integrations.github_status()
+
+    @app.post("/api/github/sign-in")
+    def github_sign_in(): return integrations.github_sign_in()
+
+    @app.get("/api/github/repositories")
+    def github_repositories(): return integrations.github_repositories()
+
+    @app.post("/api/github/clone", status_code=201)
+    def github_clone(payload: GithubClone):
+        import re
+        folder = re.sub(r"[^A-Za-z0-9_.-]+", "-", payload.repository.split("/")[-1]).strip("-.") or "project"
+        destination = integrations.clone(payload.repository, settings.data_dir / "projects" / f"{folder}-{uid()[:6]}")
+        project = register(ProjectCreate(name=payload.name.strip() or payload.repository, path=str(destination), authorize=True, test_commands=payload.test_commands))
+        with db.Session.begin() as session:
+            session.add(Event(kind="github", message=f"Cloned {payload.repository} from GitHub"))
+        return project
+
+    def project_or_404(session, project_id):
+        project = session.get(Project, project_id)
+        if not project: raise HTTPException(404, "Project not found")
+        return project
+
+    @app.post("/api/projects/{project_id}/publish")
+    def github_publish(project_id: str, payload: GithubPublish):
+        with db.Session() as session: project = project_or_404(session, project_id)
+        result = integrations.create_repository(project.path, payload.name, payload.visibility)
+        with db.Session.begin() as session:
+            session.add(Event(kind="github", message=f"Published {project.name} to GitHub as a {payload.visibility} repository"))
+        return result
+
+    @app.post("/api/projects/{project_id}/push")
+    def github_push(project_id: str):
+        with db.Session() as session: project = project_or_404(session, project_id)
+        result = integrations.push(project.path, project.default_branch)
+        with db.Session.begin() as session:
+            session.add(Event(kind="github", message=f"Pushed {project.name} ({project.default_branch}) to GitHub"))
+        return result
+
+    @app.patch("/api/projects/{project_id}")
+    def update_project(project_id: str, payload: dict):
+        commands = ProjectCreate.commands(payload.get("test_commands", []))
+        if set(payload) - {"test_commands"}: raise ValueError("Only test_commands can be changed")
+        with db.Session.begin() as session:
+            project = project_or_404(session, project_id)
+            project.test_commands = commands
+            session.add(Event(kind="settings_changed", message=f"Changed the test commands of {project.name}"))
+            return as_dict(project)
+
+    # ---- chat -------------------------------------------------------------------------------
+    @app.get("/api/chats")
+    def chat_list(): return chats.conversations()
+
+    @app.post("/api/chats", status_code=201)
+    def chat_create(payload: ChatCreate): return chats.create(payload.profile, payload.project_id, payload.title)
+
+    def chat_or_404(call, *args):
+        try: return call(*args)
+        except LookupError as exc: raise HTTPException(404, str(exc))
+
+    @app.get("/api/chats/{conversation_id}")
+    def chat_messages(conversation_id: str): return chat_or_404(chats.messages, conversation_id)
+
+    @app.post("/api/chats/{conversation_id}/messages", status_code=202)
+    def chat_send(conversation_id: str, payload: ChatSend): return chat_or_404(chats.send, conversation_id, payload.text)
+
+    @app.post("/api/chats/{conversation_id}/stop")
+    def chat_stop(conversation_id: str): return chats.stop(conversation_id)
+
+    @app.delete("/api/chats/{conversation_id}")
+    def chat_delete(conversation_id: str):
+        chat_or_404(chats.delete, conversation_id)
+        return {"deleted": conversation_id}
+
+    # ---- plain-language reports and system view ------------------------------------------
+    @app.get("/api/reports/{task_id}")
+    def report(task_id: str):
+        from .reports import build
+        task = detail(task_id)
+        with db.Session() as session:
+            project = as_dict(session.get(Project, task["project_id"]))
+        return build(task, project, settings.data_dir)
+
+    @app.get("/api/system")
+    def system():
+        def size(path): return path.stat().st_size if path.exists() else 0
+        with db.Session() as session:
+            queued = sum(1 for task in session.scalars(select(Task).where(Task.state.in_(["READY","RUNNING","VERIFYING","REVIEWING","NEEDS_CHANGES"]))))
+        worktrees = settings.data_dir / "worktrees"
+        logs = settings.data_dir / "logs"
+        return {"version": __version__, "server": f"http://127.0.0.1:{settings.port}", "data_dir": str(settings.data_dir),
+                "database": {"path": str(settings.db_path), "bytes": size(settings.db_path) + size(settings.db_path.with_name(settings.db_path.name + "-wal"))},
+                "logs": {"path": str(logs), "files": len(list(logs.glob("*.log"))) if logs.is_dir() else 0},
+                "worktrees": {"path": str(worktrees), "count": sum(1 for _ in worktrees.glob("*/*")) if worktrees.is_dir() else 0},
+                "queue": queued, "agents_enabled": settings.live_enabled and settings.cli_confinement_accepted}
+
+    # ---- maintenance ---------------------------------------------------------------------------
+    @app.get("/api/maintenance/demo-data")
+    def demo_data():
+        from .maintenance import preview
+        return preview(db, settings.data_dir)
+
+    @app.post("/api/maintenance/demo-data")
+    def remove_demo(payload: DemoCleanup):
+        from .maintenance import remove_demo_data
+        with supervisor._lock:
+            return remove_demo_data(db, settings.data_dir)
 
     @app.get("/")
     def index(): return FileResponse(STATIC/"index.html")

@@ -10,9 +10,10 @@ import time
 
 import pytest
 
-from ai_hq.agents import AgentRegistry, AgentRequest, ClaudeAdapter, CodexAdapter, MockAdapter
+from ai_hq.agents import AgentRegistry, AgentRequest, ClaudeAdapter, CodexAdapter, final_text, valid_model
 from ai_hq.gitops import GitError, GitManager
 from ai_hq.processes import ProcessRunner, ProcessResult, scrub_environment
+from fakes import FixtureAgent as MockAdapter
 
 PYTHON = getattr(sys, "_base_executable", sys.executable)
 
@@ -154,11 +155,32 @@ def test_live_adapter_is_disabled_without_running_model(repo):
         def run(self, *args, **kwargs):
             raise AssertionError("No live process should start")
     result = CodexAdapter(NeverRun()).execute(request(repo))
-    assert not result.success and "approval" in result.error
+    assert not result.success and "switched off" in result.error
     registry = AgentRegistry(runner=NeverRun())
-    assert registry.get("mock-claude").name == "mock-claude"
+    assert set(registry.adapters) == {"codex", "claude"}, "The product ships no simulated agents"
     with pytest.raises(ValueError):
-        registry.get("unknown")
+        registry.get("mock-claude")
+    assert not registry.chat("codex", "hello", str(repo)).success
+
+
+def test_model_choice_reaches_cli_arguments(tmp_path):
+    codex = CodexAdapter()._command("codex.exe", tmp_path, False, ["."], "gpt-test")
+    assert codex[codex.index("-m") + 1] == "gpt-test" and codex.index("-m") > codex.index("exec")
+    assert "-m" not in CodexAdapter()._command("codex.exe", tmp_path, False, ["."], "")
+    claude = ClaudeAdapter()._command("claude.exe", tmp_path, True, ["."], "opus")
+    assert claude[claude.index("--model") + 1] == "opus" and "Read,Grep,Glob" in claude
+    for bad in ("gpt test", "x;rm", "--dangerous", "a" * 101):
+        with pytest.raises(ValueError):
+            valid_model(bad)
+
+
+def test_final_text_reads_codex_and_claude_answers():
+    codex = "\n".join(json.dumps(record) for record in [{"type": "item.completed", "item": {"type": "agent_message", "text": "First"}},
+                                                         {"type": "item.completed", "item": {"type": "agent_message", "text": "Final answer"}},
+                                                         {"type": "turn.completed"}])
+    assert final_text(codex) == "Final answer"
+    assert final_text(json.dumps({"type": "result", "subtype": "success", "result": "Claude says hi"})) == "Claude says hi"
+    assert final_text("not json") == ""
 
 
 def test_cli_probe_uses_only_version_and_help(repo):

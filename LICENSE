@@ -1,0 +1,14 @@
+AI HQ — Development Command Center
+Copyright (c) 2026 Mukira56. All rights reserved.
+
+This software and its source code are proprietary and confidential. No license is granted to use,
+copy, modify, merge, publish, distribute, sublicense or sell copies of this software, in whole or in
+part, except under a separate written license agreement with the copyright holder.
+
+Third-party components keep their own licenses: the bundled Python runtime (PSF License), Python
+packages (see their dist-info metadata), and the Microsoft WebView2 SDK (packaging/windows/webview2/
+LICENSE.txt).
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL
+THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR
+ITS USE.

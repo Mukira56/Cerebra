@@ -10,7 +10,7 @@ FastAPI API ───────── SQLite / SQLAlchemy
 Deterministic supervisor reviews, findings, approvals, events,
   ├─ planner + task state machine          worktrees, metadata
   ├─ agent router
-  │    ├─ mock adapters (explicitly simulated)
+  │    ├─ chat service (read-only provider conversations)
   │    ├─ Codex CLI adapter
   │    └─ Claude Code CLI adapter
   ├─ Git manager → per-task branch and worktree
@@ -30,7 +30,12 @@ Optional Ollama interface; deterministic coordination remains the default
 | `schemas.py` | Validated API and structured task message boundaries. |
 | `security.py` | Canonical path constraints, allowed relative paths, redaction. |
 | `processes.py` | Argument-list subprocess execution, bounded output, timeouts, cancellation. |
-| `agents.py` | Capability detection and common mock/Codex/Claude interfaces. |
+| `agents.py` | Capability detection, model selection and the Codex/Claude CLI adapters (tasks and read-only chat). |
+| `integrations.py` | Provider sign-in windows, sign-in status, toolchain detection/installs, GitHub (`gh`). |
+| `profiles.py` | Model profiles (provider + model) and the default planner/coder/reviewer. |
+| `chat.py` | Read-only chat conversations, answered in background threads. |
+| `reports.py` | Plain-language task reports built from recorded facts. |
+| `maintenance.py` | Explicit, backed-up removal of pre-0.5 demo records. |
 | `gitops.py` | Repository inspection, locks, isolated task worktrees, diffs, integration checks. |
 | `supervisor.py` | Persistent state transitions, routing, verification, independent review, bounded repair and approvals. |
 | `api.py` | Loopback API, one-time session bootstrap, origin/Host controls, CSRF, frontend files. |

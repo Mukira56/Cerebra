@@ -1,51 +1,107 @@
-// Uses the bundled Playwright and installed Edge; no browser/package downloads.
+// Drives every dashboard page in headless Edge against a throwaway AI HQ server (agents off, temp data).
+// Usage: set AIHQ_PLAYWRIGHT=<path to playwright-core>, AIHQ_URL=http://127.0.0.1:<port>/#key=<key>, AIHQ_SHOTS=<dir>
 const { chromium } = require(process.env.AIHQ_PLAYWRIGHT);
 const assert = require('node:assert/strict');
+const path = require('node:path');
 (async () => {
-  const browser = await chromium.launch({channel:'msedge', headless:true});
+  const browser = await chromium.launch({channel: 'msedge', headless: true});
+  const shots = process.env.AIHQ_SHOTS;
   try {
-    const context = await browser.newContext({viewport:{width:1440,height:1000}});
+    const context = await browser.newContext({viewport: {width: 1440, height: 960}});
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto('http://127.0.0.1:18766/#key=ui-polish-local-test-key-1234567890');
-    await page.getByText('Local connection',{exact:true}).waitFor();
-    assert.equal(await page.locator('.brand-mark').evaluate(node => node.complete && node.naturalWidth>0),true);
-    const post = async (path, payload={}) => page.evaluate(async ({path,payload}) => {
-      const session = await (await fetch('/api/session')).json();
-      const response = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf_token},body:JSON.stringify(payload)});
-      if(!response.ok) throw new Error(await response.text());
-      return response.json();
-    },{path,payload});
-    const demo = await post('/api/demo');
+    page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
+    await page.goto(process.env.AIHQ_URL);
+    await page.getByText('Local connection', {exact: true}).waitFor();
+    const shot = async name => { if (shots) await page.screenshot({path: path.join(shots, `${name}.png`), fullPage: false}); };
+    assert.equal(await page.locator('.brand-mark').evaluate(node => node.complete && node.naturalWidth > 0), true);
+    assert.equal(await page.getByText(/mock|demo/i).count(), 0, 'No demo or mock wording on the overview');
+    await page.getByText('Get started', {exact: true}).waitFor();
+    await shot('overview-empty');
+
+    // Add a project through the form.
+    await page.locator('[data-page="projects"]').click();
+    await page.locator('#heading-actions').getByRole('button', {name: '+ Add project'}).click();
+    await page.locator('dialog select').first().selectOption('new');
+    await page.locator('dialog input[placeholder^="e.g."]').fill('Booking platform');
+    await page.locator('dialog textarea').fill('[["python", "-m", "pytest", "-q"]]');
+    await page.locator('dialog input[type=checkbox]').check();
+    await page.locator('dialog').getByRole('button', {name: 'Add project', exact: true}).click();
+    await page.locator('.card h3', {hasText: 'Booking platform'}).waitFor();
+
+    // Add a model profile and use it in a task.
+    await page.locator('[data-page="models"]').click();
+    await page.getByText('Your AI accounts', {exact: true}).waitFor();
+    await page.getByRole('button', {name: '+ Add model'}).click();
+    await page.locator('dialog select').first().selectOption('claude');
+    await page.locator('dialog input').first().fill('opus');
+    await page.locator('dialog input').nth(1).fill('Claude Opus');
+    await page.locator('dialog').getByRole('button', {name: 'Add model', exact: true}).click();
+    await page.locator('table strong', {hasText: 'Claude Opus'}).waitFor();
+    await page.locator('.card h3', {hasText: 'OpenAI Codex'}).waitFor();
+    await shot('models');
+
     await page.locator('[data-page="tasks"]').click();
-    await page.getByRole('button',{name:`Inspect task: ${demo.task.description}`,exact:true}).waitFor();
-    const filter = page.getByRole('combobox',{name:'Filter project'});
-    await filter.selectOption(demo.project.id);
-    await page.locator('.filters select').nth(1).selectOption(demo.task.state);
-    await page.getByRole('button',{name:`Inspect task: ${demo.task.description}`,exact:true}).click();
-    await page.getByRole('button',{name:'Evidence',exact:true}).click();
-    await post(`/api/tasks/${demo.task.id}/approve-plan`);
-    await page.getByText('Plan approved · Ready to start',{exact:true}).waitFor({timeout:15000});
-    assert.equal(await page.locator('.detail-tabs button.active').textContent(),'Evidence');
-    await page.getByRole('button',{name:'Close dialog'}).click();
-    assert.equal(await page.locator('.filters select').nth(1).inputValue(),demo.task.state);
-    for (const route of ['overview','projects','agents','reviews','git','logs','settings']) {
-      await page.locator(`[data-page="${route}"]:visible`).first().click();
-      await page.waitForTimeout(100);
-      assert.ok(await page.locator('#page-title').textContent());
+    await page.locator('#heading-actions').getByRole('button', {name: '+ New task'}).click();
+    await page.locator('dialog textarea').first().fill('Add a booking calendar page with tests');
+    await page.locator('dialog .form-grid select').nth(2).selectOption('claude-opus');
+    await page.locator('dialog').getByRole('button', {name: 'Create plan', exact: true}).click();
+    await page.locator('dialog').getByRole('button', {name: 'Approve plan', exact: true}).waitFor();
+    await shot('task-detail');
+    await page.locator('dialog').getByRole('button', {name: 'Approve plan', exact: true}).click();
+    await page.getByRole('button', {name: '▶ Start'}).waitFor();
+    await page.getByRole('button', {name: '▶ Start'}).click();
+    await page.getByText(/switched off/).first().waitFor();   // agents are off on the test server
+    await page.getByRole('button', {name: 'Close dialog'}).click();
+
+    // Plain report.
+    await page.locator('[data-page="reports"]').click();
+    await page.locator('.row', {hasText: 'booking calendar'}).click();
+    await page.getByText('What you asked for', {exact: true}).waitFor();
+    await page.getByText('Where everything is saved', {exact: true}).waitFor();
+    assert.ok(await page.getByText('Claude Code (opus) checked the code.', {exact: true}).count());
+    await shot('report');
+
+    // System view.
+    await page.locator('[data-page="system"]').click();
+    await page.locator('.diagram .node').first().waitFor();
+    assert.equal(await page.locator('.diagram .node').count(), 12);
+    await page.locator('.diagram .node[aria-label="Test runner"]').click();
+    await page.locator('.inspector h3', {hasText: 'Test runner'}).waitFor();
+    await page.locator('.trace div').first().waitFor();
+    await shot('system');
+
+    // Chat: agents are off, so the reply fails with a clear message (no provider is launched).
+    await page.locator('[data-page="chat"]').click();
+    await page.getByRole('button', {name: '+ New chat'}).click();
+    await page.locator('.composer textarea').fill('Explain the **project** layout');
+    await page.locator('.composer textarea').press('Enter');
+    await page.locator('.message.user .bubble', {hasText: 'Explain the **project** layout'}).waitFor({timeout: 15000});
+    await page.locator('.bubble.failed', {hasText: 'AI agents are switched off'}).waitFor({timeout: 15000});
+    assert.ok(await page.getByRole('button', {name: 'Send', exact: true}).isVisible());
+    await shot('chat');
+
+    for (const name of ['approvals', 'activity', 'toolchain', 'github', 'settings', 'overview']) {
+      await page.locator(`[data-page="${name}"]`).first().click();
+      await page.waitForTimeout(700);
     }
-    await page.locator('[data-page="overview"]').click();
-    await page.screenshot({path:'work/windows-build/dashboard-desktop.png',fullPage:true});
-    await page.setViewportSize({width:390,height:844});
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),390);
-    await page.screenshot({path:'work/windows-build/dashboard-mobile.png',fullPage:true});
-    const blocked = await browser.newContext({storageState:await context.storageState()});
-    await blocked.addInitScript(()=>Object.defineProperty(window,'localStorage',{get(){throw new DOMException('Blocked','SecurityError');}}));
-    const fallback = await blocked.newPage();
-    fallback.on('pageerror',error=>errors.push(error.message));
-    await fallback.goto('http://127.0.0.1:18766/');
-    await fallback.getByText('Local connection',{exact:true}).waitFor();
-    assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({desktop:true,mobile390:true,logo:true,automaticEvidence:true,preservedTab:true,preservedFilter:true,blockedStorage:true,pageErrors:errors}));
+    await page.locator('[data-page="settings"]').first().click();
+    await page.getByRole('button', {name: 'Switch agents on'}).waitFor();
+    await page.getByText('Where your data lives', {exact: true}).waitFor();
+    await shot('settings');
+    await page.locator('[data-page="toolchain"]').first().click();
+    await page.locator('.panel-header h2', {hasText: 'Essentials'}).waitFor({timeout: 60000});
+    await shot('toolchain');
+
+    const mobile = await browser.newContext({viewport: {width: 390, height: 860}});
+    const phone = await mobile.newPage(); phone.on('pageerror', error => errors.push('mobile: ' + error.message));
+    const cookies = await context.cookies(); await mobile.addCookies(cookies);
+    await phone.goto(process.env.AIHQ_URL.split('#')[0] + '#overview');
+    await phone.getByText('Local connection', {exact: true}).waitFor();
+    if (shots) await phone.screenshot({path: path.join(shots, 'mobile.png')});
+    const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
+    assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({pages: 13, errors: errors.length, mobile_width_ok: true}));
   } finally { await browser.close(); }
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().catch(error => { console.error(error); process.exit(1); });

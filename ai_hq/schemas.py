@@ -12,7 +12,6 @@ class ProjectCreate(StrictModel):
     create_new: bool = False
     authorize: Literal[True]
     test_commands: list[list[str]] = Field(default_factory=list, max_length=10)
-    mode: Literal["mock", "live"] = "mock"
 
     @field_validator("test_commands")
     @classmethod
@@ -32,8 +31,10 @@ class ProjectCreate(StrictModel):
 class TaskCreate(StrictModel):
     project_id: str
     description: str = Field(min_length=8, max_length=30000)
-    assigned_agent: Literal["codex", "claude"] = "codex"
-    mode: Literal["mock", "live"] = "mock"
+    # Model profile IDs (see Models). Omitted roles use the saved defaults.
+    planner: str | None = Field(default=None, max_length=48)
+    implementer: str | None = Field(default=None, max_length=48)
+    reviewer: str | None = Field(default=None, max_length=48)
     requirements: list[str] = Field(default_factory=list, max_length=100)
     acceptance_criteria: list[str] = Field(default_factory=list, max_length=100)
     dependencies: list[str] = Field(default_factory=list, max_length=100)
@@ -87,3 +88,48 @@ class AgentTaskMessage(StrictModel):
     branch: str
     working_directory: str
     attempt: int = Field(ge=0, le=3)
+
+class ProfileCreate(StrictModel):
+    provider: Literal["codex", "claude", "copilot", "gemini"]
+    model: str = Field(default="", max_length=100)
+    label: str = Field(default="", max_length=80)
+
+class ProfileUpdate(StrictModel):
+    model: str | None = Field(default=None, max_length=100)
+    label: str | None = Field(default=None, max_length=80)
+
+class RolesUpdate(StrictModel):
+    planner: str | None = Field(default=None, max_length=48)
+    implementer: str | None = Field(default=None, max_length=48)
+    reviewer: str | None = Field(default=None, max_length=48)
+
+class AgentPermissions(StrictModel):
+    enabled: bool
+    # Both acknowledgements are required to switch agents on; switching off needs neither.
+    acknowledge_provider_usage: bool = False
+    acknowledge_residual_read_risk: bool = False
+
+class ChatCreate(StrictModel):
+    profile: str = Field(default="codex", max_length=48)
+    project_id: str | None = Field(default=None, max_length=64)
+    title: str = Field(default="", max_length=120)
+
+class ChatSend(StrictModel):
+    text: str = Field(min_length=1, max_length=20000)
+
+class GithubClone(StrictModel):
+    repository: str = Field(min_length=3, max_length=201)
+    name: str = Field(default="", max_length=120)
+    authorize: Literal[True]
+    test_commands: list[list[str]] = Field(default_factory=list, max_length=10)
+
+    @field_validator("test_commands")
+    @classmethod
+    def commands(cls, values): return ProjectCreate.commands(values)
+
+class GithubPublish(StrictModel):
+    name: str = Field(min_length=1, max_length=100)
+    visibility: Literal["private", "public"] = "private"
+
+class DemoCleanup(StrictModel):
+    confirm: Literal[True]

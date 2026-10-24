@@ -14,7 +14,7 @@ class Project(Base):
     path: Mapped[str] = mapped_column(String, unique=True)
     default_branch: Mapped[str] = mapped_column(String)
     test_commands: Mapped[list] = mapped_column(JSON, default=list)
-    mode: Mapped[str] = mapped_column(String, default="mock")
+    mode: Mapped[str] = mapped_column(String, default="live")  # "mock" only on pre-0.5 demo rows
     protected_branches: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[str] = mapped_column(String, default=now)
 
@@ -26,7 +26,7 @@ class Task(Base):
     state: Mapped[str] = mapped_column(String, default="PENDING")
     assigned_agent: Mapped[str] = mapped_column(String, default="codex")
     reviewer: Mapped[str] = mapped_column(String, default="claude")
-    mode: Mapped[str] = mapped_column(String, default="mock")
+    mode: Mapped[str] = mapped_column(String, default="live")  # "mock" only on pre-0.5 demo rows
     requirements: Mapped[list] = mapped_column(JSON, default=list)
     acceptance_criteria: Mapped[list] = mapped_column(JSON, default=list)
     allowed_paths: Mapped[list] = mapped_column(JSON, default=lambda:["."])
@@ -113,6 +113,28 @@ class Agent(Base):
     __tablename__ = "agents"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     status: Mapped[dict] = mapped_column(JSON, default=dict)
+
+class ChatConversation(Base):
+    __tablename__ = "chat_conversations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    title: Mapped[str] = mapped_column(String, default="New chat")
+    profile: Mapped[str] = mapped_column(String, default="codex")
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("chat_conversations.id"))
+    role: Mapped[str] = mapped_column(String)  # user | assistant
+    status: Mapped[str] = mapped_column(String, default="done")  # pending | done | failed
+    provider: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    finished_at: Mapped[str] = mapped_column(String, default="")
 
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
