@@ -4,7 +4,7 @@ A local Windows command center for a Python supervisor, isolated Git worktrees, 
 
 The application is installed at `C:\Users\ADMIN\AI-Development-HQ`. The requested `C:\Users\Work` profile does not match this computer; the detected `ADMIN` profile is used instead. Existing personal repositories are not automatically registered.
 
-Mock execution is the default. Mock agent output is simulated and labeled; Git operations and configured test commands are real local operations. Live execution requires supported authenticated CLIs, the separate live policy, a recorded confinement policy, and per-task consent. The user has selected CLI confinement with its residual read risk: it is **not** a verified operating-system sandbox. Real collaboration is verified only by a successful genuine end-to-end task; see the current [progress record](docs/progress.md).
+The dashboard selects Live for new tasks when both providers and the explicitly enabled policies are ready. Each task still needs plan and live-execution approval. The built-in demonstration and API's unspecified mode remain Mock. Mock agent output is simulated and labeled; Git operations and configured test commands are real local operations. The user has selected CLI confinement with its residual read risk: it is **not** a verified operating-system sandbox. See the current [progress record](docs/progress.md) for genuine collaboration results.
 
 The supervisor, dashboard, Git workspaces, database, and logs are hosted locally. Codex and Claude still use their providers for inference; this is not an offline language-model implementation. Ollama is optional and does not replace the coding adapters.
 

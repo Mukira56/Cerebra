@@ -52,11 +52,17 @@ def inspect(settings=None):
                     if key in row.status: info[key] = row.status[key]
                 if row.status.get("authentication") in {"verified_by_execution", "failed"}:
                     info["authentication"] = row.status["authentication"]
+                if info.get("available") and info.get("authentication") == "verified_by_execution" and info.get("last_live_success_at"):
+                    info["reason"] = "CLI capabilities verified; genuine " + info.get("last_live_role", "execution") + " succeeded at " + info["last_live_success_at"]
             if row: row.status=info
             else: session.add(Agent(id=name,status=info))
             check(name,"PASS" if info.get("available") else "WARN",info.get("reason",""))
     db.close()
-    check("Provider authentication","WARN","Not checked; requires explicit consent. No credentials read.")
+    real = [probes[name] for name in ("codex", "claude")]
+    if all(info.get("authentication") == "verified_by_execution" and info.get("last_live_success_at") for info in real):
+        check("Last real provider execution","PASS","Both providers have recorded successful genuine executions. This doctor run did not recheck credentials.")
+    else:
+        check("Provider authentication","WARN","No credential status check performed by doctor; availability alone does not prove authentication.")
     return {"checks":checks,"agents":probes}
 
 def main():

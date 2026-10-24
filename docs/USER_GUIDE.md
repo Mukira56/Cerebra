@@ -4,6 +4,8 @@ Start AI HQ with `scripts/start.ps1` and use its private browser session. The da
 
 ## Understand the modes
 
+After both live providers and your enabled policies are ready, the new-task form selects Live. Changing the mode does not start execution: plan approval, Start, and a separate live-execution approval are still required. The mock-demo button always creates a Mock task.
+
 **Mock** means the coding and review agents are simulated. It lets you exercise the supervisor without provider usage. The isolated demo is a known calculator fixture, not a general autonomous website builder. Its tests and Git operations are real.
 
 **Live** invokes actual coding CLIs and can consume provider usage. It requires supported authenticated CLIs, the live policy, an accepted confinement policy, and a specific task approval. The user selected CLI confinement: Codex uses workspace-write for implementation and read-only for review; Claude uses read-only planning/review tools and scoped file Edit/Write for implementation. Reads outside the repository remain possible under this policy. Acceptance is not a verified OS sandbox.
