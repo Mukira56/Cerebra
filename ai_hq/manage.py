@@ -49,9 +49,12 @@ def owned_process(settings):
         raise RuntimeError("PID identity does not match the managed AI HQ server; refusing to act")
     return stored
 
-def start(settings,open_browser=True):
+def start(settings,open_browser=True,desktop=False):
     existing=owned_process(settings)
     if existing:
+        if desktop:
+            print(json.dumps({"url":f"http://127.0.0.1:{existing['port']}/", "already_running":True}))
+            return
         print(f"AI HQ is already running at http://127.0.0.1:{existing['port']}. Browser session is required; stop and restart if it was lost.")
         if open_browser: webbrowser.open(f"http://127.0.0.1:{existing['port']}")
         return
@@ -73,8 +76,12 @@ def start(settings,open_browser=True):
                 if json.load(response).get("application")=="AI Development HQ": break
         except OSError: time.sleep(0.1)
     else: raise RuntimeError("Server did not become healthy; inspect server.log")
-    if open_browser: webbrowser.open(f"http://127.0.0.1:{settings.port}/#key={key}")
-    print(f"AI HQ running at http://127.0.0.1:{settings.port}. Launch key sent directly to your browser; it is not persisted or logged.")
+    if desktop:
+        # Private redirected stdout to the native parent, never persisted or logged.
+        print(json.dumps({"url":f"http://127.0.0.1:{settings.port}/#key={key}", "already_running":False}))
+    else:
+        if open_browser: webbrowser.open(f"http://127.0.0.1:{settings.port}/#key={key}")
+        print(f"AI HQ running at http://127.0.0.1:{settings.port}. Launch key sent directly to your browser; it is not persisted or logged.")
     return f"http://127.0.0.1:{settings.port}/#key={key}"
 
 def stop(settings):
@@ -128,6 +135,7 @@ def main():
     parser.add_argument("command",choices=["start","stop","serve","doctor","status","enable-live","disable-live","accept-cli-confinement","revoke-cli-confinement"])
     parser.add_argument("--port",type=int,default=8765)
     parser.add_argument("--no-browser",action="store_true")
+    parser.add_argument("--desktop",action="store_true",help="Return a private launch URL to the native parent; never open a browser")
     parser.add_argument("--acknowledge-provider-usage",action="store_true")
     parser.add_argument("--acknowledge-residual-read-risk",action="store_true")
     args=parser.parse_args();settings=Settings(port=args.port)
@@ -164,7 +172,7 @@ def main():
             else: session.add(Metadata(key="live_policy",value={"enabled":enabled}))
         db.close();print("Live policy enabled; each task still requires approval." if enabled else "Live execution disabled.")
     elif args.command=="serve": serve(settings)
-    elif args.command=="start": start(settings,not args.no_browser)
+    elif args.command=="start": start(settings,not args.no_browser and not args.desktop,desktop=args.desktop)
     elif args.command=="stop": stop(settings)
     return 0
 

@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("AI Development HQ Setup")]
-[assembly: AssemblyVersion("0.2.1.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;

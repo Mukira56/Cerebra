@@ -15,7 +15,7 @@ import sys
 import zipfile
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.2.1'
+VERSION='0.3.0'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 def included_in_release(path,stage):
@@ -23,7 +23,7 @@ def included_in_release(path,stage):
     if '__pycache__' in parts or path.suffix.lower() in {'.pyc','.pyo'}: return False
     if parts[0] in {'ai_hq','runtime'}: return True
     if parts[0]=='docs': return len(parts)==2 and parts[1] in PUBLIC_DOCS
-    return len(parts)==1 and parts[0] in {'AIHQ.exe','Uninstall.exe','README.txt','THIRD-PARTY-NOTICES.txt'}
+    return len(parts)==1 and parts[0] in {'AIHQ.exe','Uninstall.exe','README.txt','THIRD-PARTY-NOTICES.txt','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll','WEBVIEW2-LICENSE.txt','webview2-sdk.json'}
 
 def copy_tree(source, target, excluded=()):
     for path in source.rglob('*'):
@@ -43,6 +43,9 @@ def compile_program(compiler, source, output, resource=None, icon=None):
     if resource: args.append(f'/resource:{resource},AIHQ.Payload.zip')
     if icon: args.append(f'/win32icon:{icon}')
     args.extend([str(native/'Common.cs'),str(native/source)])
+    if source=='Launcher.cs':
+        sdk=native/'webview2'
+        args.extend([f'/r:{sdk/"Microsoft.Web.WebView2.Core.dll"}',f'/r:{sdk/"Microsoft.Web.WebView2.WinForms.dll"}',str(native/'Desktop.cs')])
     subprocess.run(args,check=True)
 
 def main():
@@ -76,6 +79,13 @@ def main():
     packages=sorted((dist.metadata['Name'],dist.version) for dist in importlib.metadata.distributions(path=[str(site)]) if not dist.metadata['Name'].lower().startswith('ai-development-hq'))
     (stage/'THIRD-PARTY-NOTICES.txt').write_text('Python runtime: runtime/LICENSE.txt\nThird-party package licenses and metadata are under runtime/Lib/site-packages/*.dist-info.\n\n'+'\n'.join(name+' '+version for name,version in packages)+'\n',encoding='utf-8')
     print('Compiling native launcher and uninstaller...',flush=True)
+    sdk=ROOT/'packaging/windows/webview2'
+    metadata=json.loads((sdk/'sdk.json').read_text(encoding='utf-8'))
+    for name in ['Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll']:
+        if hashlib.sha256((sdk/name).read_bytes()).hexdigest()!=metadata['files'][name]: raise RuntimeError('WebView2 SDK integrity check failed: '+name)
+        shutil.copy2(sdk/name,stage/name)
+    shutil.copy2(sdk/'LICENSE.txt',stage/'WEBVIEW2-LICENSE.txt')
+    shutil.copy2(sdk/'sdk.json',stage/'webview2-sdk.json')
     icon=build/'AIHQ.ico'
     subprocess.run([str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-File',str(ROOT/'scripts/build_icon.ps1'),'-OutputPath',str(icon)],check=True)
     compile_program(compiler,'Launcher.cs',stage/'AIHQ.exe',icon=icon)
