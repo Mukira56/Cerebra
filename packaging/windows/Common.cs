@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.2.0";
+    internal const string Version = "0.2.1";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
     internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16777216 };
     internal static string Root { get { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar); } }
@@ -60,11 +60,26 @@ internal static class Shared {
         }
     }
     internal static string Run(string root, string[] arguments, out int code, int seconds) {
-        var configuration = Config(root);
-        var command = new StringBuilder("-X utf8 -m ai_hq.manage");
+        return RunPython(root, Python(root), arguments, out code, seconds);
+    }
+    internal static bool HasPreviousSource(string root) {
+        string source = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AI-Development-HQ");
+        return string.Equals(Full((string)Config(root)["data_dir"]), Full(Path.Combine(source,"data")), StringComparison.OrdinalIgnoreCase)
+            && File.Exists(Path.Combine(source,".venv","Scripts","python.exe")) && File.Exists(Path.Combine(source,"ai_hq","manage.py"));
+    }
+    internal static string RunPreviousSource(string root, string command, out int code) {
+        if(!HasPreviousSource(root) || (command!="status" && command!="stop")) throw new InvalidOperationException("The previous source installation could not be verified. Stop it from its own tray menu before retrying.");
+        string source = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AI-Development-HQ");
+        RejectLinks(source); RejectLinks(Path.Combine(source,".venv","Scripts"));
+        string inspect="import json,sqlite3; from ai_hq.manage import owned_process; from ai_hq.config import Settings; s=Settings(); running=bool(owned_process(s)); db=sqlite3.connect(s.db_path.as_uri()+'?mode=ro',uri=True); active=db.execute(\"select count(*) from tasks where state in ('RUNNING','VERIFYING','REVIEWING','NEEDS_CHANGES')\").fetchone()[0]; db.close(); print(json.dumps(dict(running=running,active_tasks=active)))";
+        return RunPython(source,Path.Combine(source,".venv","Scripts","python.exe"),command=="status"?new string[0]:new[]{command},out code,30,root,command=="status"?inspect:null);
+    }
+    private static string RunPython(string root, string python, string[] arguments, out int code, int seconds, string configurationRoot=null, string inspect=null) {
+        var configuration = Config(configurationRoot ?? root);
+        var command = new StringBuilder(inspect==null?"-X utf8 -m ai_hq.manage":"-X utf8 -c "+Quote(inspect));
         foreach(string argument in arguments) command.Append(" " + Quote(argument));
         if(Array.IndexOf(arguments, "--port") < 0) command.Append(" --port " + Convert.ToInt32(configuration["port"]));
-        var info = new ProcessStartInfo(Python(root), command.ToString()) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        var info = new ProcessStartInfo(python, command.ToString()) { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         info.EnvironmentVariables["AIHQ_DATA_DIR"] = (string)configuration["data_dir"];
         info.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1";
         info.EnvironmentVariables.Remove("PYTHONPATH");

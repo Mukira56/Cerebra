@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("AI Development HQ Setup")]
-[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.2.1.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
@@ -112,7 +112,9 @@ internal sealed class SetupForm:Form {
     private readonly Label state=new Label();
     internal SetupForm(InstallOptions value) {
         options=value;Text="AI Development HQ Setup";ClientSize=new Size(620,495);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;Font=new Font("Segoe UI",10);
-        Controls.Add(new Label{Text="AI Development HQ",Font=new Font("Segoe UI",22,FontStyle.Bold),Location=new Point(28,23),AutoSize=true});
+        Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        Controls.Add(new PictureBox{Image=Icon.ToBitmap(),Location=new Point(30,25),Size=new Size(42,42),SizeMode=PictureBoxSizeMode.Zoom});
+        Controls.Add(new Label{Text="AI Development HQ",Font=new Font("Segoe UI",22,FontStyle.Bold),Location=new Point(82,23),AutoSize=true});
         Controls.Add(new Label{Text="Version "+Shared.Version+"  |  Windows 10/11 x64  |  Installs for your account",Location=new Point(30,76),AutoSize=true,ForeColor=Color.DimGray});
         Controls.Add(new Label{Text="Program location",Location=new Point(30,121),AutoSize=true});target.SetBounds(30,146,555,29);target.Text=options.Target;Controls.Add(target);
         Controls.Add(new Label{Text="Project data and history (kept during uninstall)",Location=new Point(30,192),AutoSize=true});data.SetBounds(30,217,555,29);data.Text=options.Data;Controls.Add(data);

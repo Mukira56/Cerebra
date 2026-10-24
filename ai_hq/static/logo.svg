@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AI HQ">
+  <rect width="256" height="256" rx="56" fill="#101b2b"/>
+  <path d="M48 72h32v40h48V72h32v112h-32v-44H80v44H48z" fill="#c5f277"/>
+  <path d="M192 72h24v112h-24z" fill="#63d9ce"/>
+  <path d="M160 168h44v24h-44z" fill="#63d9ce"/>
+  <circle cx="204" cy="48" r="12" fill="#c5f277"/>
+</svg>

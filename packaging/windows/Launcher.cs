@@ -7,7 +7,7 @@ using System.Windows.Forms;
 using System.Reflection;
 
 [assembly: AssemblyTitle("AI Development HQ")]
-[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.2.1.0")]
 [assembly: AssemblyDescription("Local AI development headquarters")]
 
 internal static class Launcher {
@@ -57,13 +57,30 @@ internal sealed class TrayContext : ApplicationContext {
     }
     private async void Begin() {
         tray.ShowBalloonTip(2500,"AI HQ","Checking local tools and starting your private dashboard.",ToolTipIcon.Info);
+        if(!await Execute(new[]{"start"})) { ExitThread(); return; }
         await Execute(new[]{"doctor"},false);
-        if(!await Execute(new[]{"start"})) ExitThread();
     }
     private async Task<bool> Execute(string[] command, bool report=true) {
         if(busy) return false; busy=true;
         try {
             int code=0; string output=await Task.Run(()=>Shared.Run(Shared.Root,command,out code,120));
+            if(code!=0 && command[0]=="start" && output.Contains("PID identity does not match") && Shared.HasPreviousSource(Shared.Root)) {
+                int previousCode=0;
+                string previous=await Task.Run(()=>Shared.RunPreviousSource(Shared.Root,"status",out previousCode));
+                if(previousCode==0) {
+                    var status=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(previous);
+                    if(Convert.ToBoolean(status["running"])) {
+                        int active=Convert.ToInt32(status["active_tasks"]);
+                        string message="The previous source version of AI HQ is still running. Switch to this installed version now?\n\nYour projects and history will be preserved.";
+                        if(active>0) message+="\n\n"+active+" task(s) are active. Switching interrupts them; you can explicitly resume them afterward.";
+                        if(MessageBox.Show(message,"Switch to installed AI HQ",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes) {
+                            string stopped=await Task.Run(()=>Shared.RunPreviousSource(Shared.Root,"stop",out previousCode));
+                            if(previousCode!=0) throw new Exception(stopped);
+                            output=await Task.Run(()=>Shared.Run(Shared.Root,command,out code,120));
+                        } else return false;
+                    }
+                }
+            }
             if(code!=0) { if(report) MessageBox.Show(output,"AI HQ",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
             return true;
         } catch(Exception error) { if(report) MessageBox.Show(error.Message,"AI HQ",MessageBoxButtons.OK,MessageBoxIcon.Error); return false; }
@@ -80,10 +97,12 @@ internal sealed class TrayContext : ApplicationContext {
         finally { busy=false; }
     }
     private bool ConfirmStop() {
+        try {
         int code; string text=Shared.Run(Shared.Root,new[]{"status"},out code,20);
         if(code!=0) { MessageBox.Show(text,"AI HQ"); return false; }
         var status=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(text);
         return Convert.ToInt32(status["active_tasks"])==0 || MessageBox.Show("Tasks are active. Stop them and preserve their files/history for explicit resume?","Stop AI HQ",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
+        } catch(Exception error) { MessageBox.Show(error.Message,"AI HQ",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
     }
     private async Task Restart() { if(!busy && ConfirmStop() && await Execute(new[]{"stop"})) await Execute(new[]{"start"}); }
     private async Task StopAndExit() { if(!busy && ConfirmStop() && await Execute(new[]{"stop"})) ExitThread(); }

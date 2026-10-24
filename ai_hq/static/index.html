@@ -6,14 +6,14 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#101721">
   <title>AI HQ · Development command center</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
   <div class="shell">
     <aside class="sidebar" aria-label="Main navigation">
-      <a class="brand" href="#overview" aria-label="AI HQ overview"><span class="brand-mark">H<span>Q</span></span><span>AI HQ<small>DEVELOPMENT WORKSPACE</small></span></a>
+      <a class="brand" href="#overview" aria-label="AI HQ overview"><img class="brand-mark" src="/static/logo.svg" alt="" width="40" height="40"><span>AI HQ<small>DEVELOPMENT WORKSPACE</small></span></a>
       <div class="workspace-card"><span class="workspace-icon">⌘</span><div><strong>Local workspace</strong><small>Private · On this computer</small></div><span class="status-dot"></span></div>
       <p class="nav-caption">WORKSPACE</p>
       <nav id="navigation">
@@ -26,7 +26,7 @@
         <a class="nav-link" href="#logs" data-page="logs"><span aria-hidden="true">▤</span>Activity log</a>
         <a class="nav-link mobile-settings" href="#settings" data-page="settings"><span aria-hidden="true">⚙</span>Settings</a>
       </nav>
-      <div class="sidebar-bottom"><div class="local-notice"><span class="status-dot"></span><span>LOCAL BY DESIGN<small>127.0.0.1 · No cloud required</small></span></div><a class="nav-link" href="#settings" data-page="settings"><span aria-hidden="true">⚙</span>Settings</a><div class="profile"><span class="avatar">Y</span><div><strong>Your development HQ</strong><small>Human in control</small></div><span class="profile-dots">•••</span></div></div>
+      <div class="sidebar-bottom"><div class="local-notice"><span class="status-dot"></span><span>LOCAL BY DESIGN<small>127.0.0.1 · Private workspace</small></span></div><a class="nav-link" href="#settings" data-page="settings"><span aria-hidden="true">⚙</span>Settings</a><div class="profile"><span class="avatar">Y</span><div><strong>Your development HQ</strong><small>Human in control</small></div><span class="profile-dots">•••</span></div></div>
     </aside>
     <div class="main-shell">
       <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-title">Overview</strong></div><div class="topbar-right"><span id="connection-status" class="connection"><span class="status-dot"></span>Connecting</span><span class="topbar-divider"></span><span class="local-pill">LOCAL INSTANCE</span><span class="top-avatar">Y</span></div></header>
@@ -34,7 +34,7 @@
         <div id="page-heading" class="page-heading"><div><div class="eyebrow">YOUR DEVELOPMENT COMMAND CENTER</div><h1 id="page-title">Workspace overview</h1><p id="page-subtitle">From an idea to reviewed code. Every step, in one place.</p></div><div id="heading-actions" class="heading-actions"></div></div>
         <div id="global-notice" class="notice hidden" role="status"></div>
         <div id="page-content" aria-live="polite"></div>
-        <footer class="footer"><span><span class="status-dot"></span> Your code stays on your computer</span><span>AI HQ <span class="footer-separator">/</span> Deterministic supervisor</span></footer>
+        <footer class="footer"><span><span class="status-dot"></span> Local workspace · Live agents use provider services</span><span>AI HQ <span class="footer-separator">/</span> Human controlled</span></footer>
       </main>
     </div>
   </div>

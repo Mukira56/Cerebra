@@ -15,7 +15,7 @@ import sys
 import zipfile
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.2.0'
+VERSION='0.2.1'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 def included_in_release(path,stage):
@@ -76,8 +76,10 @@ def main():
     packages=sorted((dist.metadata['Name'],dist.version) for dist in importlib.metadata.distributions(path=[str(site)]) if not dist.metadata['Name'].lower().startswith('ai-development-hq'))
     (stage/'THIRD-PARTY-NOTICES.txt').write_text('Python runtime: runtime/LICENSE.txt\nThird-party package licenses and metadata are under runtime/Lib/site-packages/*.dist-info.\n\n'+'\n'.join(name+' '+version for name,version in packages)+'\n',encoding='utf-8')
     print('Compiling native launcher and uninstaller...',flush=True)
-    compile_program(compiler,'Launcher.cs',stage/'AIHQ.exe')
-    compile_program(compiler,'Uninstaller.cs',stage/'Uninstall.exe')
+    icon=build/'AIHQ.ico'
+    subprocess.run([str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-File',str(ROOT/'scripts/build_icon.ps1'),'-OutputPath',str(icon)],check=True)
+    compile_program(compiler,'Launcher.cs',stage/'AIHQ.exe',icon=icon)
+    compile_program(compiler,'Uninstaller.cs',stage/'Uninstall.exe',icon=icon)
     files={path.relative_to(stage).as_posix():hashlib.file_digest(path.open('rb'),'sha256').hexdigest() for path in sorted(stage.rglob('*')) if path.is_file() and included_in_release(path,stage)}
     (stage/'release-files.json').write_text(json.dumps({'app_id':'AIDevelopmentHQ','version':VERSION,'files':files},indent=2),encoding='utf-8')
     print('Compressing '+str(len(files))+' files...',flush=True)
@@ -87,7 +89,7 @@ def main():
             archive.write(stage/name,name)
     installer=args.output/f'AI-HQ-Setup-{VERSION}-Windows-x64.exe'
     print('Embedding the offline application payload...',flush=True)
-    compile_program(compiler,'Installer.cs',installer,resource=payload)
+    compile_program(compiler,'Installer.cs',installer,resource=payload,icon=icon)
     digest=hashlib.file_digest(installer.open('rb'),'sha256').hexdigest()
     (args.output/(installer.name+'.sha256')).write_text(digest+'  '+installer.name+'\n',encoding='ascii')
     record={'version':VERSION,'installer':str(installer),'sha256':digest,'installer_bytes':installer.stat().st_size,'payload_files':len(files),'installed_bytes':sum((stage/name).stat().st_size for name in files),'python':sys.version.split()[0],'packages':packages,'signed':False}

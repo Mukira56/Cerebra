@@ -8,3 +8,5 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 .two-column>*,.overview-right,.panel{min-width:0}.table-wrap{max-width:100%}
 @media(max-width:700px){.pipeline,.detail-tabs{overflow-x:auto}.two-column{grid-template-columns:minmax(0,1fr)}}
+
+.brand-mark{display:block;object-fit:contain;padding:0;border:0;background:transparent;transform:none;letter-spacing:normal;flex-shrink:0;box-shadow:0 0 24px #c5f27712}button:focus-visible,a:focus-visible{outline:2px solid var(--teal)}.task-progress{margin:16px 0;padding:14px 16px;border:1px solid var(--line);border-left:3px solid var(--teal);border-radius:8px;background:var(--panel2);color:var(--text);font-size:12px}.task-progress p{margin:4px 0 0;color:var(--muted);font-size:11px}
