@@ -15,7 +15,7 @@ import sys
 import zipfile
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.3.0'
+VERSION='0.4.0'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 def included_in_release(path,stage):

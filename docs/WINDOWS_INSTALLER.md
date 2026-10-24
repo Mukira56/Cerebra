@@ -2,7 +2,7 @@
 
 Windows 10/11 x64. This personal build includes its own Python 3.13 runtime and application dependencies. It does not require a separate Python, npm, or PowerShell setup command. Git is required for project work; Codex and Claude Code must be installed and signed in separately for live agents. No provider credentials or project data are included in the installer.
 
-Run AI-HQ-Setup-0.3.0-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\AI HQ. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
+Run AI-HQ-Setup-0.4.0-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\AI HQ. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
 
 Your project data stays outside the program directory. If this account already has AI HQ at %USERPROFILE%\AI-Development-HQ\data, setup selects that existing data location without copying, moving or deleting it. Keep that folder: registered repositories and Git worktrees can contain absolute paths. On a new account, data defaults to %LOCALAPPDATA%\AI HQ\data.
 

@@ -159,6 +159,16 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
         return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
+    @app.get("/api/telemetry")
+    def telemetry(task_id: str | None = None):
+        if task_id is not None:
+            if len(task_id) > 64:
+                raise HTTPException(422, "Task ID is too long")
+            with db.Session() as session:
+                task_or_404(session, task_id)
+        from .telemetry import snapshot
+        return snapshot(db, task_id)
+
     @app.post("/api/projects", status_code=201)
     def register(payload: ProjectCreate):
         from .gitops import GitManager

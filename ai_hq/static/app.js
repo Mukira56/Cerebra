@@ -3,6 +3,7 @@
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
     overview: ["Overview", "Workspace overview", "From an idea to reviewed code. Every step, in one place."],
+    matrix: ["Model matrix", "Neural operations matrix", "Live orchestration, run timing, and verification in one circuit view."],
     projects: ["Projects", "Your projects", "Register a repository and explicitly authorize its project scope."],
     tasks: ["Task console", "Task console", "Describe the objective, review the plan, and control execution."],
     agents: ["AI agents", "Your development team", "Two independent agent roles, coordinated by one local supervisor."],
@@ -66,10 +67,15 @@
     if (["agents", "logs", "reviews", "git"].includes(page)) actions.append(button("↻  Refresh", () => refresh(true), "button ghost"));
   }
   function render() {
+    if (page !== "matrix") window.AIHQMatrix?.unmount();
     heading(); if (!data) { content.replaceChildren(el("div", "loading", "Connecting to your local workspace…")); return; }
     $("#project-count").textContent = array(data.projects).length;
     const approvalCount = array(data.approvals).filter(approvalPending).length;
     $("#approval-count").textContent = approvalCount; $("#approval-count").classList.toggle("hidden", !approvalCount);
+    if (page === "matrix") {
+      if (!content.querySelector(".matrix-console")) window.AIHQMatrix.mount(content, {api, inspect:taskDetail});
+      return;
+    }
     const views = {overview:overviewView,projects:projectsView,tasks:tasksView,agents:agentsView,reviews:reviewsView,git:gitView,logs:logsView,settings:settingsView};
     content.replaceChildren(views[page]());
   }

@@ -68,3 +68,9 @@ Review findings carry severity and evidence. Repair attempts are bounded at thre
 **AI agents** shows tool detection, available adapter information, and limitations. A detected executable is different from verified authentication or live end-to-end readiness. **Settings** controls supported executable paths, timeouts, and retry limits. The MVP enforces one active coding assignment. **Activity log** shows recent persisted events; task details show task-specific logs.
 
 Ollama is optional and not required to plan or execute a mock workflow. Entering an endpoint downloads no model and does not make it the supervisor. The app does not estimate actual provider billing.
+
+## Model matrix
+
+Open Model matrix in the desktop sidebar for the circuit-style orchestration view. Live runs displays genuine recorded provider work; Mock runs displays simulated agents and their actual local verification commands. Preview cycles illustrative signals without creating tasks or launching models. Node movement represents task stages, not model internals. Select a task to filter the feed or a node to inspect its measured history. Open a task card for the complete evidence.
+
+Telemetry refreshes every two seconds while the section is visible. Run counts and success rates cover at most 500 recent runs. Duration is wall-clock CLI time including startup and orchestration. The integration does not report token speed, cost, or cloud-model CPU/GPU utilization, so those values are not invented. CLI transcripts appear when a run finishes. Pause animation affects the drawing only. Expand view gives the circuit more screen space. A disconnected feed is labeled and live signal motion freezes. Human approvals remain in force.
