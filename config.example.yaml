@@ -1,0 +1,22 @@
+# Human-readable configuration reference; this file is not automatically loaded.
+# Edit supported values in the dashboard Settings screen. They persist in SQLite.
+# Use AIHQ_DATA_DIR for data location and scripts/start.ps1 -Port for the port.
+data_dir: C:\Users\ADMIN\AI-Development-HQ\data
+bind_host: 127.0.0.1
+port: 8765
+agent_timeout: 600
+test_timeout: 120
+max_retries: 3
+max_concurrency: 1  # This MVP enforces one active coding agent.
+codex_path: ""      # Empty means detect from PATH.
+claude_path: ""
+ollama_url: http://127.0.0.1:11434
+live_enabled: false  # Also requires a recorded confinement policy and per-task consent.
+# CLI-confinement acceptance is a separate terminal policy, not a Settings value.
+# It acknowledges outside-repository read risk; it does not verify OS sandbox scope.
+output_limit: 262144
+
+# Example per-project test commands (literal argv, no shell expansion):
+# test_commands:
+#   - [python, -m, pytest, -q]
+# Integration requires approval. No automatic push, deployment, or publication.

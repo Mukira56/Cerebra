@@ -1,0 +1,89 @@
+from typing import Literal
+import re
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from .security import relative_paths, redact
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+class ProjectCreate(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+    path: str = Field(default="", max_length=2048)
+    create_new: bool = False
+    authorize: Literal[True]
+    test_commands: list[list[str]] = Field(default_factory=list, max_length=10)
+    mode: Literal["mock", "live"] = "mock"
+
+    @field_validator("test_commands")
+    @classmethod
+    def commands(cls, values):
+        for command in values:
+            if not command or len(command) > 50 or any(not arg or "\x00" in arg or len(arg)>4096 for arg in command):
+                raise ValueError("Each test command needs a bounded list of literal arguments")
+            if command[0].startswith("-"):
+                raise ValueError("Executable cannot be an option")
+            if any(redact(arg) != arg for arg in command):
+                raise ValueError("Do not embed credentials in stored test commands")
+            credential_flags = re.compile(r"^--?(?:api[-_]?key|access[-_]?token|refresh[-_]?token|token|password|passwd|secret)(?:=|$)", re.I)
+            if any(credential_flags.match(arg) for arg in command):
+                raise ValueError("Credential-bearing command options cannot be stored; use the provider's login flow")
+        return values
+
+class TaskCreate(StrictModel):
+    project_id: str
+    description: str = Field(min_length=8, max_length=30000)
+    assigned_agent: Literal["codex", "claude"] = "codex"
+    mode: Literal["mock", "live"] = "mock"
+    requirements: list[str] = Field(default_factory=list, max_length=100)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=100)
+    dependencies: list[str] = Field(default_factory=list, max_length=100)
+    allowed_paths: list[str] = Field(default_factory=lambda:["."], min_length=1, max_length=100)
+
+    @field_validator("allowed_paths")
+    @classmethod
+    def paths(cls, values): return relative_paths(values)
+
+class ApprovalDecision(StrictModel):
+    approve: bool
+
+class SessionCreate(StrictModel):
+    key: str = Field(min_length=20, max_length=200)
+
+class SettingsUpdate(StrictModel):
+    agent_timeout: int | None = Field(default=None, ge=10, le=7200)
+    test_timeout: int | None = Field(default=None, ge=1, le=1800)
+    max_retries: int | None = Field(default=None, ge=0, le=3)
+    max_concurrency: Literal[1] | None = None
+    codex_path: str | None = Field(default=None, max_length=2048)
+    claude_path: str | None = Field(default=None, max_length=2048)
+    ollama_url: str | None = None
+
+    @field_validator("ollama_url")
+    @classmethod
+    def local_ollama(cls, value):
+        from urllib.parse import urlparse
+        parsed = urlparse(value)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+            raise ValueError("Ollama must use a loopback HTTP endpoint")
+        return value
+
+class ReviewFinding(StrictModel):
+    severity: Literal["critical", "high", "medium", "low", "info"]
+    path: str = ""
+    line: int = Field(default=0, ge=0)
+    message: str = Field(min_length=1, max_length=10000)
+    validated: bool = False
+
+class AgentTaskMessage(StrictModel):
+    task_id: str
+    project_id: str
+    description: str
+    requirements: list[str]
+    acceptance_criteria: list[str]
+    assigned_agent: Literal["codex", "claude"]
+    dependencies: list[str]
+    allowed_paths: list[str]
+    base_commit: str
+    branch: str
+    working_directory: str
+    attempt: int = Field(ge=0, le=3)
