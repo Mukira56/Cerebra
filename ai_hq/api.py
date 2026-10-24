@@ -20,6 +20,7 @@ from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid
 from .schemas import ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision
 from .security import redact
+from . import __version__
 
 STATIC = Path(__file__).parent / "static"
 
@@ -108,7 +109,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     async def git_error(_, exc): return JSONResponse({"detail":redact(str(exc))[:2000]}, status_code=400)
 
     @app.get("/health")
-    def health(): return {"status":"ok", "application":"AI Development HQ", "version":"0.1.0"}
+    def health(): return {"status":"ok", "application":"AI Development HQ", "version":__version__}
 
     @app.post("/api/session")
     def create_session(payload: SessionCreate):

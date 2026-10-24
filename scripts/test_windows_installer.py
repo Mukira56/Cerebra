@@ -1,0 +1,104 @@
+"""Exercise the real installer in isolated program/data directories, without live AI."""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import socket
+import sqlite3
+import subprocess
+import sys
+import time
+from urllib.request import urlopen
+from urllib.error import HTTPError,URLError
+import winreg
+
+ROOT=Path(__file__).resolve().parent.parent
+REGISTRY=r'Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ.InstallerTest'
+
+def run(args,**kwargs):
+    result=subprocess.run([str(arg) for arg in args],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=kwargs.pop('timeout',240),creationflags=subprocess.CREATE_NO_WINDOW,**kwargs)
+    if result.returncode: raise RuntimeError(str(args[0])+': '+result.stdout+'\n'+result.stderr)
+    return result.stdout.strip()
+
+MOCK_TEST=r'''
+import json,secrets
+from fastapi.testclient import TestClient
+from ai_hq.api import create_app
+from ai_hq.config import Settings
+key=secrets.token_urlsafe(32)
+app=create_app(Settings(),bootstrap_key=key,start_worker=False)
+with TestClient(app) as c:
+    r=c.post('/api/session',json={'key':key});r.raise_for_status();c.headers['X-CSRF-Token']=r.json()['csrf_token']
+    r=c.post('/api/demo',json={});r.raise_for_status();task_id=r.json()['task']['id']
+    c.post('/api/tasks/'+task_id+'/approve-plan',json={}).raise_for_status()
+    c.post('/api/tasks/'+task_id+'/start',json={}).raise_for_status()
+    app.state.supervisor.run_until_idle()
+    task=c.get('/api/tasks/'+task_id).json()
+    assert task['state']=='AWAITING_APPROVAL',task
+    assert task['results']['verified'] and task['reviews'] and all(t['passed'] for t in task['test_results'])
+    assert all(run['simulated'] for run in task['runs'])
+    assert app.state.settings.live_enabled is False
+    print(json.dumps({'task_id':task_id,'state':task['state'],'tests':task['test_results'][0]['stdout'],'agents_simulated':True}))
+'''
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('installer',type=Path);parser.add_argument('--test-root',type=Path,default=ROOT/'work/install-test');args=parser.parse_args()
+    target=args.test_root/'AI HQ';data=args.test_root/'retained-data'
+    if target.exists():raise RuntimeError('A previous test directory exists; inspect it before repeating')
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY): raise RuntimeError('A previous installer test registration exists')
+    except FileNotFoundError:pass
+    with socket.socket() as probe:probe.bind(('127.0.0.1',18765))
+    data.mkdir(parents=True,exist_ok=True);(data/'user-project.txt').write_text('Retain this user data',encoding='utf-8')
+    print('Installing the actual EXE into an isolated directory...',flush=True)
+    run([args.installer,'--quiet','--dir',target,'--data',data,'--port','18765','--no-desktop','--test-registration'],timeout=360)
+    manifest=json.loads((target/'aihq-install.json').read_text())
+    assert manifest['data_dir']==str(data) and manifest['registry']==REGISTRY
+    assert 'docs/progress.md' not in manifest['files'] and 'docs/environment-report.md' not in manifest['files']
+    assert not (target/'data').exists() and not (target/'.env').exists()
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY) as registry:assert winreg.QueryValueEx(registry,'InstallLocation')[0]==str(target)
+    menu=Path(manifest['menu']);assert (menu/'AI Development HQ.lnk').is_file()
+    python=target/'runtime/python.exe';launcher=target/'AIHQ.exe'
+    env=os.environ.copy();env['PYTHONPATH']=r'C:\Users\ADMIN\AI-Development-HQ';env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
+    code="import ai_hq,fastapi,pydantic,sqlalchemy,pytest,httpx,json,sys;print(json.dumps({'file':ai_hq.__file__,'version':ai_hq.__version__,'path':sys.path}))"
+    modules=json.loads(run([python,'-X','utf8','-c',code],cwd=target,env=env))
+    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.2.0'
+    assert r'C:\Users\ADMIN\AI-Development-HQ' not in modules['path']
+    assert not any('__editable__' in p.name for p in target.rglob('*'))
+    print('Private runtime imports application/dependencies without source Python...',flush=True)
+    diagnostics=run([launcher,'--doctor'],cwd=target,timeout=180)
+    assert 'FAIL' not in diagnostics,diagnostics
+    started=False
+    try:
+        run([launcher,'--start-no-browser'],cwd=target,timeout=120);started=True
+        with urlopen('http://127.0.0.1:18765/health',timeout=10) as response:health=json.load(response)
+        assert health['version']=='0.2.0'
+        with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'AI HQ' in response.read()
+        try:urlopen('http://127.0.0.1:18765/api/overview',timeout=10);raise AssertionError('Unauthenticated API allowed')
+        except HTTPError as error:assert error.code==401
+        status=json.loads(run([launcher,'--status'],cwd=target));assert status['running'] and status['active_tasks']==0
+        run([launcher,'--stop'],cwd=target);started=False
+    finally:
+        if started:run([launcher,'--stop'],cwd=target)
+    print('Native launcher start, health, protected API and managed stop passed...',flush=True)
+    proof=json.loads(run([python,'-X','utf8','-c',MOCK_TEST],cwd=target,env=env,timeout=360))
+    print('Packaged mock agents, Git worktrees, actual pytest and review passed...',flush=True)
+    (target/'keep-my-file.txt').write_text('Unknown user file must survive uninstall',encoding='utf-8')
+    run([target/'Uninstall.exe','--quiet'],cwd=ROOT,timeout=180)
+    deadline=time.monotonic()+30
+    while (target/'AIHQ.exe').exists() and time.monotonic()<deadline:time.sleep(.2)
+    assert not (target/'AIHQ.exe').exists() and not (target/'runtime/python.exe').exists()
+    assert (target/'keep-my-file.txt').read_text()=='Unknown user file must survive uninstall'
+    assert (data/'user-project.txt').read_text()=='Retain this user data'
+    with sqlite3.connect(data/'hq.sqlite3') as db:assert db.execute('select state from tasks where id=?',(proof['task_id'],)).fetchone()[0]=='AWAITING_APPROVAL'
+    assert not (menu/'AI Development HQ.lnk').exists()
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY):raise AssertionError('Test uninstall registration was not removed')
+    except FileNotFoundError:pass
+    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':'0.2.0','private_runtime':True,'native_launch_stop':True,'authentication_boundary':True,'mock_workflow':proof,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
+    (ROOT/'work/windows-build/installer-test-results.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    print(json.dumps(report),flush=True)
+
+if __name__=='__main__':main()

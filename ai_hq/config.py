@@ -1,12 +1,26 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
+import json
 
 ROOT = Path(__file__).resolve().parent.parent
 
+def default_data_dir():
+    explicit = os.environ.get("AIHQ_DATA_DIR")
+    if explicit:
+        return Path(explicit)
+    desktop = ROOT / "desktop-settings.json"
+    if desktop.is_file():
+        value = json.loads(desktop.read_text(encoding="utf-8"))
+        location = value.get("data_dir")
+        if value.get("app_id") != "AIDevelopmentHQ" or not isinstance(location, str) or not Path(location).is_absolute():
+            raise ValueError("Invalid installed desktop data location")
+        return Path(location)
+    return ROOT / "data"
+
 @dataclass
 class Settings:
-    data_dir: Path = field(default_factory=lambda: Path(os.environ.get("AIHQ_DATA_DIR", ROOT / "data")))
+    data_dir: Path = field(default_factory=default_data_dir)
     agent_timeout: int = 600
     test_timeout: int = 120
     max_retries: int = 3

@@ -1,0 +1,97 @@
+"""Build a per-user Windows installer using installed runtimes and the OS C# compiler.
+
+No SDK, installer builder, global pip install, or internet download is performed.
+"""
+from __future__ import annotations
+import argparse
+import hashlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import zipfile
+
+ROOT=Path(__file__).resolve().parent.parent
+VERSION='0.2.0'
+PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
+
+def included_in_release(path,stage):
+    parts=path.relative_to(stage).parts
+    if '__pycache__' in parts or path.suffix.lower() in {'.pyc','.pyo'}: return False
+    if parts[0] in {'ai_hq','runtime'}: return True
+    if parts[0]=='docs': return len(parts)==2 and parts[1] in PUBLIC_DOCS
+    return len(parts)==1 and parts[0] in {'AIHQ.exe','Uninstall.exe','README.txt','THIRD-PARTY-NOTICES.txt'}
+
+def copy_tree(source, target, excluded=()):
+    for path in source.rglob('*'):
+        relative=path.relative_to(source)
+        if any(part in excluded or part=='__pycache__' for part in relative.parts): continue
+        if path.suffix.lower() in {'.pyc','.pyo','.pth'} or path.name.startswith('__editable__'): continue
+        if path.is_symlink() or (hasattr(path,'is_junction') and path.is_junction()): raise RuntimeError('Build inputs may not contain links: '+str(path))
+        if path.is_file():
+            destination=target/relative
+            if destination.is_file() and destination.stat().st_size==path.stat().st_size and destination.stat().st_mtime_ns==path.stat().st_mtime_ns: continue
+            destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
+
+def compile_program(compiler, source, output, resource=None, icon=None):
+    native=ROOT/'packaging/windows'
+    args=[str(compiler),'/nologo','/target:winexe','/platform:x64','/optimize+','/utf8output',f'/out:{output}',f'/win32manifest:{native/"app.manifest"}',
+          '/r:System.Windows.Forms.dll','/r:System.Drawing.dll','/r:System.Web.Extensions.dll','/r:System.IO.Compression.dll','/r:System.IO.Compression.FileSystem.dll']
+    if resource: args.append(f'/resource:{resource},AIHQ.Payload.zip')
+    if icon: args.append(f'/win32icon:{icon}')
+    args.extend([str(native/'Common.cs'),str(native/source)])
+    subprocess.run(args,check=True)
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--build-dir',type=Path,default=ROOT/'work/windows-build')
+    args=parser.parse_args()
+    if os.name!='nt' or sys.version_info[:2]!=(3,13) or sys.maxsize<2**32: raise RuntimeError('Build with Windows x64 Python 3.13 and the tested project environment')
+    compiler=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+    if not compiler.is_file(): raise RuntimeError('The Windows .NET Framework C# compiler is not available')
+    build=args.build_dir.resolve();stage=build/'payload';stage.mkdir(parents=True,exist_ok=True)
+    if (stage/'data').exists() or (stage/'desktop-settings.json').exists(): raise RuntimeError('Build payload contains runtime data; use a new build directory')
+    args.output.mkdir(parents=True,exist_ok=True)
+    base=Path(sys.base_prefix);runtime=stage/'runtime';runtime.mkdir(exist_ok=True)
+    for name in ['python.exe','pythonw.exe','python3.dll','python313.dll','vcruntime140.dll','vcruntime140_1.dll','LICENSE.txt']:
+        shutil.copy2(base/name,runtime/name)
+    print('Copying private Python runtime and tested dependencies...',flush=True)
+    copy_tree(base/'Lib',runtime/'Lib',{'site-packages','test','idlelib','tkinter','turtledemo'})
+    for path in (base/'DLLs').iterdir():
+        if path.is_file() and path.suffix.lower() in {'.dll','.pyd'} and not path.name.startswith(('_test','_ctypes_test','_tkinter','tcl','tk')):
+            (runtime/'DLLs').mkdir(exist_ok=True);shutil.copy2(path,runtime/'DLLs'/path.name)
+    site=Path(sys.prefix)/'Lib/site-packages'
+    excluded={path.name for path in site.iterdir() if path.name.startswith(('__editable__','ai_development_hq'))}
+    copy_tree(site,runtime/'Lib/site-packages',excluded)
+    (runtime/'python313._pth').write_text('Lib\nDLLs\nLib\\site-packages\n..\nimport site\n',encoding='utf-8')
+    (runtime/'Lib/site-packages/sitecustomize.py').write_text("import sys\nfor stream in (sys.stdout,sys.stderr):\n    if stream is not None and hasattr(stream,'reconfigure'): stream.reconfigure(encoding='utf-8')\n",encoding='utf-8')
+    copy_tree(ROOT/'ai_hq',stage/'ai_hq')
+    (stage/'docs').mkdir(exist_ok=True)
+    for name in PUBLIC_DOCS:shutil.copy2(ROOT/'docs'/name,stage/'docs'/name)
+    shutil.copy2(ROOT/'docs/WINDOWS_INSTALLER.md',stage/'README.txt')
+    packages=sorted((dist.metadata['Name'],dist.version) for dist in importlib.metadata.distributions(path=[str(site)]) if not dist.metadata['Name'].lower().startswith('ai-development-hq'))
+    (stage/'THIRD-PARTY-NOTICES.txt').write_text('Python runtime: runtime/LICENSE.txt\nThird-party package licenses and metadata are under runtime/Lib/site-packages/*.dist-info.\n\n'+'\n'.join(name+' '+version for name,version in packages)+'\n',encoding='utf-8')
+    print('Compiling native launcher and uninstaller...',flush=True)
+    compile_program(compiler,'Launcher.cs',stage/'AIHQ.exe')
+    compile_program(compiler,'Uninstaller.cs',stage/'Uninstall.exe')
+    files={path.relative_to(stage).as_posix():hashlib.file_digest(path.open('rb'),'sha256').hexdigest() for path in sorted(stage.rglob('*')) if path.is_file() and included_in_release(path,stage)}
+    (stage/'release-files.json').write_text(json.dumps({'app_id':'AIDevelopmentHQ','version':VERSION,'files':files},indent=2),encoding='utf-8')
+    print('Compressing '+str(len(files))+' files...',flush=True)
+    payload=build/'payload.zip'
+    with zipfile.ZipFile(payload,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
+        for name in [*files,'release-files.json']:
+            archive.write(stage/name,name)
+    installer=args.output/f'AI-HQ-Setup-{VERSION}-Windows-x64.exe'
+    print('Embedding the offline application payload...',flush=True)
+    compile_program(compiler,'Installer.cs',installer,resource=payload)
+    digest=hashlib.file_digest(installer.open('rb'),'sha256').hexdigest()
+    (args.output/(installer.name+'.sha256')).write_text(digest+'  '+installer.name+'\n',encoding='ascii')
+    record={'version':VERSION,'installer':str(installer),'sha256':digest,'installer_bytes':installer.stat().st_size,'payload_files':len(files),'installed_bytes':sum((stage/name).stat().st_size for name in files),'python':sys.version.split()[0],'packages':packages,'signed':False}
+    (build/'build-record.json').write_text(json.dumps(record,indent=2),encoding='utf-8')
+    print(json.dumps({key:value for key,value in record.items() if key!='packages'}),flush=True)
+
+if __name__=='__main__': main()

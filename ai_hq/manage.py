@@ -110,9 +110,22 @@ def serve(settings):
     app=create_app(settings,bootstrap_key=key)
     uvicorn.run(app,host="127.0.0.1",port=settings.port,access_log=False,log_level="warning")
 
+def status(settings):
+    running = bool(owned_process(settings))
+    active = 0
+    if settings.db_path.is_file():
+        from .db import Database
+        from .models import Task
+        from sqlalchemy import select, func
+        db = Database(settings.db_path)
+        with db.Session() as session:
+            active = session.scalar(select(func.count()).select_from(Task).where(Task.state.in_(["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"])))
+        db.close()
+    return {"running":running,"active_tasks":active,"url":f"http://127.0.0.1:{settings.port}"}
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command",choices=["start","stop","serve","doctor","enable-live","disable-live","accept-cli-confinement","revoke-cli-confinement"])
+    parser.add_argument("command",choices=["start","stop","serve","doctor","status","enable-live","disable-live","accept-cli-confinement","revoke-cli-confinement"])
     parser.add_argument("--port",type=int,default=8765)
     parser.add_argument("--no-browser",action="store_true")
     parser.add_argument("--acknowledge-provider-usage",action="store_true")
@@ -135,6 +148,9 @@ def main():
     if args.command=="doctor":
         from .doctor import main as doctor
         return doctor()
+    if args.command=="status":
+        print(json.dumps(status(settings)))
+        return 0
     if args.command in {"enable-live","disable-live"}:
         enabled=args.command=="enable-live"
         if enabled and not args.acknowledge_provider_usage: parser.error("Explicit --acknowledge-provider-usage is required. CLI execution may consume paid usage and access authenticated provider sessions. Per-task approval is also required.")
@@ -152,4 +168,9 @@ def main():
     elif args.command=="stop": stop(settings)
     return 0
 
-if __name__=="__main__": raise SystemExit(main())
+if __name__=="__main__":
+    try:
+        raise SystemExit(main())
+    except (RuntimeError, OSError, ValueError) as exc:
+        print("AI HQ: " + str(exc), file=sys.stderr)
+        raise SystemExit(1)
