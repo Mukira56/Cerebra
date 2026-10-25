@@ -25,4 +25,6 @@ def test_tray_status_detects_active_work_without_starting_agents(tmp_path):
         project=Project(name='status fixture',path=str(tmp_path/'repo'),default_branch='main');session.add(project);session.flush()
         session.add(Task(project_id=project.id,description='Active status fixture',state='RUNNING'))
     db.close()
-    assert status(settings)=={'running':False,'active_tasks':1,'url':'http://127.0.0.1:8765'}
+    result=status(settings)
+    assert {key:result[key] for key in ('running','active_tasks','url')}=={'running':False,'active_tasks':1,'url':'http://127.0.0.1:8765'}
+    assert [task['title'] for task in result['tasks']]==['Active status fixture']  # named in the close warning

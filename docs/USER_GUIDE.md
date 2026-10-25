@@ -192,6 +192,19 @@ What it does **not** do:
 - It doesn't widen what the agents may touch. Unless you also turned on **Full access**, they still work only in a separate copy of the project, can change only the files the task allows, and can't install software, use the network (Codex), or push to GitHub. Cerebra itself pushes merged work only if you ticked that option.
 - It doesn't keep your laptop awake. Set Windows to not sleep while plugged in, and leave Cerebra running in the tray.
 
+## Closing Cerebra while tasks run
+
+If a task is running when you close Cerebra, it warns you and lists the tasks. If you close anyway, the tasks are paused, not lost. When you open Cerebra again, the Overview shows **Paused when Cerebra closed**: press **Resume all**. Work continues from where it stopped. A task that was being tested or reviewed goes straight back to testing and review.
+
+## When an AI runs out of usage
+
+If Claude or Codex runs out of usage (or its sign-in expires) in the middle of a task:
+- The other AI takes over the same step. It reads what the first one already changed and its last notes, and finishes the job instead of starting over.
+- The reviewer must still come from the other company than the coder. If only one company has usage left, the task pauses before review.
+- If no AI has usage left, the task pauses and Cerebra tries again by itself every 15 minutes. You can also press Resume.
+
+The Overview's **Waiting for AI usage** panel shows these tasks and when Cerebra will try again.
+
 ## Pause, resume, cancel
 
 Open a task:

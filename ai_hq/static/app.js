@@ -148,6 +148,15 @@
   function overview() {
     const node = el("div"), tasks = realTasks(), active = tasks.filter(task => ACTIVE.includes(task.state)), setup = setupChecklist();
     if (!setup.complete) node.append(panel("Get started", body(setup.list)));
+    // Tasks paused because Cerebra closed or stopped, or waiting for an AI model with usage left.
+    const stopped = tasks.filter(task => task.state === "BLOCKED" && ["paused_on_close", "interrupted_restart"].includes(task.results?.blocked_reason));
+    const noUsage = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_usage");
+    if (stopped.length) {
+      const resumeAll = button(`Resume ${stopped.length === 1 ? "it" : `all ${stopped.length}`}`, async () => { resumeAll.disabled = true; for (const task of stopped) await act(null, () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/resume`)); await refresh(true); toast("Resumed. The AI team picks up where it stopped."); }, "button primary");
+      node.append(panel("Paused when Cerebra closed", body(el("p", "", `${stopped.length === 1 ? "One task was" : `${stopped.length} tasks were`} paused when Cerebra closed. Nothing was lost; resume to continue from where ${stopped.length === 1 ? "it" : "they"} stopped.`), taskRows(stopped), actionsRow(resumeAll))));
+    }
+    if (noUsage.length) node.append(panel("Waiting for AI usage", body(el("p", "", "No AI model had usage left for these tasks. Cerebra tries again automatically every 15 minutes, or press Resume in a task to try now."),
+      list(noUsage.map(task => `${task.description.slice(0, 80)} · next try ${date(task.results.retry_after)}`)))));
     const stats = el("div", "grid stats");
     [["Projects", array(data.projects).length, "authorized repositories", ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length, "approvals", "amber"], ["Done", tasks.filter(task => task.state === "COMPLETED").length, "finished tasks", "green"], ["Problems", tasks.filter(task => task.state === "FAILED").length, "see reports", "red"]]
       .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));

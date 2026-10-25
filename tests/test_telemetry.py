@@ -57,7 +57,9 @@ def test_telemetry_bounded_history_and_simulation_cannot_be_live(tmp_path):
     app=fixture(tmp_path)
     with app.state.db.Session.begin() as session:
         session.add_all([Run(id=f"r{i}",task_id="live",agent="codex",role="implement",status="succeeded",simulated=True,
-            started_at=f"2026-10-25T10:{i//60:02d}:{i%60:02d}+00:00",finished_at="2026-10-25T10:10:00+00:00") for i in range(505)])
+            # Newer than every fixture run (including the one started "now"), so they fill the 500-run window.
+            started_at=(datetime.now(timezone.utc)+timedelta(minutes=1,seconds=i)).isoformat(),
+            finished_at=(datetime.now(timezone.utc)+timedelta(minutes=20)).isoformat()) for i in range(505)])
     with TestClient(app) as client:
         client.post("/api/session",json={"key":KEY}).raise_for_status()
         data=client.get("/api/telemetry").json()

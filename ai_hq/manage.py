@@ -88,6 +88,55 @@ def start(settings,open_browser=True,desktop=False):
         print(f"Cerebra running at http://127.0.0.1:{settings.port}. Launch key sent directly to your browser; it is not persisted or logged.")
     return f"http://127.0.0.1:{settings.port}/#key={key}"
 
+RUNNING_STATES = ["PLANNING", "RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"]
+
+
+def running_tasks(settings):
+    """Tasks that are working now or queued to run next."""
+    if not settings.db_path.is_file():
+        return []
+    from .db import Database
+    from .models import Task
+    from sqlalchemy import select
+    db = Database(settings.db_path)
+    try:
+        with db.Session() as session:
+            rows = session.scalars(select(Task).where(Task.state.in_(RUNNING_STATES + ["READY"]))).all()
+            return [{"id": task.id, "title": " ".join(task.description.split())[:80], "state": task.state}
+                    for task in rows if task.state != "READY" or (task.results or {}).get("queued")]
+    finally:
+        db.close()
+
+
+def pause_after_stop(settings):
+    """After the server has stopped, mark running and queued tasks as paused so they can be resumed later."""
+    if not settings.db_path.is_file():
+        return 0
+    from .db import Database
+    from .models import Event, Run, Task, now
+    from .supervisor import resume_stage
+    from sqlalchemy import select
+    db = Database(settings.db_path)
+    paused = 0
+    try:
+        with db.Session.begin() as session:
+            for task in session.scalars(select(Task).where(Task.state.in_(RUNNING_STATES + ["READY"]))).all():
+                if task.state == "READY" and not (task.results or {}).get("queued"):
+                    continue
+                previous = task.state
+                task.results = {**(task.results or {}), "queued": False, "blocked_reason": "paused_on_close", "paused_state": previous,
+                                "resume_stage": resume_stage(task),
+                                "handoff_note": "Cerebra was closed while this step was running. Partial changes may already be in the working copy; check them and continue."}
+                task.pause_requested, task.state, task.updated_at = True, "BLOCKED", now()
+                session.add(Event(task_id=task.id, kind="state", message="Paused because Cerebra was closed; press Resume to continue", data={"from": previous, "to": "BLOCKED"}))
+                paused += 1
+            for run in session.scalars(select(Run).where(Run.status == "running")).all():
+                run.status, run.finished_at, run.error = "interrupted", now(), "Cerebra was closed during this run; the task was paused"
+    finally:
+        db.close()
+    return paused
+
+
 def stop(settings):
     owned=owned_process(settings)
     if not owned:
@@ -102,7 +151,8 @@ def stop(settings):
         import signal
         os.kill(owned["pid"],signal.SIGTERM)
     (settings.data_dir/"server.json").unlink(missing_ok=True)
-    print("Stopped the verified Cerebra process tree. Task files and history are preserved; interrupted tasks require resume.")
+    paused = pause_after_stop(settings)
+    print("Stopped the verified Cerebra process tree." + (f" {paused} running task(s) were paused; resume them when you open Cerebra again." if paused else ""))
 
 def serve(settings):
     # One backend process owns this data directory; release the lock on exit/crash.
@@ -123,16 +173,8 @@ def serve(settings):
 
 def status(settings):
     running = bool(owned_process(settings))
-    active = 0
-    if settings.db_path.is_file():
-        from .db import Database
-        from .models import Task
-        from sqlalchemy import select, func
-        db = Database(settings.db_path)
-        with db.Session() as session:
-            active = session.scalar(select(func.count()).select_from(Task).where(Task.state.in_(["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"])))
-        db.close()
-    return {"running":running,"active_tasks":active,"url":f"http://127.0.0.1:{settings.port}"}
+    tasks = running_tasks(settings)
+    return {"running":running,"active_tasks":len(tasks),"tasks":tasks,"url":f"http://127.0.0.1:{settings.port}"}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)

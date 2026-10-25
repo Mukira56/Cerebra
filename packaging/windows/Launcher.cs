@@ -7,7 +7,7 @@ using System.Windows.Forms;
 using System.Reflection;
 
 [assembly: AssemblyTitle("Cerebra")]
-[assembly: AssemblyVersion("0.10.1.0")]
+[assembly: AssemblyVersion("0.11.0.0")]
 [assembly: AssemblyDescription("Local AI development headquarters")]
 
 internal static class Launcher {
@@ -124,7 +124,12 @@ internal sealed class TrayContext : ApplicationContext {
         int code; string text=Shared.Run(Shared.Root,new[]{"status"},out code,20);
         if(code!=0) { MessageBox.Show(text,"Cerebra"); return false; }
         var status=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(text);
-        return Convert.ToInt32(status["active_tasks"])==0 || MessageBox.Show("Tasks are active. Stop them and preserve their files/history for explicit resume?","Stop Cerebra",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
+        int active=Convert.ToInt32(status["active_tasks"]);
+        if(active==0) return true;
+        var names=new System.Text.StringBuilder();
+        if(status.ContainsKey("tasks")) foreach(var item in (System.Collections.ArrayList)status["tasks"]) { var task=(System.Collections.Generic.Dictionary<string,object>)item; if(names.Length<600) names.Append("\n  • ").Append((string)task["title"]); }
+        string message=(active==1?"A task is running:":active+" tasks are running:")+names+"\n\nIf you close Cerebra now, "+(active==1?"it":"they")+" will be paused. Nothing is lost: open Cerebra again and press Resume to continue.\n\nClose Cerebra anyway?";
+        return MessageBox.Show(message,"Tasks are still running",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes;
         } catch(Exception error) { MessageBox.Show(error.Message,"Cerebra",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
     }
     private async Task Restart() { if(!busy && ConfirmStop() && await Execute(new[]{"stop"})) await Execute(new[]{"start"}); }

@@ -522,4 +522,6 @@ def test_live_auth_failure_updates_generic_status_without_persisting_secret(hq):
         assert status["authentication"] == "error" and status["last_error_at"]
         assert "providersecret" not in str(status)
         assert "last_live_success_at" not in status
-    assert supervisor.get(task.id).state == "FAILED"
+    # Both providers report a sign-in problem: the task waits for a usable model instead of failing.
+    task = supervisor.get(task.id)
+    assert task.state == "BLOCKED" and task.results["blocked_reason"] == "waiting_for_usage" and "providersecret" not in str(task.results)

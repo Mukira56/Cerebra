@@ -87,7 +87,7 @@ window.CerebraFactory = (() => {
           const figure = node("g", {class:"human-figure"}), skin = SKINS[index % SKINS.length];
           const legs = node("path", {class:"human-legs", d:"M-3 7L-4 17 M3 7L5 17", stroke: index % 2 ? "#8c9ba8" : "#516878", "stroke-width":4, fill:"none", "stroke-linecap":"round"});
           const arms = node("path", {class:"human-arms", d:"M-5 -2L-8 7 M5 -2L8 7", stroke:skin,"stroke-width":3, fill:"none", "stroke-linecap":"round"});
-          add(figure, node("ellipse", {cx:1,cy:19,rx:10,ry:3,fill:"#000",opacity:.35}), legs, arms,
+          add(figure, node("rect", {class:"chair", x:-10, y:6, width:20, height:5, rx:2}), node("ellipse", {cx:1,cy:19,rx:10,ry:3,fill:"#000",opacity:.35}), legs, arms,
             node("path",{d:"M-5 -5Q0 -8 5 -5L6 7Q0 10 -6 7Z", fill:room.color,stroke:"#20303b","stroke-width":1}),
             node("path",{d:"M-1 -4V7 M-5 5H5",stroke:"#fff","stroke-opacity":.3,fill:"none"}),
             node("circle",{cx:0,cy:-10,r:5,fill:skin}), node("path",{d:"M-5 -10Q-5 -17 1 -16Q7 -16 5 -9L3 -12L-3 -12Z",fill:HAIR[index%HAIR.length]}),
@@ -101,11 +101,13 @@ window.CerebraFactory = (() => {
           person.addEventListener("pointerleave", () => {delete person.dataset.pinned;});
           person.addEventListener("focus", () => {person.dataset.pinned="true";});
           person.addEventListener("blur", () => {delete person.dataset.pinned;});
-          people.push({person, legs, arms, label, room, slot, sectorIndex, index, state:"idle", route:[], key:""});
+          people.push({person, legs, arms, label, room, slot, sectorIndex, index, state:"idle", pose:"seated", route:[], key:""});
         }
       });
       if (snapshot) render(snapshot);
     }
+    // Where the one standby worker of an idle sector waits: the open floor between the desks and the seats.
+    function standby(room) { return [room.x + RW - 58, room.y + 126]; }
     function inside(room, slot) { return [room.x + 48 + (slot % 3)*101, room.y + 166 + Math.floor(slot / 3)*40]; }
     function loop(room, slot) { const [x,y]=inside(room,slot);return [[x,y],[x+25,y],[x+25,y+9],[x,y+9],[x,y]]; }
     function between(from, to, slot) {
@@ -125,22 +127,24 @@ window.CerebraFactory = (() => {
     }
     function draw(at=0) {
       people.forEach(item => {
-        const moving=online&&!media.matches&&visible&&!document.hidden&&!['waiting','failed','offline'].includes(item.state);
+        const moving=online&&!media.matches&&visible&&!document.hidden&&item.state==='running'&&item.pose==='walking';
         const distance=moving ? at/1000*(item.state==='running'?46:12)+item.index*37 : item.index*37;
         const point=pointOn(item.route.length?item.route:loop(item.room,item.slot),distance);
         if((online||!item.person.hasAttribute('transform'))&&(!item.person.dataset.pinned||!item.person.hasAttribute('transform'))) item.person.setAttribute('transform',`translate(${point[0]} ${point[1]})`);
         const stride=moving?Math.sin(at/150+item.index)*4:0;
+        if(item.pose==='seated'){item.legs.setAttribute('d','M-3 7L-8 8L-8 17 M3 7L8 8L8 17');item.arms.setAttribute('d','M-5 -2L-7 6 M5 -2L7 6');return;}
         item.legs.setAttribute('d',`M-3 7L${-4+stride} 17 M3 7L${4-stride} 17`);
         item.arms.setAttribute('d',`M-5 -2L${-8-stride*.5} 7 M5 -2L${8+stride*.5} 7`);
       });
     }
     function animate(at) {
       frame=0;
-      if(disposed||!online||!visible||document.hidden||media.matches)return;
+      if(disposed||!online||!visible||document.hidden||media.matches||!walking())return;
       if(at-lastFrame>=50){draw(at);lastFrame=at;}
       frame=requestAnimationFrame(animate);
     }
-    function restart() {cancelAnimationFrame(frame);frame=0;draw(performance.now());if(!disposed&&online&&visible&&!document.hidden&&!media.matches)frame=requestAnimationFrame(animate);}
+    function walking() { return people.some(item=>item.state==='running'&&item.pose==='walking'); }
+    function restart() {cancelAnimationFrame(frame);frame=0;draw(performance.now());if(!disposed&&online&&visible&&!document.hidden&&!media.matches&&walking())frame=requestAnimationFrame(animate);}
     function render(data) {
       snapshot=data; online=!!data.online;
       svg.classList.toggle('factory-offline',!online);
@@ -156,6 +160,11 @@ window.CerebraFactory = (() => {
           routes.append(node('polyline',{points:path.slice(0,path.length/2+1).map(point=>point.join(',')).join(' '),class:'factory-live-route',stroke:room.color}));
         }
       });
+      const busy=online?ROOMS.filter(room=>data.states[room.id]==='active').map(room=>room.id):[];
+      busy.forEach((from,index)=>busy.slice(index+1).forEach(to=>{
+        const path=between(from,to,1);
+        routes.append(node('polyline',{points:path.slice(0,path.length/2+1).map(point=>point.join(',')).join(' '),class:'factory-live-route factory-exchange',stroke:BY_ID[from].color}));
+      }));
       people.forEach(item=>{
         const sectorState=data.states[item.room.id]||'idle';
         const state=!online?'offline':sectorState==='active'?'running':sectorState==='waiting'?'waiting':sectorState==='failed'?'failed':'idle';
@@ -164,11 +173,26 @@ window.CerebraFactory = (() => {
         const key=[state,label,data.task?.id].join(':');
         if(item.key!==key){delete item.person.dataset.pinned;item.key=key;}
         item.state=state;
-        item.route=state==='running'&&item.slot<2?between('supervisor',item.room.id,item.slot):loop(item.room,item.slot);
+        // Idle: one standby worker at the door, everyone else seated. Busy: slot 0 reports to the command center;
+        // when several sectors are busy, slots 1-2 visit the other busy sectors and come back, so traffic mixes both ways.
+        const partners=busy.filter(id=>id!==item.room.id);
+        if(state==='running'){
+          item.pose='walking';
+          if(item.slot===0&&item.room.id!=='supervisor')item.route=between('supervisor',item.room.id,item.slot);
+          else if(partners.length&&item.slot<=2)item.route=between(item.room.id,partners[(item.slot+item.sectorIndex)%partners.length],item.slot);
+          else if(item.slot<2&&item.room.id!=='supervisor')item.route=between('supervisor',item.room.id,item.slot);
+          else item.route=loop(item.room,item.slot);
+        } else if(state==='idle'){
+          item.pose=item.slot===0?'standby':'seated';
+          item.route=[item.slot===0?standby(item.room):inside(item.room,item.slot)];
+        } else { item.pose='standing'; item.route=loop(item.room,item.slot); }
+        item.person.classList.toggle('seated',item.pose==='seated');
+        item.person.classList.toggle('standby',item.pose==='standby');
         item.person.setAttribute('data-state',state);
         item.person.setAttribute('data-model',label);
         item.person.setAttribute('data-task-id',data.task?.id||'');
-        item.person.setAttribute('aria-label',`${state==='running'?'Working':state} worker: ${data.titles[item.room.id]}. ${label}. Visual crew member ${item.slot+1}; not a separate AI call.`);
+        item.person.setAttribute('data-pose',item.pose);
+        item.person.setAttribute('aria-label',`${state==='running'?'Working':item.pose==='standby'?'Standby':item.pose==='seated'?'Seated':state} worker: ${data.titles[item.room.id]}. ${label}. Visual crew member ${item.slot+1}; not a separate AI call.`);
         item.label.textContent=labels&&(isModel||item.slot===0)?compact(label):'';
         item.person.classList.toggle('model-person',isModel);
       });

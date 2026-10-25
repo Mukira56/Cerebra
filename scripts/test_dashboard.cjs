@@ -94,6 +94,15 @@ const path = require('node:path');
     });
     await page.locator('.courier[data-state="running"]').first().waitFor();
     await page.getByText('1 recorded AI run active',{exact:true}).waitFor();
+    // Idle sectors: exactly one standby worker each, everyone else seated. Busy sectors exchange visits both ways.
+    const perRoom = await page.locator('.person[data-sector="database"]').count();
+    assert.equal(await page.locator('.person[data-sector="database"][data-pose="standby"]').count(), 1, 'One standby worker in an idle sector');
+    assert.equal(await page.locator('.person[data-sector="database"][data-pose="seated"]').count(), perRoom - 1, 'The rest of an idle sector is seated');
+    const seatedBefore = await page.locator('.person[data-sector="database"][data-pose="seated"]').first().getAttribute('transform');
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('.person[data-sector="database"][data-pose="seated"]').first().getAttribute('transform'), seatedBefore, 'Seated workers stay seated');
+    assert.ok(await page.locator('.person[data-sector="coder"][data-pose="walking"]').count() >= 1 && await page.locator('.person[data-sector="supervisor"][data-pose="walking"]').count() >= 1, 'Both busy sectors send workers');
+    assert.ok(await page.locator('.factory-exchange').count() >= 1, 'Busy sectors are linked both ways');
     const modelName = await page.locator('.person[data-sector="coder"]').first().getAttribute('data-model');
     assert.ok(modelName && modelName !== 'Model unassigned','People show the recorded task model');
     assert.equal(await page.locator('.person[data-sector="coder"] .person-label').first().textContent(),modelName.slice(0,28));

@@ -271,6 +271,10 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .factory-plant { fill: #304c43; stroke: #68846b; stroke-width: 1px; }
 .factory-live-route { fill: none; stroke-width: 4px; stroke-opacity: 1; stroke-dasharray: 10 8; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 3px rgba(255,255,255,.55)); }
 .factory-floor .person { cursor: pointer; }
+.factory-floor .person .chair { fill: #4fc3f7; opacity: 0; }
+.factory-floor .person.seated .chair { opacity: .85; }
+.factory-floor .person.standby .human-figure { filter: drop-shadow(0 0 3px #ffd54a); }
+.factory-exchange { stroke-dasharray: 3 9; stroke-width: 3px; }
 .person-label { fill: #ffffff; font-size: 11px; paint-order: stroke; stroke: #020b16; stroke-width: 4px; stroke-linejoin: round; }
 .person[data-state="running"] .person-label { fill: #3dffa6; }
 .person[data-state="waiting"] .person-label { fill: #ffc928; }
