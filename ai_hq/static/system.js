@@ -6,14 +6,14 @@ window.AIHQSystem = (() => {
   const NODES = [
     {id: "browser", kind: "YOU", title: "This window", x: 30, y: 60, plain: "Where you see everything and give your yes or no. It talks only to the server on this computer.", where: () => "Your Cerebra window"},
     {id: "server", kind: "LOCAL SERVER", title: "Web server", x: 30, y: 250, plain: "A small private web server (FastAPI) on 127.0.0.1. Only this computer can reach it. Every request needs your private session.", where: system => system?.server},
-    {id: "supervisor", kind: "CONTROL", title: "Supervisor", x: 275, y: 155, plain: "The boss. A plain Python program (no AI) that follows fixed rules: it hands out work, runs the tests, and always stops to ask you before anything important.", where: () => "Python state machine inside the server"},
+    {id: "supervisor", kind: "CONTROL", title: "Supervisor", x: 275, y: 155, plain: "The coordinator follows fixed rules and your recorded permissions. Away mode can answer the gates you delegated. A supervisor model can help choose models when enabled.", where: () => "Python state machine inside the server"},
     {id: "planner", kind: "AI · PLAN", title: "Planner", x: 525, y: 30, plain: "An AI (usually Claude) reads the project and writes a plan. It can read files but cannot change anything.", where: () => "Read-only copy of your project"},
-    {id: "coder", kind: "AI · CODE", title: "Coder", x: 525, y: 200, plain: "An AI (usually Codex) writes the code in a separate copy of your project. It may only change the files you allowed.", where: () => "Its own working copy (Git worktree)"},
+    {id: "coder", kind: "AI · CODE", title: "Coder", x: 525, y: 200, plain: "The selected coding model works in a separate project copy. Allowed paths are checked before integration. Opt-in Full access changes its machine permissions; a Git worktree is not a security sandbox.", where: () => "Its own working copy (Git worktree)"},
     {id: "reviewer", kind: "AI · REVIEW", title: "Reviewer", x: 525, y: 370, plain: "A different AI checks the code, like a second pair of eyes. It reads a frozen snapshot and cannot change it.", where: () => "Read-only review snapshot"},
     {id: "worktree", kind: "GIT", title: "Working copy", x: 775, y: 115, plain: "A separate copy of your project on its own branch. The AI works here, so your real code stays safe until you approve.", where: system => system?.worktrees?.path},
     {id: "tests", kind: "VERIFY", title: "Test runner", x: 775, y: 290, plain: "Runs your project's own tests on the AI's code. The AI cannot fake this: the supervisor runs the tests itself.", where: () => "Your project's test commands"},
-    {id: "gate", kind: "YOU DECIDE", title: "Approval gate", x: 1000, y: 60, plain: "Nothing important happens without your yes: the plan, letting agents run, and adding the code to your project.", where: () => "Approvals page"},
-    {id: "project", kind: "RESULT", title: "Your project", x: 1000, y: 250, plain: "Your real repository. Finished, tested, reviewed code is merged here only after you approve. Nothing is pushed to GitHub unless you press Push.", where: (system, task, telemetry, overview) => overview?.projects?.find(project => project.id === task?.project_id)?.path || "Projects page"},
+    {id: "gate", kind: "YOU DECIDE", title: "Approval gate", x: 1000, y: 60, plain: "Plans, execution and integration use recorded approval gates. Away mode can answer the gates you explicitly delegated. External business actions still need their own confirmation.", where: () => "Approvals page"},
+    {id: "project", kind: "RESULT", title: "Your project", x: 1000, y: 250, plain: "Your real repository receives reviewed work through the approval gate. Away mode may merge and push only when you enabled those permissions. Business exports remain local until you choose an external action.", where: (system, task, telemetry, overview) => overview?.projects?.find(project => project.id === task?.project_id)?.path || "Projects page"},
     {id: "database", kind: "STORAGE", title: "Database", x: 275, y: 470, plain: "A single file that remembers every task, step, test result and decision, so nothing is lost when you close Cerebra.", where: system => system?.database?.path},
     {id: "logs", kind: "STORAGE", title: "Run logs", x: 775, y: 470, plain: "One text file per AI run, with exactly what the AI said (secrets removed).", where: system => system?.logs?.path}
   ];
@@ -49,7 +49,9 @@ window.AIHQSystem = (() => {
 
     function panel(title, body) { const node = el("section", "panel"), header = el("div", "panel-header"); header.append(el("h2", "", title)); append(node, header, body); return node; }
 
-    const edgeNodes = {}, nodeNodes = {};
+    const edgeNodes = {}, nodeNodes = {}, workers = [];
+    let frame = 0, workerRoutes = [];
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const center = node => ({x: node.x + W / 2, y: node.y + H / 2});
     const byId = Object.fromEntries(NODES.map(node => [node.id, node]));
     EDGES.forEach(([from, to]) => {
@@ -59,6 +61,7 @@ window.AIHQSystem = (() => {
       const p2 = horizontal ? {x: b.x + (end.x > start.x ? 0 : W), y: end.y} : {x: end.x, y: b.y + (end.y > start.y ? 0 : H)};
       const bend = horizontal ? `C ${(p1.x + p2.x) / 2} ${p1.y}, ${(p1.x + p2.x) / 2} ${p2.y},` : `C ${p1.x} ${(p1.y + p2.y) / 2}, ${p2.x} ${(p1.y + p2.y) / 2},`;
       const path = svg("path", {class: "edge", d: `M ${p1.x} ${p1.y} ${bend} ${p2.x} ${p2.y}`});
+      diagram.append(svg("path", {class: "pipe-shell", d: path.getAttribute("d")}));
       edgeNodes[`${from}>${to}`] = path; diagram.append(path);
     });
     NODES.forEach(node => {
@@ -70,6 +73,53 @@ window.AIHQSystem = (() => {
       group.addEventListener("click", choose); group.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); } });
       nodeNodes[node.id] = {group, line1, line2}; diagram.append(group);
     });
+    // Original workshop couriers. Each visible courier represents a recorded task stage,
+    // never an extra agent or fabricated model call. At most six are rendered.
+    const workerLayer = svg("g", {class: "workers"}); diagram.append(workerLayer);
+    for (let index = 0; index < 6; index++) {
+      const worker = svg("g", {class: "courier", tabindex: "0", role: "button", display: "none"});
+      const figure = svg("g", {class: "courier-figure"});
+      append(figure, svg("path", {d: "M-9 -13 L-5 -20 L6 -20 L11 -13 L10 -1 L-9 -1 Z", fill: "#f4c84c", stroke: "#1b2533", "stroke-width": 2}),
+        svg("path", {d: "M-13 -16 L12 -16 L9 -22 L-8 -22 Z", fill: "#ffdf78", stroke: "#1b2533", "stroke-width": 2}),
+        svg("rect", {x: -8, y: -13, width: 16, height: 6, rx: 2, fill: "#d7f4ff", stroke: "#26384b", "stroke-width": 2}),
+        svg("path", {d: "M-3 -10 L3 -10 M-2 -4 Q2 -2 5 -5", fill: "none", stroke: "#26384b", "stroke-width": 1.5}),
+        svg("rect", {x: -10, y: 0, width: 20, height: 15, rx: 4, fill: "#387bc6", stroke: "#1b2533", "stroke-width": 2}),
+        svg("path", {d: "M-8 0 L-6 7 L6 7 L8 0 M-12 2 L-16 9 M12 2 L17 -1", fill: "none", stroke: "#f4c84c", "stroke-width": 4}));
+      const legs = svg("path", {class: "courier-legs", d: "M-5 15 L-10 22 M5 15 L11 22", stroke: "#9bb3cf", "stroke-width": 4, fill: "none"});
+      figure.append(legs); worker.append(figure); workerLayer.append(worker);
+      const choose = () => { const route = workerRoutes[index]; if (route) { selected = route.node; paint(); } };
+      worker.addEventListener("click", choose);
+      worker.addEventListener("pointerenter", () => { worker.dataset.pinned = "true"; });
+      worker.addEventListener("pointerleave", () => { delete worker.dataset.pinned; });
+      worker.addEventListener("focus", () => { worker.dataset.pinned = "true"; });
+      worker.addEventListener("blur", () => { delete worker.dataset.pinned; });
+      worker.addEventListener("keydown", event => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); choose(); } });
+      workers.push({worker, legs});
+    }
+    function positionWorkers(at = 0) {
+      workers.forEach(({worker, legs}, index) => {
+        const route = workerRoutes[index];
+        if (!route) { worker.setAttribute("display", "none"); worker.removeAttribute("data-state"); worker.setAttribute("aria-hidden", "true"); delete worker.dataset.pinned; return; }
+        worker.removeAttribute("display");
+        worker.removeAttribute("aria-hidden");
+        if (worker.dataset.state !== route.state) delete worker.dataset.pinned;
+        let point;
+        if (route.path) {
+          const progress = reducedMotion.matches ? .5 : (at / 3800 + index * .19) % 1;
+          point = route.path.getPointAtLength(route.length * progress);
+        } else { const node = byId[route.node]; point = {x: node.x + W - 24, y: node.y + H - 21}; }
+        if (!worker.dataset.pinned || !worker.hasAttribute("transform")) worker.setAttribute("transform", `translate(${point.x} ${point.y}) scale(.8)`);
+        worker.setAttribute("data-state", route.state);
+        worker.setAttribute("aria-label", `${route.state === "running" ? "Working" : route.state} worker: ${byId[route.node].title}. ${route.title}`);
+        legs.setAttribute("d", route.state === "running" && !reducedMotion.matches && Math.sin(at / 110 + index) > 0 ? "M-5 15 L-13 18 M5 15 L9 24" : "M-5 15 L-8 23 M5 15 L9 23");
+      });
+    }
+    function animate(at) {
+      frame = 0; positionWorkers(at);
+      if (!disposed && !document.hidden && !reducedMotion.matches && workerRoutes.some(route => route.state === "running")) frame = requestAnimationFrame(animate);
+    }
+    function restartAnimation() { cancelAnimationFrame(frame); frame = 0; positionWorkers(performance.now()); if (!document.hidden && !reducedMotion.matches && workerRoutes.some(route => route.state === "running")) frame = requestAnimationFrame(animate); }
+    document.addEventListener("visibilitychange", restartAnimation); reducedMotion.addEventListener("change", restartAnimation);
 
     function currentTask() {
       const tasks = (telemetry?.tasks || []).filter(task => task.mode !== "mock");
@@ -99,7 +149,7 @@ window.AIHQSystem = (() => {
         const node = {plan: "planner", implement: "coder", review: "reviewer"}[running.role];
         state[node] = "active"; flow("server>supervisor", `supervisor>${node}`, `${node}>worktree`);
       } else if (task.state === "VERIFYING") { state.tests = "active"; flow("supervisor>tests", "tests>worktree"); }
-      if (pending.length) { state.gate = "waiting"; flow("supervisor>gate"); if (pending.some(approval => approval.kind === "merge")) edges["browser>server"] = "active"; }
+      if (pending.length) { state.gate = "waiting"; edges["supervisor>gate"] = "waiting"; }
       if (task.state === "COMPLETED") { state.gate = "ok"; state.project = "ok"; done("supervisor>gate", "gate>project", "worktree>project"); }
       if (task.state === "FAILED") state.supervisor = "failed";
       return {state, edges};
@@ -135,6 +185,24 @@ window.AIHQSystem = (() => {
       }
       NODES.forEach(node => { const parts = nodeNodes[node.id]; parts.group.setAttribute("class", `node ${state[node.id] || ""}${selected === node.id ? " selected" : ""}`); parts.line1.textContent = lines[node.id][0]; parts.line2.textContent = lines[node.id][1]; });
       Object.entries(edgeNodes).forEach(([key, path]) => path.setAttribute("class", `edge ${edges[key] || ""}`));
+      workerRoutes = [];
+      if (task && telemetry) {
+        const title = short(task.description, 90);
+        if (["FAILED", "CANCELLED", "BLOCKED"].includes(task.state)) {
+          workerRoutes.push({node: "supervisor", state: task.state === "FAILED" ? "failed" : "waiting", title});
+        } else if (state.gate === "waiting") {
+          workerRoutes.push({node: "gate", state: "waiting", title});
+        } else {
+          Object.entries(edges).filter(([, value]) => value === "active").slice(0, 6).forEach(([key]) => {
+            const path = edgeNodes[key], target = key.split(">")[1];
+            const node = ["planner", "coder", "reviewer", "tests"].find(id => key.split(">").includes(id)) || target;
+            workerRoutes.push({path, length: path.getTotalLength(), node, state: "running", title});
+          });
+          if (!workerRoutes.length) workerRoutes.push({node: task.state === "COMPLETED" ? "project" : "supervisor", state: "idle", title});
+        }
+      }
+      workers.forEach(({worker}) => worker.setAttribute("data-task-id", task?.id || ""));
+      restartAnimation();
       const node = byId[selected], details = el("dl", "kv");
       [["Now", lines[selected].join(" · ")], ["Lives at", node.where(system, task, telemetry, overview()) || "—"], ["Task", task ? short(task.description, 80) : "none"]].forEach(([key, value]) => append(details, el("dt", "", key), el("dd", "", value)));
       const actions = el("div", "actions");
@@ -161,7 +229,7 @@ window.AIHQSystem = (() => {
     }
     paint(); load();
     refreshNow = () => paint();
-    dispose = () => { disposed = true; clearTimeout(timer); };
+    dispose = () => { disposed = true; clearTimeout(timer); cancelAnimationFrame(frame); document.removeEventListener("visibilitychange", restartAnimation); reducedMotion.removeEventListener("change", restartAnimation); };
   }
   return {mount, unmount, update};
 })();

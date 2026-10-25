@@ -20,7 +20,8 @@ from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
                       RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision,
-                      BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen)
+                      BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
+                      OAuthFinish, GmailSetup, NotificationSetup)
 from .security import redact
 from . import __version__
 
@@ -50,6 +51,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         return supervisor.registry
     chats = ChatService(db, settings, chat_registry)
     chats.recover()
+    from .commerce import Commerce, public as connection_public
+    from . import gmail, notify
+    commerce = Commerce(db)
+    mailbox = gmail.Gmail(db, f"http://127.0.0.1:{settings.port}/oauth/gmail/callback")
+    notifier = notify.Notifier(db)
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
     bootstrap_used = False
     sessions = {}
@@ -58,14 +64,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @asynccontextmanager
     async def lifespan(app):
-        if start_worker: supervisor.startup()
+        if start_worker:
+            supervisor.startup()
+            notifier.start()
         yield
         supervisor.shutdown()
+        notifier.stop()
+        commerce.close()
+        mailbox.client.close()
+        notifier.client.close()
         db.close()
 
     app = FastAPI(title="Cerebra", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
     app.state.integrations, app.state.chats = integrations, chats
+    app.state.commerce, app.state.mailbox, app.state.notifier = commerce, mailbox, notifier
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -79,10 +92,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         client = request.client.host if request.client else ""
         if client not in {"127.0.0.1", "::1", "testclient"}:
             return JSONResponse({"detail":"Loopback clients only"}, status_code=403)
-        if request.headers.get("sec-fetch-site") == "cross-site":
+        oauth_callback = request.method == "GET" and request.url.path == "/oauth/gmail/callback"
+        if request.headers.get("sec-fetch-site") == "cross-site" and not oauth_callback:
             return JSONResponse({"detail":"Cross-site requests are blocked"}, status_code=403)
         origin = request.headers.get("origin")
-        if origin and origin != str(request.base_url).rstrip("/"):
+        if origin and origin != str(request.base_url).rstrip("/") and not oauth_callback:
             return JSONResponse({"detail":"Origin does not match this local server"}, status_code=403)
         if request.url.path.startswith("/api/") and request.url.path != "/api/session":
             token = request.cookies.get("aihq_session", "")
@@ -605,7 +619,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             from .models import BusinessJob
             recent = session.scalars(select(BusinessJob).where(BusinessJob.title == " ".join(payload.title.split())[:120], BusinessJob.status == "active")).all()
-            if any(job.brief == payload.brief.strip()[:20000] for job in recent):
+            if any(job.brief == payload.brief.strip()[:20000] and
+                   business.stage(job, session.get(Task, job.task_id)) not in {"failed", "cancelled"} for job in recent):
                 raise ValueError("This job already exists. Open it from the list instead of creating it twice.")
         job_id = business.create(db.Session, settings, register_job_folder, supervisor, payload.title, payload.kind, payload.brief, payload.client,
                                  payload.requirements, payload.sources, payload.no_ai_requested, origin)
@@ -622,11 +637,93 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             return {"settings": business.load(session), "jobs": business.jobs(session),
                     "kinds": {key: value["label"] for key, value in business.KINDS.items()},
-                    "capabilities": {"image_generation": {"available": False, "detail": "No image-generation service is connected. Cerebra makes original vector (SVG) designs; raster images are unavailable."}},
+                    "capabilities": {"image_generation": {"available": connection_public(session)["images"]["configured"], "detail": "Optional raster images use your own OpenAI API key. Set it up in Business connections; each generation needs your confirmation and is billed by the provider. SVG designs work with your coding models."}},
                     "marketplaces": [
-                        {"id": "fiverr", "name": "Fiverr", "state": "manual", "detail": "Fiverr has no seller API. Paste each order's brief here or into Support; deliver the exported files yourself, and follow Fiverr's AI guidelines (respect clients who ask for no AI)."},
-                        {"id": "etsy", "name": "Etsy", "state": "not connected", "detail": "Not built yet. A future version can prepare draft listings through Etsy's official API after you register an app and sign in. Listing copy and SVG designs you can export now."},
-                        {"id": "printify", "name": "Printify", "state": "not connected", "detail": "Not built yet. It needs a Printify API token and a confirmed manual order-approval setting, so nothing goes to production or costs money without you."}]}
+                        {"id": "fiverr", "name": "Fiverr", "state": "manual", "detail": "Manual intake and delivery: paste each client's brief here or into Support, then deliver the exported files yourself. Follow Fiverr's AI guidelines and respect clients who ask for no AI."},
+                        {"id": "etsy", "name": "Etsy", "state": "drafts", "detail": "Connect your app and authorize your shop below. You can create draft listings after local review. Publish and complete disclosures in Etsy."},
+                        {"id": "printify", "name": "Printify", "state": "drafts", "detail": "Connect an API token and shop below. Upload images and create draft products. Order creation, import and production are blocked; no unverifiable auto-approval setting is assumed."}]}
+
+    @app.get("/api/business/connections")
+    def business_connections():
+        from .commerce import public
+        with db.Session() as session: return public(session)
+
+    @app.put("/api/business/connections/{provider}")
+    def business_connection_save(provider: str, payload: BusinessConnection):
+        from .commerce import save
+        with db.Session.begin() as session: return save(session, provider, payload.values)
+
+    @app.delete("/api/business/connections/{provider}")
+    def business_connection_delete(provider: str): return commerce.disconnect(provider)
+
+    @app.post("/api/business/connections/{provider}/check")
+    def business_connection_check(provider: str): return commerce.check(provider)
+
+    @app.post("/api/business/connections/etsy/authorize")
+    def etsy_authorize():
+        import webbrowser
+        url = commerce.authorize_etsy(); webbrowser.open(url)
+        return {"message": "Etsy sign-in opened in your browser. After authorization, paste your redirected HTTPS callback URL here."}
+
+    @app.post("/api/business/connections/etsy/finish")
+    def etsy_finish(payload: OAuthFinish): return commerce.finish_etsy(payload.redirected_url)
+
+    @app.get("/api/business/jobs/{job_id}/operations")
+    def business_operations(job_id: str): return commerce.operations(job_id)
+
+    @app.post("/api/business/jobs/{job_id}/external")
+    def business_external(job_id: str, payload: BusinessExternal):
+        if len(json.dumps(payload.fields)) > 50000: raise ValueError("Draft fields are too large")
+        if payload.action == "image": return commerce.image(job_id, payload.prompt, payload.confirmed)
+        if payload.action == "etsy_draft": return commerce.etsy_draft(job_id, payload.fields, payload.confirmed, payload.original_confirmed)
+        if payload.action == "printify_upload": return commerce.printify_upload(job_id, payload.path, payload.confirmed)
+        return commerce.printify_product(job_id, payload.fields, payload.confirmed)
+
+    @app.get("/api/business/gmail")
+    def gmail_status():
+        with db.Session() as session: return gmail.public(gmail.load(session))
+
+    @app.put("/api/business/gmail")
+    def gmail_setup(payload: GmailSetup):
+        mailbox._access = (None, 0.0)
+        mailbox._pending.clear()
+        with db.Session.begin() as session: gmail.configure(session, payload.client_id, payload.client_secret)
+        return {"message": "Gmail settings saved. Connect with Google to grant read-only access."}
+
+    @app.delete("/api/business/gmail")
+    def gmail_disconnect():
+        mailbox._access = (None, 0.0); mailbox._pending.clear()
+        with db.Session.begin() as session: gmail.disconnect(session)
+        return {"message": "Gmail disconnected. Revoke access in Google Account settings if needed."}
+
+    @app.post("/api/business/gmail/authorize")
+    def gmail_authorize():
+        import webbrowser
+        webbrowser.open(mailbox.authorization_url())
+        return {"message": "Complete the Google sign-in in your browser, then refresh Gmail here."}
+
+    @app.get("/oauth/gmail/callback")
+    def gmail_callback(state: str = "", code: str = ""):
+        from fastapi.responses import PlainTextResponse
+        mailbox.finish(state, code)
+        return PlainTextResponse("Gmail connected to Cerebra with read-only access. Return to the Cerebra window.", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/business/gmail/messages")
+    def gmail_messages(query: str = "newer_than:7d", limit: int = 10):
+        if len(query) > 300 or not 1 <= limit <= 20: raise ValueError("Use a short search and 1–20 messages")
+        try: return [mailbox.message(identifier) for identifier in mailbox.search(query, limit)]
+        except __import__('httpx').HTTPError: raise ValueError("Google could not be reached. Check your connection and sign-in.") from None
+
+    @app.get("/api/business/notifications")
+    def notification_status():
+        with db.Session.begin() as session: return notify.public(notify.load(session))
+
+    @app.put("/api/business/notifications")
+    def notification_setup(payload: NotificationSetup):
+        with db.Session.begin() as session: return notify.public(notify.save(session, payload.model_dump()))
+
+    @app.post("/api/business/notifications/test")
+    def notification_test(): return notifier.send("Cerebra connection test", "Your progress notifications are ready.")
 
     @app.put("/api/business/settings")
     def business_settings(payload: BusinessSettingsUpdate):

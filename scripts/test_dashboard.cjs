@@ -6,9 +6,12 @@ const path = require('node:path');
 (async () => {
   const browser = await chromium.launch({channel: 'msedge', headless: true});
   const shots = process.env.AIHQ_SHOTS;
+  let activePage;
   try {
     const context = await browser.newContext({viewport: {width: 1440, height: 960}});
     const page = await context.newPage(), errors = [];
+    activePage = page;
+    page.setDefaultTimeout(60000);
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
     await page.goto(process.env.AIHQ_URL);
@@ -75,13 +78,44 @@ const path = require('node:path');
     await page.locator('.trace div').first().waitFor();
     await shot('system');
 
+    // Animation fixtures exist only in this browser test. No simulated product mode or AI calls.
+    const telemetryUrl = new URL('/api/telemetry', process.env.AIHQ_URL).href;
+    const recorded = await (await page.request.get(telemetryUrl)).json();
+    const recordedTask = recorded.tasks[0];
+    let fixtureState = 'RUNNING';
+    await page.route('**/api/telemetry', async route => {
+      if (fixtureState === 'offline') return route.abort();
+      const now = new Date().toISOString();
+      const fixture = {...recorded, tasks: [{...recordedTask, state: fixtureState}], approvals: fixtureState === 'AWAITING_APPROVAL' ? [{task_id: recordedTask.id, kind: 'merge'}] : [],
+        runs: fixtureState === 'RUNNING' ? [{id:'browser-test-only',task_id:recordedTask.id,source:'live',agent:'codex',role:'implement',status:'running',started_at:now,elapsed_seconds:3}] : []};
+      await route.fulfill({json: fixture});
+    });
+    await page.locator('.courier[data-state="running"]').first().waitFor();
+    const courier = page.locator('.courier[data-state="running"]').first();
+    const before = await courier.getAttribute('transform'); await page.waitForTimeout(350);
+    assert.notEqual(await courier.getAttribute('transform'), before, 'Real running telemetry animates the courier');
+    await page.emulateMedia({reducedMotion:'reduce'}); await page.waitForTimeout(100);
+    const still = await courier.getAttribute('transform'); await page.waitForTimeout(200);
+    assert.equal(await courier.getAttribute('transform'), still, 'Reduced motion keeps workers stationary');
+    await page.locator('.courier[aria-label^="Working worker: Coder"]').first().click();
+    await page.locator('.inspector h3', {hasText:'Coder'}).waitFor();
+    await page.emulateMedia({reducedMotion:'no-preference'});
+    fixtureState = 'AWAITING_APPROVAL';
+    await page.locator('.courier[data-state="waiting"]').first().waitFor();
+    assert.equal(await page.locator('.courier[data-state="running"]').count(), 0, 'Approval does not animate running work');
+    await shot('system-workers-waiting');
+    fixtureState = 'FAILED'; await page.locator('.courier[data-state="failed"]').first().waitFor();
+    fixtureState = 'offline'; await page.waitForTimeout(2500);
+    assert.equal(await page.locator('.courier:not([display="none"])').count(), 0, 'Disconnected map hides workers');
+    await page.unroute('**/api/telemetry');
+
     // Chat: agents are off, so the reply fails with a clear message (no provider is launched).
     await page.locator('[data-page="chat"]').click();
     await page.getByRole('button', {name: '+ New chat'}).click();
     await page.locator('.composer textarea').fill('Explain the **project** layout');
     await page.locator('.composer textarea').press('Enter');
     await page.locator('.message.user .bubble', {hasText: 'Explain the **project** layout'}).waitFor({timeout: 15000});
-    await page.locator('.bubble.failed', {hasText: 'AI agents are switched off'}).waitFor({timeout: 15000});
+    await page.locator('.bubble.failed', {hasText: 'AI agents are switched off'}).waitFor({timeout: 60000});
     assert.ok(await page.getByRole('button', {name: 'Send', exact: true}).isVisible());
     await shot('chat');
 
@@ -89,7 +123,7 @@ const path = require('node:path');
     await page.locator('[data-page="business"]').click();
     await page.getByText('No business jobs yet', {exact: true}).waitFor();
     await page.getByText('Marketplaces', {exact: true}).waitFor();
-    assert.ok(await page.getByText(/raster images are unavailable/).count(), 'Image generation is shown as unavailable');
+    assert.ok(await page.getByText(/own OpenAI API key/).count(), 'Image generation needs an explicit connection');
     await page.locator('#heading-actions').getByRole('button', {name: '+ New business job'}).click();
     await page.locator('dialog input').first().fill('Bakery website for Ama');
     await page.locator('dialog textarea').first().fill('A one-page website for the Ama bakery in Nairobi with opening hours and a cake menu.');
@@ -105,6 +139,19 @@ const path = require('node:path');
     assert.ok(await small.evaluate(() => document.documentElement.scrollWidth <= 400), 'Business Studio fits a narrow window');
     if (shots) await small.screenshot({path: path.join(shots, 'business-narrow.png')});
     await narrow.close();
+
+    await page.locator('[data-page="connections"]').click();
+    await page.getByText('Read-only Gmail intake', {exact:true}).waitFor();
+    assert.equal(await page.locator('.connection-grid input[type="password"]').count(), 6, 'Secrets use password fields');
+    await shot('business-connections');
+    const connectionPhone = await browser.newContext({viewport:{width:390,height:860}}); await connectionPhone.addCookies(await context.cookies());
+    const connectionSmall = await connectionPhone.newPage();
+    connectionSmall.on('pageerror', error => errors.push('connections mobile: '+error.message));
+    await connectionSmall.goto(process.env.AIHQ_URL.split('#')[0]+'#connections');
+    await connectionSmall.getByText('Raster images', {exact:true}).waitFor();
+    assert.ok(await connectionSmall.evaluate(() => document.documentElement.scrollWidth <= 400), 'Connection forms fit a phone');
+    if (shots) await connectionSmall.screenshot({path:path.join(shots,'connections-narrow.png')});
+    await connectionPhone.close();
 
     for (const name of ['approvals', 'activity', 'toolchain', 'github', 'settings', 'overview']) {
       await page.locator(`[data-page="${name}"]`).first().click();
@@ -157,6 +204,12 @@ const path = require('node:path');
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({pages: 15, errors: errors.length, mobile_width_ok: true}));
+    console.log(JSON.stringify({pages: 16, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
+  } catch (error) {
+    if (shots && activePage) {
+      await activePage.screenshot({path:path.join(shots,'failure.png')}).catch(() => {});
+      require('node:fs').writeFileSync(path.join(shots,'failure.txt'), await activePage.locator('body').innerText().catch(() => 'Page unavailable'));
+    }
+    throw error;
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

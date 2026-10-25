@@ -1,5 +1,13 @@
 # Security boundaries
 
+## Business connections (0.9.0)
+
+Optional Etsy/Printify/image/Gmail/notification secrets use the Windows account's DPAPI through vault.py. APIs return saved/checked flags, never plaintext secrets. Service destinations are fixed for Etsy, Printify, Google and OpenAI; the user explicitly configures an HTTPS ntfy server. No application server access logging records OAuth callback query strings. Gmail callback bypasses the cross-site navigation check only on its exact GET route and still requires a single-use, expiring OAuth state and PKCE. All other API session/origin/CSRF rules remain.
+
+Only reviewed, integrated business jobs can invoke confirmed external draft/upload/image operations. The backend records an operation reservation before sending a request. Pending and uncertain outcomes are not retried automatically, including after restart. No model/Support action can invoke these operations. Printify order creation, order import, production and publishing are not implemented: manual approval cannot be verified through the current connector. Etsy creates drafts only. Generated raster assets are explicitly post-review and require user inspection; exports include their provenance and final hashes.
+
+Gmail requests gmail.readonly and offers manual message-to-brief intake, with no send/delete/modify endpoint. Notifications are off by default; enabling sends task titles/states to the selected service. Treat those titles and ntfy topic URLs as potentially sensitive. A key saved locally is not proof of a working account or external API validation.
+
 Cerebra controls local subprocesses and repository changes. Treat project code and model output as untrusted. The current implementation is intended for a single trusted Windows user on a private loopback session.
 
 ## Local access

@@ -95,7 +95,7 @@ def stage(job, task):
         return "creating"
     if state in {"VERIFYING", "REVIEWING", "NEEDS_CHANGES"}:
         return "checking"
-    if state in {"AWAITING_APPROVAL", "BLOCKED"}:
+    if state in {"AWAITING_APPROVAL", "BLOCKED", "READY", "PAUSED"}:
         return "waiting"
     return "planning"
 
@@ -181,7 +181,11 @@ def export(session_factory, job_id, make_zip=False):
         spec = KINDS[job.kind]
         findings, tests = list(task.review_findings or []), list(task.test_results or [])
         files = []
-        for name in spec["files"] + [str(path.relative_to(folder)).replace("\\", "/") for extra in spec["extra_paths"] if (folder / extra).is_dir() for path in sorted((folder / extra).rglob("*")) if path.is_file()]:
+        for name in spec["files"]:
+            required = _within(folder / name, folder)
+            if not required.is_file() or not required.stat().st_size:
+                raise ValueError(f"Required deliverable {name} is missing or empty. Restore and check it before exporting.")
+        for name in spec["files"] + [str(path.relative_to(folder)).replace("\\", "/") for extra in spec["extra_paths"] + ["generated"] if (folder / extra).is_dir() for path in sorted((folder / extra).rglob("*")) if path.is_file()]:
             path = _within(folder / name, folder)
             if path.is_file():
                 files.append({"path": name, "bytes": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
@@ -189,7 +193,7 @@ def export(session_factory, job_id, make_zip=False):
         title, client, kind_label, task_id = job.title, job.client, spec["label"], task.id
     target = folder / "export"
     if target.exists():
-        target = folder / f"export-{now()[:19].replace(':', '').replace('-', '')}"
+        target = folder / f"export-{now()[:19].replace(':', '').replace('-', '')}-{uid()[:6]}"
     target.mkdir()
     for item in files:
         destination = _within(target / item["path"], target)
@@ -200,14 +204,20 @@ def export(session_factory, job_id, make_zip=False):
                 "checks": [{"name": "deliverable checks", "passed": result.get("passed") is True, "seconds": result.get("duration_seconds")} for result in last],
                 "review": {"reviewer": models.get("reviewer", {}).get("label", ""), "findings": len(findings)},
                 "note": "A local package for you to deliver. Exporting does not sell, publish or deliver anything."}
-    (target / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     lines = [f"# {title}", "", f"{kind_label} made with Cerebra for {client or 'your client'}.", "", "## Files", *[f"- `{item['path']}` ({item['bytes']} bytes)" for item in files],
              "", "## Checks", *([f"- {'Passed' if check['passed'] else 'FAILED'}: deliverable checks" for check in manifest["checks"]] or ["- No checks recorded"]),
              "", f"## Review\nIndependent review by {manifest['review']['reviewer'] or 'the reviewer'}: {len(findings)} finding(s); see review-findings.md.",
              "", "## Before you deliver", "- Read every file yourself; you are responsible for what you send.", "- Tell the client how the work was made if their platform or they require it."]
-    (target / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Website and SVG jobs already contain a reviewed README. Never replace that deliverable.
+    instructions = "CEREBRA-EXPORT.md" if (target / "README.md").exists() else "README.md"
+    (target / instructions).write_text("\n".join(lines) + "\n", encoding="utf-8")
     review = ["# Review findings", ""] + ([f"- **{f.get('severity', '?')}** `{f.get('path', '')}:{f.get('line', 0)}` {f.get('message', '')}" for f in findings] or ["The independent reviewer found no problems."])
     (target / "review-findings.md").write_text("\n".join(review) + "\n", encoding="utf-8")
+    # Hash final exported bytes, including packaging notes, so the manifest verifies the actual ZIP.
+    manifest["files"] = [{"path": path.relative_to(target).as_posix(), "bytes": path.stat().st_size,
+                          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                         for path in sorted(target.rglob("*")) if path.is_file()]
+    (target / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     archive = None
     if make_zip:
         archive = folder / f"{slug(title)}-{target.name}.zip"
@@ -291,12 +301,15 @@ def results(session, job_id):
         attention.append("Waiting for your decision: " + ", ".join(kind.replace("_", " ") for kind in pending) + ".")
     if info["error"]:
         attention.append("Problem: " + info["error"])
-    files = [{"path": name, "exists": (folder / name).is_file(), "bytes": (folder / name).stat().st_size if (folder / name).is_file() else 0} for name in spec["files"]]
+    names = spec["files"] + [path.relative_to(folder).as_posix() for path in sorted((folder / "generated").glob("*.png")) if path.is_file()]
+    files = [{"path": name, "exists": (folder / name).is_file(), "bytes": (folder / name).stat().st_size if (folder / name).is_file() else 0} for name in names]
     next_step = {"intake": "Wait a moment while Cerebra prepares the plan.", "planning": "Cerebra is preparing the plan.",
                  "waiting": "Open Approvals and answer the waiting step.", "creating": "Nothing to do: the creator is working.",
                  "checking": "Nothing to do: the work is being checked.", "ready": "Press Export to write the package (README, manifest and review findings).",
                  "completed": "Open the folder, read everything yourself, then deliver it to your client.",
                  "failed": "Read the problem above, then create the job again with a clearer brief.", "cancelled": "Nothing; this job was cancelled."}[info["stage"]]
+    if task and task.state == "READY" and not pending: next_step = "Open Technical details and press Start to begin the approved job."
+    if task and task.state == "PAUSED": next_step = "Open Technical details and press Resume when you are ready."
     return {**info, "asked": job.brief, "passed": passed, "attention": attention, "files": files, "where": job.output_dir,
             "export_folder": (job.export or {}).get("folder", ""), "zip": (job.export or {}).get("zip", ""), "next_step": next_step,
             "reviewed": reviewed, "note": "Exported means a reviewed package is saved on this laptop. It does not mean anything was sold, published or delivered."}

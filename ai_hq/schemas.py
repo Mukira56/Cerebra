@@ -153,6 +153,32 @@ class BusinessExport(StrictModel):
 class BusinessOpen(StrictModel):
     what: str = Field(default="folder", pattern="^(folder|result)$")
 
+class BusinessConnection(StrictModel):
+    values: dict[str, str] = Field(default_factory=dict, max_length=8)
+
+class BusinessExternal(StrictModel):
+    action: Literal["etsy_draft", "printify_draft", "printify_upload", "image"]
+    confirmed: bool = False
+    original_confirmed: bool = False
+    prompt: str = Field(default="", max_length=12000)
+    path: str = Field(default="", max_length=1024)
+    fields: dict = Field(default_factory=dict)
+
+class OAuthFinish(StrictModel):
+    redirected_url: str = Field(min_length=10, max_length=4096)
+
+class GmailSetup(StrictModel):
+    client_id: str = Field(max_length=256)
+    client_secret: str = Field(max_length=200)
+
+class NotificationSetup(StrictModel):
+    ntfy_enabled: bool = False
+    ntfy_server: str = Field(default="https://ntfy.sh", max_length=512)
+    telegram_enabled: bool = False
+    telegram_token: str = Field(default="", max_length=100)
+    telegram_chat_id: str = Field(default="", max_length=32)
+    only_orders: bool = False
+
 class ChatCreate(StrictModel):
     profile: str = Field(default="codex", max_length=120)
     project_id: str | None = Field(default=None, max_length=64)

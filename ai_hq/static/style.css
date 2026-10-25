@@ -225,7 +225,17 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .diagram-wrap { background: #070a0e; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; position: relative; overflow: hidden; }
 .diagram-wrap::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(63,185,80,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(63,185,80,.05) 1px, transparent 1px); background-size: 24px 24px; }
 .diagram { width: 100%; height: auto; display: block; position: relative; }
-.diagram .edge { fill: none; stroke: #23303f; stroke-width: 2; }
+.diagram .pipe-shell { fill: none; stroke: #1e3042; stroke-width: 19; stroke-linecap: round; }
+.diagram .edge { fill: none; stroke: #09111b; stroke-width: 12; stroke-linecap: round; }
+.diagram .edge.waiting { stroke: #55441f; }
+.diagram .courier { cursor: pointer; filter: drop-shadow(0 2px 3px #000); }
+.diagram .courier:focus .courier-figure { outline: 3px solid var(--cyan); }
+.diagram .courier[data-state="failed"] { filter: drop-shadow(0 0 6px var(--red)); }
+.diagram .courier[data-state="waiting"] { filter: drop-shadow(0 0 4px var(--amber)); }
+.connection-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; align-items: start; }
+.connection-grid .panel, .connection-grid form { min-width: 0; }
+.connection-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; font-size: 12px; }
+.mail-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
 .diagram .edge.active { stroke: var(--cyan); stroke-dasharray: 8 8; animation: flow 0.9s linear infinite; filter: drop-shadow(0 0 4px rgba(57,197,207,.7)); }
 .diagram .edge.done { stroke: rgba(63,185,80,.55); }
 @keyframes flow { to { stroke-dashoffset: -16; } }

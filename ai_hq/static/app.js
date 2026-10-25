@@ -6,6 +6,7 @@
     overview: ["WORKSPACE", "Overview", "Everything happening in your development HQ, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
+    connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
     job: ["WORK", "Business result", ""],
     tasks: ["WORK", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
     projects: ["WORK", "Projects", "Repositories Cerebra is allowed to work in."],
@@ -50,7 +51,7 @@
   function field(label, control, help) { return append(el("label", "field"), el("span", "", label), control, help ? el("small", "", help) : null); }
   function input(placeholder = "", value = "", type = "text") { const node = el("input"); node.type = type; node.placeholder = placeholder; node.value = value ?? ""; return node; }
   function textarea(placeholder = "", value = "") { const node = el("textarea"); node.placeholder = placeholder; node.value = value; return node; }
-  function check(label) { const wrap = el("label", "check-field"), control = input("", "", "checkbox"); append(wrap, control, el("span", "", label)); return {wrap, control}; }
+  function check(label, checked = false) { const wrap = el("label", "check-field"), control = input("", "", "checkbox"); control.checked = !!checked; append(wrap, control, el("span", "", label)); return {wrap, control}; }
   function actionsRow(...nodes) { return append(el("div", "form-actions"), nodes); }
   function wireForm(form, submit, onSubmit) { const error = el("div", "form-error"); error.setAttribute("role", "alert"); form.append(error); form.addEventListener("submit", async event => { event.preventDefault(); submit.disabled = true; error.textContent = ""; try { await onSubmit(); } catch (issue) { error.textContent = issue.message; } finally { submit.disabled = false; } }); }
   function submitButton(label) { const node = el("button", "button primary", label); node.type = "submit"; return node; }
@@ -111,7 +112,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, business: businessView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, connections: connectionView, business: businessView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -588,7 +589,7 @@
       append(folder, field("Save jobs in", root_, "Each job gets its own folder here. Existing files are never overwritten."), actionsRow(save));
       wireForm(folder, save, async () => { await mutate("/api/business/settings", {output_root: root_.value.trim()}, "PUT"); toast("Output folder saved."); });
       const markets = append(el("div"), ...state.marketplaces.map(item => append(el("div", "action-card"), append(el("div", "row-meta"), badge(item.state, item.state === "manual" ? "blue" : "muted"), el("strong", "", item.name)), el("p", "", item.detail))));
-      side.replaceChildren(panel("Where results are saved", body(folder)), panel("Marketplaces", body(markets)), panel("Images", body(hint(state.capabilities.image_generation.detail)))) ;
+      side.replaceChildren(panel("Where results are saved", body(folder)), panel("Marketplaces", body(append(el("div"), markets, link("Set up business connections →", "connections")))), panel("Images", body(hint(state.capabilities.image_generation.detail)))) ;
     })();
     return root;
   }
@@ -601,6 +602,7 @@
       const section = (heading, ...nodes) => append(el("section", "report-section"), el("h2", "", heading), ...nodes);
       const actions = el("div", "actions");
       const run = (label, path, payload = {}) => button(label, async event => { event.currentTarget.disabled = true; await act(result => result.opened ? "Opened." : "Done.", () => mutate(`/api/business/jobs/${encodeURIComponent(id)}/${path}`, payload, "POST", 120000)); load(); }, "button");
+      if (["ready", "completed"].includes(job.stage)) append(actions, button("Image / marketplace draft…", () => externalForm(job, load), "button"));
       append(actions, run("Open folder", "open", {what: "folder"}), job.files.some(file => file.exists) ? run("Open result", "open", {what: "result"}) : null,
         ["ready", "completed"].includes(job.stage) ? run("Export", "export", {zip: false}) : null, ["ready", "completed"].includes(job.stage) ? run("Export ZIP", "export", {zip: true}) : null,
         job.task_id ? button("Technical details", () => taskDetail(job.task_id), "button ghost") : null,
@@ -613,9 +615,79 @@
         section("Files made", list(job.files.map(file => `${file.path}: ${file.exists ? `${file.bytes} bytes` : "not made yet"}`))),
         section("Where they are", kv([["Job folder", job.where], ["Exported package", job.export_folder || "not exported yet"], ["ZIP", job.zip || "—"]])),
         section("Next step", el("p", "", job.next_step)), hint(job.note)));
+      const operations = await api(`/api/business/jobs/${encodeURIComponent(id)}/operations`);
+      if (token === renderToken && page === "job" && operations.length) root.append(panel("External actions — recorded results", body(list(operations.map(item => `${nice(item.action)}: ${item.status}. ${item.result.message || "Check the provider dashboard before retrying an uncertain action."}${item.result.listing_id ? ` Listing ID: ${item.result.listing_id}` : ""}${item.result.product_id ? ` Product ID: ${item.result.product_id}` : ""}${item.result.image_id ? ` Image ID: ${item.result.image_id}` : ""}${item.result.path ? ` File: ${item.result.path}` : ""}`)))));
       if (!["completed", "cancelled", "failed"].includes(job.stage) && token === renderToken) setTimeout(() => { if (token === renderToken && page === "job") load(); }, 4000);
     }
     load();
+    return root;
+  }
+
+  function externalForm(job, reload) {
+    const form = el("form"), choice = select([["image", "Generate a raster image (paid API)"], ["etsy_draft", "Create an Etsy draft listing"], ["printify_upload", "Upload an image to Printify"], ["printify_draft", "Create a Printify draft product"]], "image");
+    const prompt = textarea("Your own original creative instructions (required for image generation)", ""), path = input("e.g. generated/image-….png", "");
+    const fields = textarea("Draft fields in JSON. Use real IDs from your account's catalog.", ""); fields.rows = 12;
+    const details = el("div"), confirmation = check("I confirm this exact external action on my connected account. Image generation uses paid API credits."), original = check("This uses my original creative input. I will complete required AI and production-partner disclosures before publishing.");
+    const examples = {
+      etsy_draft: {quantity: 1, title: job.title, description: job.brief, price: 10, who_made: "i_did", when_made: "made_to_order", taxonomy_id: 0, type: "download"},
+      printify_draft: {title: job.title, description: job.brief, blueprint_id: 0, print_provider_id: 0, variants: [{id: 0, price: 2000, is_enabled: true}], print_areas: [{variant_ids: [0], placeholders: [{position: "front", images: [{id: "PASTE_UPLOADED_IMAGE_ID", x: .5, y: .5, scale: 1, angle: 0}]}]}]}
+    };
+    function change() {
+      details.replaceChildren();
+      if (choice.value === "image") details.append(field("Image instructions", prompt), hint("One 1024 × 1024 PNG. The provider bills your API account. Inspect the image before delivery; it is generated after the job's review. Export again to include it."));
+      else if (choice.value === "printify_upload") details.append(field("Image path inside this job", path), hint("PNG or JPEG up to 20 MB. The result gives you an image ID for the Printify draft."));
+      else { fields.value = json(examples[choice.value]); details.append(field("Review these draft fields", fields), hint("Replace zero IDs with real catalog/category IDs. This creates a draft only. It does not publish, create orders, produce goods or deliver to a client.")); }
+      if (choice.value === "etsy_draft") details.append(original.wrap);
+    }
+    choice.addEventListener("change", change); change();
+    const result = el("pre", "connection-result"), submit = submitButton("Run confirmed action");
+    append(form, link("Account setup →", "connections"), field("Action", choice), details, confirmation.wrap, result, actionsRow(button("Close", closeDialog, "button ghost"), submit));
+    wireForm(form, submit, async () => {
+      const payload = {action: choice.value, confirmed: confirmation.control.checked, original_confirmed: original.control.checked};
+      if (choice.value === "image") payload.prompt = prompt.value;
+      else if (choice.value === "printify_upload") payload.path = path.value.trim();
+      else payload.fields = JSON.parse(fields.value);
+      const value = await mutate(`/api/business/jobs/${encodeURIComponent(job.id)}/external`, payload, "POST", 240000);
+      result.textContent = json(value); toast(value.message); reload();
+    });
+    showDialog("Review an external action", form);
+  }
+
+  function connectionView() {
+    const root = el("div", "connection-grid"), token = renderToken;
+    (async () => {
+      const [connections, mail, notifications] = await Promise.all([api("/api/business/connections"), api("/api/business/gmail"), api("/api/business/notifications")]);
+      if (token !== renderToken) return;
+      const specs = {
+        etsy: {title: "Etsy drafts", help: "Register your own Etsy developer app. Etsy requires a registered HTTPS callback you control. Authorize in your browser, then paste the full redirected callback URL here. Credentials alone do not mean a connection has been verified.", fields: [["api_key", "App keystring", true], ["shared_secret", "Shared secret", true], ["shop_id", "Shop ID"], ["redirect_uri", "Registered HTTPS callback URL"]]},
+        printify: {title: "Printify drafts", help: "Use your own Printify personal API token. Check connection to list your shop IDs. Choose real catalog variant/provider IDs in each product draft. Orders, order imports and production are blocked because shop auto-approval cannot be verified here.", fields: [["api_key", "API token", true], ["shop_id", "Shop ID"]]},
+        images: {title: "Raster images", help: "Use your own OpenAI API key with image-model access. Checking access does not generate an image. A reviewed job offers a separate paid generation action. Your coding subscription does not include these API charges.", fields: [["api_key", "OpenAI API key", true], ["model", "Image model"]]}
+      };
+      for (const [provider, spec] of Object.entries(specs)) {
+        const saved = connections[provider], form = el("form"), controls = {}, result = el("pre", "connection-result");
+        append(form, badge(saved.connected ? "verified connection" : saved.authorized ? "authorized; check shop" : saved.configured ? "key saved; not verified" : "not connected", saved.connected ? "green" : "muted"), el("p", "hint", spec.help));
+        spec.fields.forEach(([key, label, secret]) => { const control = input(secret && saved.key_saved ? "Saved — leave blank to keep" : label, secret ? "" : saved[key] || ""); if (secret) { control.type = "password"; control.autocomplete = "off"; } controls[key] = control; form.append(field(label, control)); });
+        const save = submitButton("Save protected settings"), buttons = actionsRow(save,
+          button("Check connection", () => act(value => { result.textContent = json(value); return value.message; }, () => mutate(`/api/business/connections/${provider}/check`))),
+          button("Disconnect", () => act(value => { result.textContent = value.message; return value.message; }, () => mutate(`/api/business/connections/${provider}`, undefined, "DELETE")), "button danger"));
+        if (provider === "etsy") {
+          const callback = textarea("Paste your redirected HTTPS callback URL here", "");
+          append(form, field("After Etsy authorization", callback));
+          append(buttons, button("Authorize Etsy…", () => act(value => value.message, () => mutate("/api/business/connections/etsy/authorize"))), button("Finish authorization", () => act(value => { callback.value = ""; result.textContent = value.message; return value.message; }, () => mutate("/api/business/connections/etsy/finish", {redirected_url: callback.value.trim()}))));
+        }
+        append(form, buttons, result); wireForm(form, save, async () => { const values = Object.fromEntries(Object.entries(controls).map(([key, control]) => [key, control.value])); await mutate(`/api/business/connections/${provider}`, {values}, "PUT"); spec.fields.forEach(([key,,secret]) => { if (secret) controls[key].value = ""; }); result.textContent = "Settings saved. Check the connection next."; });
+        root.append(panel(spec.title, body(form)));
+      }
+      const gmailForm = el("form"), clientId = input("Google Desktop app OAuth client ID", mail.client_id || ""), secret = input("Google client secret", ""); secret.type = "password"; secret.autocomplete = "off";
+      const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", "hint", mail.connected ? `Connected read-only: ${mail.email}` : "Not connected");
+      append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra can read selected messages; it cannot send, delete or change mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
+      wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Read-only Gmail intake", body(gmailForm)));
+      const notifyForm = el("form"), ntfy = check("Send progress notifications through ntfy", notifications.ntfy_enabled), telegram = check("Send progress notifications to my Telegram bot", notifications.telegram_enabled);
+      const server = input("HTTPS ntfy server", notifications.ntfy_server), bot = input("Telegram bot token (blank keeps saved token)", ""), chat = input("Your private Telegram chat ID", notifications.telegram_chat_id || ""); bot.type = "password"; bot.autocomplete = "off";
+      const saveNotify = submitButton("Save notifications"), notifyResult = el("pre", "connection-result");
+      append(notifyForm, hint("Optional: task titles and states leave your computer for your selected service. Do not put client secrets in titles. Anyone with your ntfy topic can read its messages. Subscribe privately in your ntfy app."), field("ntfy subscription topic", input("", notifications.ntfy_topic)), ntfy.wrap, field("ntfy HTTPS server", server), telegram.wrap, field("Bot token", bot), field("Your Telegram chat ID", chat), actionsRow(saveNotify, button("Send me a test", () => act(value => { notifyResult.textContent = json(value); return value.sent.length ? "Test sent." : "No notification sent; check settings."; }, () => mutate("/api/business/notifications/test")))), notifyResult);
+      wireForm(notifyForm, saveNotify, async () => { await mutate("/api/business/notifications", {ntfy_enabled: ntfy.control.checked, ntfy_server: server.value, telegram_enabled: telegram.control.checked, telegram_token: bot.value, telegram_chat_id: chat.value}, "PUT"); bot.value = ""; toast("Notifications saved."); }); root.append(panel("Progress on your phone", body(notifyForm)));
+    })().catch(issue => { if (token === renderToken) root.replaceChildren(body(empty("Connections unavailable", issue.message))); });
     return root;
   }
 

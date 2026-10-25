@@ -85,7 +85,7 @@ def test_brief_to_reviewed_export(client, tmp_path):
     assert exported["stage"] == "completed"
     package = Path(exported["export"]["folder"])
     manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-    assert [item["path"] for item in manifest["files"]] == ["listing.md"] and manifest["checks"][0]["passed"] is True
+    assert "listing.md" in [item["path"] for item in manifest["files"]] and manifest["checks"][0]["passed"] is True
     assert {"README.md", "review-findings.md", "listing.md"} <= {path.name for path in package.iterdir()}
     with zipfile.ZipFile(exported["export"]["zip"]) as bundle:
         assert "listing.md" in bundle.namelist() and "manifest.json" in bundle.namelist()
@@ -168,5 +168,46 @@ def test_checker_validates_website(tmp_path):
     (tmp_path / "cerebra-brief.json").write_text(json.dumps({"required_files": ["index.html"]}), encoding="utf-8")
     (tmp_path / "index.html").write_text("<p>hi</p>", encoding="utf-8")
     assert business_check.main(str(tmp_path)) == 1
-    (tmp_path / "index.html").write_text("<!doctype html><html><head><meta charset='utf-8'><title>Ama's Bakery</title></head><body>hi</body></html>", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><link rel='stylesheet' href='styles.css'><title>Ama's Bakery</title></head><body>hi</body></html>", encoding="utf-8")
+    (tmp_path / "styles.css").write_text("body { margin: 0; }", encoding="utf-8")
     assert business_check.main(str(tmp_path)) == 0
+
+
+def test_website_requires_viewport_and_real_local_stylesheet(tmp_path):
+    page = tmp_path / "index.html"
+    page.write_text("<html><head><meta charset='utf-8'><title>Bakery</title></head><body>Hi</body></html>")
+    problems = []; business_check.check_html(page, problems)
+    assert any("viewport" in item for item in problems) and any("stylesheet" in item for item in problems)
+    page.write_text("<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Bakery</title><link rel='stylesheet' href='../outside.css'></head><body>Hi</body></html>")
+    problems = []; business_check.check_html(page, problems)
+    assert any("inside the website folder" in item for item in problems)
+
+
+@pytest.mark.parametrize("kind", ["website", "svg"])
+def test_export_preserves_deliverable_readme_and_hashes_final_bytes(tmp_path, monkeypatch, kind):
+    import hashlib
+    from types import SimpleNamespace as NS
+    from ai_hq import business
+    from ai_hq.models import BusinessJob
+    original = "My reviewed instructions, palette and attribution."
+    for name in business.KINDS[kind]["files"]: (tmp_path / name).write_text(original if name == "README.md" else "Deliverable")
+    (tmp_path / "generated").mkdir(); (tmp_path / "generated/image.png").write_bytes(b"fixture-image")
+    job = NS(id="audit", status="active", task_id="task", output_dir=str(tmp_path), kind=kind, title="Original design", client="", export={})
+    task = NS(id="task", state="COMPLETED", review_findings=[], test_results=[{"attempt":0,"passed":True}], results={})
+    class Session:
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def get(self,model,key): return job if model is BusinessJob else task
+    class Factory:
+        def __call__(self): return Session()
+        def begin(self): return Session()
+    monkeypatch.setattr(business, "describe", lambda session, job: job.export)
+    result = business.export(Factory(), "audit", True)
+    target = Path(result["folder"])
+    assert (target / "README.md").read_text() == original and (target / "CEREBRA-EXPORT.md").is_file()
+    manifest = json.loads((target / "manifest.json").read_text())
+    for entry in manifest["files"]:
+        raw = (target / entry["path"]).read_bytes()
+        assert entry["bytes"] == len(raw) and entry["sha256"] == hashlib.sha256(raw).hexdigest()
+    with zipfile.ZipFile(result["zip"]) as archive:
+        assert archive.read("README.md").decode() == original and "generated/image.png" in archive.namelist()

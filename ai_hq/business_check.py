@@ -22,12 +22,16 @@ UNSAFE_SVG = re.compile(r"<\s*script|\bon[a-z]+\s*=|javascript:|<\s*foreignObjec
 class _Html(HTMLParser):
     def __init__(self):
         super().__init__()
-        self.tags, self.title = set(), ""
+        self.tags, self.title, self.meta, self.stylesheets = set(), "", [], []
         self._in_title = False
 
     def handle_starttag(self, tag, attrs):
         self.tags.add(tag)
         self._in_title = tag == "title"
+        values = dict(attrs)
+        if tag == "meta": self.meta.append(values)
+        if tag == "link" and "stylesheet" in (values.get("rel") or "").split():
+            self.stylesheets.append(values.get("href") or "")
 
     def handle_endtag(self, tag):
         self._in_title = False
@@ -62,8 +66,19 @@ def check_html(path, problems):
             problems.append(f"{path.name}: missing <{tag}>")
     if not parser.title:
         problems.append(f"{path.name}: missing a <title>")
-    if "meta" not in parser.tags:
-        problems.append(f"{path.name}: missing <meta> tags (charset/viewport)")
+    if not any((meta.get("charset") or "").lower() == "utf-8" for meta in parser.meta):
+        problems.append(f"{path.name}: needs <meta charset='utf-8'>")
+    if not any((meta.get("name") or "").lower() == "viewport" and
+               "width=device-width" in (meta.get("content") or "").replace(" ", "").lower() for meta in parser.meta):
+        problems.append(f"{path.name}: needs a viewport with width=device-width for mobile screens")
+    if not parser.stylesheets:
+        problems.append(f"{path.name}: needs a linked local stylesheet")
+    for href in parser.stylesheets:
+        linked = (path.parent / href.split("?")[0].split("#")[0]).resolve()
+        if not href or ":" in href or href.startswith(("/", "\\")) or path.parent.resolve() not in linked.parents:
+            problems.append(f"{path.name}: stylesheet must be inside the website folder")
+        elif not linked.is_file() or not linked.stat().st_size:
+            problems.append(f"{path.name}: linked stylesheet {href} is missing or empty")
 
 
 def check_listing(path, problems, rules):
