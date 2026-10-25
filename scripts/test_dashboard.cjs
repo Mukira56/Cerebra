@@ -88,7 +88,28 @@ const path = require('node:path');
     await page.locator('[data-page="settings"]').first().click();
     await page.getByRole('button', {name: 'Switch agents on'}).waitFor();
     await page.getByText('Where your data lives', {exact: true}).waitFor();
+    assert.ok(await page.getByRole('button', {name: 'Turn Away mode on'}).isDisabled(), 'Away mode needs agents on first');
     await shot('settings');
+
+    // Switch agents on, delegate approvals to Away mode, then turn both off again.
+    await page.getByText(/run on my own accounts/).click();
+    await page.getByText(/read files outside the project folder/).click();
+    await page.getByRole('button', {name: 'Switch agents on'}).click();
+    await page.getByRole('button', {name: 'Turn Away mode on'}).click();
+    await page.locator('.form-error', {hasText: 'Tick the first box'}).waitFor();
+    await page.getByText(/approve plans, start the AI team/).click();
+    await page.getByText(/Also merge finished work/).click();
+    await page.getByRole('button', {name: 'Turn Away mode on'}).click();
+    await page.locator('.form-error', {hasText: 'merge confirmation'}).waitFor();
+    await page.getByText(/merged work changes my real project folder/).click();
+    await page.getByRole('button', {name: 'Turn Away mode on'}).click();
+    await page.locator('.badge', {hasText: 'AWAY MODE ON'}).waitFor();
+    assert.match(await page.locator('#agents-status').innerText(), /away mode/);
+    await shot('away-mode');
+    await page.getByRole('button', {name: 'Turn Away mode off'}).click();
+    await page.locator('.badge', {hasText: 'AWAY MODE OFF'}).waitFor();
+    await page.getByRole('button', {name: 'Switch agents off'}).click();
+    await page.getByRole('button', {name: 'Switch agents on'}).waitFor();
     await page.locator('[data-page="toolchain"]').first().click();
     await page.locator('.panel-header h2', {hasText: 'Essentials'}).waitFor({timeout: 60000});
     await shot('toolchain');

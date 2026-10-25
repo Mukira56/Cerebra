@@ -22,19 +22,19 @@ from .security import redact
 # Providers AI HQ knows how to sign in to. Only "execution" providers can run task roles today.
 PROVIDERS = {
     "codex": {"label": "OpenAI Codex", "vendor": "OpenAI", "execution": True, "command": "codex",
-              "login": ["login"], "status": ["login", "status"],
+              "login": ["login"], "logout": ["logout"], "status": ["login", "status"],
               "models": [], "model_hint": "Any model your ChatGPT/OpenAI plan offers in Codex, for example the one shown by /model inside Codex. Leave blank for Codex's default.",
               "install": "codex-cli"},
     "claude": {"label": "Claude Code", "vendor": "Anthropic", "execution": True, "command": "claude",
-               "login": ["auth", "login"], "status": ["auth", "status", "--json"],
+               "login": ["auth", "login"], "logout": ["auth", "logout"], "status": ["auth", "status", "--json"],
                "models": ["sonnet", "opus", "haiku"], "model_hint": "Aliases always pick the newest model of that family. A full model name also works. Leave blank for Claude Code's default.",
                "install": "claude-code"},
     "copilot": {"label": "GitHub Copilot CLI", "vendor": "GitHub", "execution": False, "command": "copilot",
-                "login": [], "status": [],
+                "login": [], "logout": [], "status": [],
                 "models": [], "model_hint": "Copilot can be installed and signed in here. Running it inside AI HQ tasks is not supported yet; its adapter has not been verified.",
                 "install": "copilot-cli"},
     "gemini": {"label": "Gemini CLI", "vendor": "Google", "execution": False, "command": "gemini",
-               "login": [], "status": [],
+               "login": [], "logout": [], "status": [],
                "models": [], "model_hint": "Gemini CLI can be installed and signed in here. Running it inside AI HQ tasks is not supported yet.",
                "install": "gemini-cli"},
 }
@@ -110,6 +110,21 @@ class Integrations:
         self.terminal([executable, *provider["login"]], f"Sign in to {provider['label']}", cwd=str(self.settings.data_dir))
         return {"opened": True, "message": f"A {provider['label']} sign-in window opened. Finish signing in there, then press Check sign-in."
                 + ("" if provider["login"] else " Type /login in that window if it asks.")}
+
+    def sign_out(self, name):
+        """Run the tool's own logout command. It removes the tool's saved sign-in; AI HQ never had it."""
+        provider = PROVIDERS.get(name)
+        if provider is None:
+            raise ValueError("Unknown provider")
+        if not provider["logout"]:
+            raise ValueError(f"{provider['label']} signs out from inside its own window (/logout).")
+        executable = self.provider_executable(name)
+        if not executable:
+            raise ValueError(f"{provider['label']} is not installed.")
+        result = self.runner.run([executable, *provider["logout"]], self.settings.data_dir, timeout=30)
+        if result.exit_code:
+            raise ValueError(f"{provider['label']} could not sign out: " + redact((result.stderr or result.stdout).strip())[:500])
+        return self.sign_in_status(name)
 
     def sign_in_status(self, name):
         provider = PROVIDERS.get(name)
@@ -206,6 +221,15 @@ class Integrations:
     def github_sign_in(self):
         self.terminal([self._gh(), "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"], "Sign in to GitHub", cwd=str(self.settings.data_dir))
         return {"opened": True, "message": "A GitHub sign-in window opened. Copy the one-time code it shows, finish in your browser, then press Check again."}
+
+    def github_sign_out(self):
+        account = self.github_status().get("account")
+        if not account:
+            return self.github_status()
+        result = self.runner.run([self._gh(), "auth", "logout", "--hostname", "github.com", "--user", account], self.settings.data_dir, timeout=30)
+        if result.exit_code:
+            raise ValueError("Could not sign out of GitHub: " + redact(result.stderr.strip())[:500])
+        return self.github_status()
 
     def github_repositories(self):
         result = self.runner.run([self._gh(), "repo", "list", "--limit", "100", "--json", "nameWithOwner,description,visibility,url,updatedAt,primaryLanguage"],

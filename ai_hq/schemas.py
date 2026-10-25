@@ -109,6 +109,14 @@ class AgentPermissions(StrictModel):
     acknowledge_provider_usage: bool = False
     acknowledge_residual_read_risk: bool = False
 
+class AutopilotUpdate(StrictModel):
+    enabled: bool
+    hours: int = Field(default=8, ge=1, le=72)
+    auto_merge: bool = False
+    projects: list[str] = Field(default_factory=list, max_length=100)
+    acknowledge_auto_approval: bool = False
+    acknowledge_auto_merge: bool = False
+
 class ChatCreate(StrictModel):
     profile: str = Field(default="codex", max_length=48)
     project_id: str | None = Field(default=None, max_length=64)

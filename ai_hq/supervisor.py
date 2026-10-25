@@ -337,9 +337,53 @@ class Supervisor:
             self._wake.wait(1)
             self._wake.clear()
 
+    def auto_approve(self):
+        """Answer pending gates the user delegated to Away mode. Returns how many were answered."""
+        from . import autopilot
+        if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
+            return 0
+        decisions, starts = [], []
+        with self.db.Session.begin() as session:
+            policy = autopilot.load(session)
+            if not autopilot.active(policy):
+                return 0
+            pending = session.scalars(select(Approval).where(Approval.status.in_(["pending", "PENDING"])).order_by(Approval.created_at)).all()
+            for approval in pending:
+                task = session.get(Task, approval.task_id)
+                if task is None or task.state != "AWAITING_APPROVAL" or task.pause_requested or not autopilot.covers(policy, task.project_id):
+                    continue
+                if approval.kind == "merge":
+                    project = session.get(Project, task.project_id)
+                    latest = task.test_results[-len(project.test_commands):] if project.test_commands else []
+                    if not policy.get("auto_merge") or not latest or not all(result.get("passed") for result in latest):
+                        continue
+                elif approval.kind not in {"plan", "live_execution", "review_findings"}:
+                    continue
+                self._event(session, task.id, "autopilot", f"Away mode answered the {approval.kind.replace('_', ' ')} step for you", {"approval_id": approval.id})
+                decisions.append(approval.id)
+                if approval.kind == "plan":
+                    starts.append(task.id)
+        for identifier in decisions:
+            try:
+                self.resolve_approval(identifier, True)
+            except ValueError:
+                pass  # Answered or cancelled by the user in the meantime.
+        for task_id in starts:
+            try:
+                self.start(task_id)  # Requests the run consent, which the next pass answers.
+            except ValueError:
+                pass
+        return len(decisions)
+
     def tick(self):
+        answered = 0
+        try:
+            answered = self.auto_approve()
+        except Exception as exc:
+            with self.db.Session.begin() as session:
+                self._event(session, None, "supervisor_error", f"Away mode could not answer a step: {redact(str(exc))[:500]}")
         if self._stop.is_set() or not self._execution_lock.acquire(blocking=False):
-            return False
+            return answered > 0
         task_id = None
         try:
             with self._lock, self.db.Session.begin() as session:
@@ -363,7 +407,7 @@ class Supervisor:
                     self._cancels[task_id] = threading.Event()
                     break
             if task_id is None:
-                return False
+                return answered > 0
             self._execute(task_id)
             return True
         except Exception as exc:

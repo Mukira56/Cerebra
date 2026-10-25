@@ -15,7 +15,7 @@ The **Overview** page shows a *Get started* checklist:
    - **Install** opens a visible window running the official installer (winget or npm). Restart AI HQ afterwards so it finds the new tools.
 2. **Models & sign-in**: press **Sign in** for Codex and for Claude.
    - Each tool opens its own login window. Your password goes only to OpenAI or Anthropic; AI HQ never sees it, and you don't need API keys.
-   - Press **Check sign-in** to confirm.
+   - Press **Check sign-in** to confirm. Once you're signed in, the button becomes **Sign out**, which runs the tool's own logout.
 3. **Settings › Agent permissions**: tick both boxes and press **Switch agents on**. This is a one-time permission; every task still asks you before agents run.
 4. **Projects › Add project**: pick an existing folder, a new empty project, or **Clone from GitHub**.
    - Add the project's **test commands**, for example `[["python","-m","pytest","-q"]]` or `[["npm","test"]]`. AI HQ uses them to prove that the AI's code works.
@@ -65,7 +65,7 @@ Open **Reports** from the sidebar, or press **Plain report** in any task. Each r
 ## Chat
 
 **Chat** lets you talk to Codex or Claude about a project: ask how something works, plan a feature, or get a second opinion.
-- Chat is **read-only**: the agent can read the chosen project, but it never changes files. To change code, create a task.
+- Chat is **read-only**: the agent can read the chosen project, but it never changes files. To change code, press **→ Make it a task**: it opens a new task with your last message already filled in.
 - Each message uses your provider account, just like a task.
 - Chats are saved, and you can delete them.
 
@@ -81,6 +81,25 @@ In **Models & sign-in**:
 - see your repositories, and clone one as a project
 - **Publish** a local project to a new private or public GitHub repository
 - **Push** a project's main branch after you have approved merges
+
+## Away mode: let the AI work while you're away
+
+Normally every task waits for you three times: to approve the plan, to let the agents run, and to merge the result. **Settings › Away mode** lets AI HQ answer those for you for a set time (2 to 72 hours), so tasks you created keep going while you're away.
+
+1. Create your tasks first. Each one needs test commands on its project.
+2. Make sure agents are switched on (Settings › Agent permissions).
+3. In **Away mode**, pick how long, and optionally which projects. Tick the first box and press **Turn Away mode on**.
+4. Optional: tick **Also merge finished work** to let AI HQ merge work into your project folder. It merges only when every test passed and the independent review found nothing to fix. Merging is local: nothing is ever pushed to GitHub.
+
+While Away mode is on:
+- Plans are approved, the AI team starts, and review findings are sent back to the coder for repair (up to the repair limit).
+- Every step it answers appears in **Activity** as "Away mode answered …".
+- The top bar shows **away mode**.
+- It switches itself off when the time is up, or when you switch agents off.
+
+What it does **not** do:
+- It doesn't give the AI your whole laptop. Agents still work only in a separate copy of the project, can change only the files the task allows, and can't install software, use the network (Codex), or push to GitHub.
+- It doesn't keep your laptop awake. Set Windows to not sleep while plugged in, and leave AI HQ running in the tray.
 
 ## Pause, resume, cancel
 

@@ -22,9 +22,22 @@ The process runner uses argument lists instead of shell interpolation, bounded e
 
 ## Human approvals
 
-Plan approval, task start, agent execution, and integration are deliberate operations. Since 0.5.0 AI HQ has no simulated mode: every task uses real provider CLIs, so agents are switched off on a fresh install. They cannot be switched on through a generic Settings PATCH. The only switch is the dedicated **Settings › Agent permissions** action (`POST /api/permissions`), which requires a session, a CSRF token, and **both** explicit acknowledgements (provider usage, and the residual outside-repository read risk below). Switching off needs neither. The tray's *Enable live agents* and `manage enable-live` / `accept-cli-confinement` remain equivalent alternatives. Each task still needs its own plan approval and agent consent. A CLI's output cannot grant approval or widen scope.
+Plan approval, task start, agent execution, and integration are deliberate operations. Since 0.5.0 AI HQ has no simulated mode: every task uses real provider CLIs, so agents are switched off on a fresh install. They cannot be switched on through a generic Settings PATCH. The only switch is the dedicated **Settings › Agent permissions** action (`POST /api/permissions`), which requires a session, a CSRF token, and **both** explicit acknowledgements (provider usage, and the residual outside-repository read risk below). Switching off needs neither. The tray's *Enable live agents* and `manage enable-live` / `accept-cli-confinement` remain equivalent alternatives. Each task still needs its own plan approval and agent consent, unless the user delegated those to Away mode (below). A CLI's output cannot grant approval, turn Away mode on, or widen scope.
 
 Integration requires the recorded approval and fresh repository checks. The system never pushes, force-pushes, deploys, or publishes on its own. **Push** and **Publish to GitHub** run only when you press them, using your own `gh`/Git credentials. The system never reads browser credentials or purchases services. Existing projects remain untouched until explicitly registered and authorized.
+
+## Away mode: delegated approvals (0.5.1)
+
+**Settings › Away mode** (`PUT /api/autopilot`) is a time-limited delegation of approval gates. It is refused unless agents are switched on and the acknowledgement is ticked. It expires after 1 to 72 hours, and switching agents off ends it. While it is active, the supervisor answers pending `plan`, `live_execution` and `review_findings` gates (repair stays bounded by the retry limit), optionally only for chosen projects. It records an `autopilot` event for each gate it answers.
+
+`merge` gates are answered only if the user separately opted into automatic merging with its own acknowledgement. Even then, the latest registered test run must have fully passed, and the merge goes through the same stale-candidate checks as a manual merge.
+
+Away mode changes nothing about execution scope:
+- the same worktrees, allowed paths, CLI confinement and residual read risk apply
+- no push, publish, install or network access
+- no access outside the task worktree beyond what the CLIs already had
+
+**Sign out** runs only the tool's own logout command (`codex logout`, `claude auth logout`, `gh auth logout --hostname github.com --user <account>`). AI HQ never held the credential.
 
 ## Sign-in, toolchain installs, chat, and GitHub (0.5.0)
 

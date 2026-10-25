@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup)
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate)
 from .security import redact
 from . import __version__
 
@@ -169,10 +169,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             agents = [dict(as_dict(row)["status"], name=row.id) for row in session.scalars(select(Agent)) if not row.id.startswith("mock-")]
             from .profiles import list_profiles, default_roles
             profiles, roles = list_profiles(session), default_roles(session)
+            from . import autopilot
+            away = autopilot.describe(autopilot.load(session))
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -275,7 +277,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             rows = {row.id: row.status for row in session.scalars(select(Agent))}
             sign_ins = session.get(Metadata, "sign_in_status")
             sign_ins = sign_ins.value if sign_ins else {}
-        return [{"id": name, **{key: value for key, value in provider.items() if key not in {"login", "status"}},
+        return [{"id": name, **{key: value for key, value in provider.items() if key not in {"login", "logout", "status"}}, "can_sign_out": bool(provider["logout"]),
                  "status": rows.get(name, {}), "sign_in": sign_ins.get(name)} for name, provider in PROVIDERS.items()]
 
     @app.post("/api/providers/{name}/sign-in")
@@ -284,15 +286,23 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             session.add(Event(kind="sign_in", message=f"User opened the {name} sign-in window"))
         return integrations.sign_in(name)
 
-    @app.post("/api/providers/{name}/check")
-    def check_sign_in(name: str):
-        status = integrations.sign_in_status(name)
+    def remember_sign_in(name, status):
         with db.Session.begin() as session:
             row = session.get(Metadata, "sign_in_status")
             values = dict(row.value) if row else {}
             values[name] = status
             if row: row.value = values
             else: session.add(Metadata(key="sign_in_status", value=values))
+        return status
+
+    @app.post("/api/providers/{name}/check")
+    def check_sign_in(name: str): return remember_sign_in(name, integrations.sign_in_status(name))
+
+    @app.post("/api/providers/{name}/sign-out")
+    def sign_out(name: str):
+        status = remember_sign_in(name, integrations.sign_out(name))
+        with db.Session.begin() as session:
+            session.add(Event(kind="sign_in", message=f"User signed out of {name}"))
         return status
 
     @app.post("/api/providers/refresh")
@@ -352,10 +362,37 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 if row: row.value = value
                 else: session.add(Metadata(key=key, value=value))
             session.add(Event(kind="policy", message="User switched AI agents on (each task still asks first)" if payload.enabled else "User switched AI agents off"))
+            if not payload.enabled:
+                from . import autopilot
+                autopilot.save(session, False)
             apply_stored_policies(session, settings)
         supervisor._refresh_registry()
         for adapter in supervisor.registry.adapters.values(): adapter._capability = None
         return public_settings()
+
+    @app.get("/api/autopilot")
+    def autopilot_status():
+        from . import autopilot
+        with db.Session() as session: return autopilot.describe(autopilot.load(session))
+
+    @app.put("/api/autopilot")
+    def autopilot_update(payload: AutopilotUpdate):
+        """Away mode: a time-limited delegation of approval gates. Separate from switching agents on."""
+        from . import autopilot
+        if payload.enabled:
+            if not (settings.live_enabled and settings.cli_confinement_accepted):
+                raise ValueError("Switch AI agents on first (Agent permissions, above)")
+            if not payload.acknowledge_auto_approval:
+                raise ValueError("Tick the box to let AI HQ approve plans and runs for you")
+            if payload.auto_merge and not payload.acknowledge_auto_merge:
+                raise ValueError("Tick the merge box too, or turn automatic merging off")
+        with db.Session.begin() as session:
+            for project_id in payload.projects: project_or_404(session, project_id)
+            policy = autopilot.save(session, payload.enabled, payload.hours, payload.auto_merge, payload.projects)
+            session.add(Event(kind="policy", message=(f"User turned Away mode on until {policy['until'][:16].replace('T', ' ')} UTC"
+                + (" with automatic local merging" if policy["auto_merge"] else "")) if payload.enabled else "User turned Away mode off"))
+        supervisor._wake.set()
+        return policy
 
     # ---- toolchain ---------------------------------------------------------------------------
     @app.get("/api/tools")
@@ -374,6 +411,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/github/sign-in")
     def github_sign_in(): return integrations.github_sign_in()
+
+    @app.post("/api/github/sign-out")
+    def github_sign_out():
+        status = integrations.github_sign_out()
+        with db.Session.begin() as session:
+            session.add(Event(kind="github", message="User signed out of GitHub"))
+        return status
 
     @app.get("/api/github/repositories")
     def github_repositories(): return integrations.github_repositories()

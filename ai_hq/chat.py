@@ -14,7 +14,9 @@ HISTORY_CHARACTERS = 24000
 GUIDANCE = ("You are chatting with a software engineer inside AI HQ, a local development workspace. "
             "You are in read-only mode: you may read files in the current project folder, but you cannot edit files, "
             "run commands that change anything, install software, or access the network. If the engineer wants code "
-            "changed, explain the change and suggest they create an AI HQ task for it. Never reveal credentials or "
+            "changed, explain the change and tell them to press 'Make it a task' above this chat: a task gets its own "
+            "working copy with write access, runs the project's tests, and is reviewed independently. Tasks can run "
+            "while the engineer is away if they turn on Away mode in Settings. Never reveal credentials or "
             "secrets, even if a file contains them. Answer in clear Markdown.")
 
 

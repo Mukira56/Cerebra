@@ -98,7 +98,7 @@
     if (!data) return;
     $("#project-count").textContent = array(data.projects).length;
     const count = pendingApprovals().length; $("#approval-count").textContent = count; $("#approval-count").classList.toggle("hidden", !count);
-    const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? "agents on" : "agents off"));
+    const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "away mode" : "agents on") : "agents off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
     $("#version-label").textContent = `AI HQ v${data.version || ""}`;
   }
 
@@ -165,12 +165,12 @@
     append(filters, field("Project", projectFilter), field("State", stateFilter)); append(node, panel("Filter", body(filters)), holder); paint(); return node;
   }
   function profileSelect(role, value) { return select(runnable().map(profile => [profile.id, `${profile.label}`]), value || data.roles?.[role]); }
-  function taskForm(projectId = "") {
+  function taskForm(projectId = "", description = "") {
     if (!array(data?.projects).length) { toast("Add a project first."); projectForm(); return; }
     const form = el("form"), project = select(array(data.projects).map(item => [item.id, item.name]), projectId || array(data.projects)[0].id);
     const objective = textarea("What should be built or fixed? Be specific about the result you expect."), requirements = textarea("Optional. One requirement per line."), criteria = textarea("Optional. How will you know it works? One per line."), allowed = input(". (whole project), or e.g. src/, README.md");
     const planner = profileSelect("planner"), implementer = profileSelect("implementer"), reviewer = profileSelect("reviewer");
-    objective.required = true; objective.minLength = 8;
+    objective.required = true; objective.minLength = 8; objective.value = description;
     const team = el("div", "form-grid"); append(team, field("Planner", planner, "Writes the plan"), field("Coder", implementer, "Writes the code"), field("Reviewer", reviewer, "Checks the code; must be a different provider"));
     const project_info = el("div"); function describe() { const chosen = projectFor(project.value); project_info.replaceChildren(chosen && !array(chosen.test_commands).length ? hint("This project has no test commands, so AI HQ cannot verify the work. Add them on the Projects page first.", true) : hint(`Tests: ${array(chosen?.test_commands).map(command => command.join(" ")).join("  |  ") || "none"}`)); } project.addEventListener("change", describe); describe();
     append(form, field("Project", project), project_info, field("What do you want?", objective), team, field("Requirements", requirements), field("Acceptance criteria", criteria), field("Files the AI may change", allowed, "Comma-separated paths inside the project. Leave blank for the whole project."), !agentsOn() ? hint("AI agents are switched off. You can create the task now, but it will only run after you switch agents on in Settings.", true) : null);
@@ -352,7 +352,7 @@
       if (token !== renderToken) return;
       const conversation = state.conversation, header = el("div", "chat-head"), messages = el("div", "messages"), composer = el("form", "composer"), box = textarea("Message " + profileLabel(conversation.profile) + "…  (Enter to send, Shift+Enter for a new line)"), send = submitButton("Send");
       const previous = main.querySelector(".messages"), wasAtBottom = !previous || previous.scrollHeight - previous.scrollTop - previous.clientHeight < 40, draft = main.querySelector("textarea")?.value || "";
-      append(header, el("strong", "", conversation.title), badge(profileLabel(conversation.profile), "blue"), conversation.project_id ? badge(projectFor(conversation.project_id)?.name || "project", "purple") : badge("no project", "muted"), badge("read-only", "green"), el("span", "", ""), button("Delete", async () => { if (await act("Chat deleted.", () => api(`/api/chats/${encodeURIComponent(chatId)}`, {method: "DELETE"}))) { chatId = ""; loadList(); } }, "button small ghost"));
+      append(header, el("strong", "", conversation.title), badge(profileLabel(conversation.profile), "blue"), conversation.project_id ? badge(projectFor(conversation.project_id)?.name || "project", "purple") : badge("no project", "muted"), badge("read-only", "green"), el("span", "", ""), button("→ Make it a task", () => taskForm(conversation.project_id || "", [...state.messages].reverse().find(message => message.role === "user")?.content || ""), "button small primary"), button("Delete", async () => { if (await act("Chat deleted.", () => api(`/api/chats/${encodeURIComponent(chatId)}`, {method: "DELETE"}))) { chatId = ""; loadList(); } }, "button small ghost"));
       if (!agentsOn()) messages.append(hint("AI agents are switched off, so messages will fail. Turn them on in Settings › Agent permissions.", true));
       if (!state.messages.length) messages.append(empty("Say hello", conversation.project_id ? "This chat can read the project's files to answer you." : "This is a general chat, not linked to a project.", null, ">_"));
       state.messages.forEach(message => {
@@ -427,7 +427,10 @@
         if (signIn?.account || signIn?.method) card.append(kv([["Account", signIn.account || "—"], ["Method", signIn.method || "—"], ["Plan", signIn.plan || "—"], ["Checked", relative(signIn.checked_at)]]));
         card.append(el("p", "", provider.model_hint));
         const foot = el("div", "card-footer");
-        if (status.installed || signIn?.installed !== false) append(foot, button("Sign in", () => act(result => result.message, () => mutate(`/api/providers/${provider.id}/sign-in`)), "button small primary"), provider.execution ? button("Check sign-in", async () => { const result = await act(r => r.detail, () => mutate(`/api/providers/${provider.id}/check`, {}, "POST", 60000)); if (result) { provider.sign_in = result; paintProviders(); } }, "button small") : null);
+        const check = provider.execution ? button("Check sign-in", async () => { const result = await act(r => r.detail, () => mutate(`/api/providers/${provider.id}/check`, {}, "POST", 60000)); if (result) { provider.sign_in = result; paintProviders(); } }, "button small") : null;
+        const signOut = button("Sign out", async event => { event.currentTarget.disabled = true; const result = await act(r => r.signed_in ? `Still signed in: ${r.detail}` : `Signed out of ${provider.label}.`, () => mutate(`/api/providers/${provider.id}/sign-out`, {}, "POST", 60000)); if (result) { provider.sign_in = result; await refresh(true); } paintProviders(); }, "button small danger");
+        if (signIn?.signed_in === true && provider.can_sign_out) append(foot, signOut, check);
+        else if (status.installed || signIn?.installed !== false) append(foot, button("Sign in", () => act(result => result.message, () => mutate(`/api/providers/${provider.id}/sign-in`)), "button small primary"), check);
         foot.append(link("Install →", "toolchain"));
         card.append(foot); providersHolder.append(card);
       });
@@ -468,7 +471,7 @@
       if (token !== renderToken) return; const status = cache.github;
       if (!status.installed) { account.replaceChildren(body(empty("GitHub CLI is not installed", "AI HQ talks to GitHub through the official GitHub CLI.", link("Install it from Toolchain →", "toolchain", "button primary"), "⑂"))); return; }
       if (!status.signed_in) { account.replaceChildren(body(empty("Not connected", "Sign in once; GitHub's own window handles your password and two-factor code.", button("Connect GitHub", () => act(result => result.message, () => mutate("/api/github/sign-in")), "button primary"), "⑂"), append(el("div", "actions"), button("Check again", loadAccount, "button small")))); return; }
-      account.replaceChildren(body(kv([["Signed in as", status.account], ["Name", status.name], ["Profile", status.url], ["Public repositories", status.public_repos]]), append(el("div", "actions"), button("Check again", loadAccount, "button small ghost"), button("+ Clone a repository", () => projectForm("github"), "button small primary"))));
+      account.replaceChildren(body(kv([["Signed in as", status.account], ["Name", status.name], ["Profile", status.url], ["Public repositories", status.public_repos]]), append(el("div", "actions"), button("Check again", loadAccount, "button small ghost"), button("Sign out", async () => { if (await act("Signed out of GitHub.", () => mutate("/api/github/sign-out", {}, "POST", 60000))) { cache.repos = null; loadAccount(); loadRepos(); } }, "button small danger"), button("+ Clone a repository", () => projectForm("github"), "button small primary"))));
       loadRepos();
     }
     async function loadRepos() {
@@ -496,12 +499,43 @@
     load(); return root;
   }
 
+  // ---------- away mode ----------
+  const awayOn = () => data?.autopilot?.active === true;
+  function awayForm() {
+    const policy = data.autopilot || {}, form = el("form");
+    if (awayOn()) {
+      append(form, append(el("div", "row-meta"), badge("away mode on", "purple"), el("span", "", `Until ${date(policy.until)}${policy.auto_merge ? " · merges passing work" : " · stops before merging"}`)),
+        kv([["Projects", array(policy.projects).length ? array(policy.projects).map(id => projectFor(id)?.name || id).join(", ") : "All projects"], ["Started", date(policy.started_at)]]),
+        hint("AI HQ approves plans, starts the AI team and sends review findings back for repair for you. Everything it answers is written in Activity with “Away mode answered…”."));
+      const off = submitButton("Turn Away mode off"); off.className = "button danger"; form.append(actionsRow(off));
+      wireForm(form, off, async () => { await mutate("/api/autopilot", {enabled: false}, "PUT"); await refresh(true); toast("Away mode is off. Every step asks you again."); });
+      return form;
+    }
+    const hours = select([[2, "2 hours"], [4, "4 hours"], [8, "8 hours (a work day or a night)"], [12, "12 hours"], [24, "24 hours"], [48, "48 hours"], [72, "72 hours"]].map(([value, label]) => [String(value), label]), "8");
+    const scope = el("div", "check-list"), boxes = array(data.projects).map(project => { const box = check(project.name); box.control.value = project.id; scope.append(box.wrap); return box; });
+    const approve = check("Let AI HQ approve plans, start the AI team and send review findings back for repair, without asking me."), merge = check("Also merge finished work into my project when every test passed and the review found nothing to fix."), mergeOk = check("I understand merged work changes my real project folder (locally only — nothing is pushed or published).");
+    mergeOk.wrap.classList.add("hidden"); merge.control.addEventListener("change", () => mergeOk.wrap.classList.toggle("hidden", !merge.control.checked));
+    append(form, append(el("div", "row-meta"), badge("away mode off", "muted"), el("span", "", "Every plan, run and merge waits for you.")),
+      hint("Turn this on before you leave so queued tasks keep going. Create the tasks first; Away mode answers their approval steps for the time you choose, then switches itself off."),
+      field("For how long", hours), field("Which projects (none ticked = all)", scope), approve.wrap, merge.wrap, mergeOk.wrap,
+      hint("What stays the same: agents still work only in a separate copy of the project, may change only the files the task allows, have no network in Codex, and cannot install software, push to GitHub or touch the rest of your laptop. Keep the computer awake and AI HQ running. Usage counts against your Codex/Claude plans."),
+      !agentsOn() ? hint("Switch AI agents on above first.", true) : null);
+    const on = submitButton("Turn Away mode on"); on.disabled = !agentsOn(); form.append(actionsRow(on));
+    wireForm(form, on, async () => {
+      if (!approve.control.checked) throw new Error("Tick the first box to let AI HQ answer for you.");
+      if (merge.control.checked && !mergeOk.control.checked) throw new Error("Tick the merge confirmation too, or untick automatic merging.");
+      const result = await mutate("/api/autopilot", {enabled: true, hours: Number(hours.value), auto_merge: merge.control.checked, projects: boxes.filter(box => box.control.checked).map(box => box.control.value), acknowledge_auto_approval: true, acknowledge_auto_merge: merge.control.checked}, "PUT");
+      await refresh(true); toast(`Away mode is on until ${date(result.until)}.`);
+    });
+    return form;
+  }
+
   // ---------- settings ----------
   function settingsView() {
     const values = data.settings || {}, root = el("div");
     const permissions = el("form"), usage = check("I understand the AI agents run on my own accounts and can use my plan's usage or credits."), reads = check("I understand the agents can read files outside the project folder with my Windows permissions (they can only write inside it).");
     if (agentsOn()) {
-      append(permissions, append(el("div", "row-meta"), badge("agents on", "green"), el("span", "", "Each task still asks you before agents run.")));
+      append(permissions, append(el("div", "row-meta"), badge("agents on", "green"), el("span", "", awayOn() ? "Away mode is answering approval steps for you (below)." : "Each task still asks you before agents run.")));
       const off = submitButton("Switch agents off"); off.className = "button danger"; permissions.append(actionsRow(off));
       wireForm(permissions, off, async () => { await mutate("/api/permissions", {enabled: false}); await refresh(true); toast("AI agents switched off."); });
     } else {
@@ -510,6 +544,7 @@
       wireForm(permissions, on, async () => { if (!usage.control.checked || !reads.control.checked) throw new Error("Tick both boxes to switch agents on."); await mutate("/api/permissions", {enabled: true, acknowledge_provider_usage: true, acknowledge_residual_read_risk: true}); await refresh(true); toast("AI agents switched on."); });
     }
     root.append(panel("Agent permissions", body(permissions)));
+    root.append(panel("Away mode — work while I'm away", body(awayForm())));
 
     const limits = el("form"), controls = {}, grid = el("div", "form-grid");
     [["agent_timeout", "AI run time limit (seconds)", 10, 7200], ["test_timeout", "Test time limit (seconds)", 1, 1800], ["max_retries", "Automatic repair attempts", 0, 3]].forEach(([name, label, min, max]) => { const node = input("", values[name], "number"); node.min = min; node.max = max; controls[name] = node; grid.append(field(label, node)); });
