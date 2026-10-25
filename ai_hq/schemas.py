@@ -190,6 +190,13 @@ class ChatCreate(StrictModel):
     project_id: str | None = Field(default=None, max_length=64)
     title: str = Field(default="", max_length=120)
 
+class CouncilCreate(StrictModel):
+    project_id: str = Field(min_length=1, max_length=64)
+    topic: str = Field(min_length=1, max_length=4000)
+    rounds: int = Field(default=3, ge=1, le=6)
+    first: str = Field(default="codex", max_length=120)
+    second: str = Field(default="claude", max_length=120)
+
 class ChatSend(StrictModel):
     text: str = Field(min_length=1, max_length=20000)
 

@@ -150,6 +150,21 @@ In **Models & sign-in**:
   - **Ask a supervisor model** (for example Claude Opus 5.5) lets that model read the task and choose. Its answer is used only if every pick is a listed model and the reviewer is still from the other company; otherwise the rules' choice stays. Asking uses your plan, like any message.
 - **Add model** saves your own provider + model pair under a name.
 
+## Council: let Codex and Claude plan together
+
+Open **Council** and press **+ New meeting**:
+1. Choose the project and write what they should decide. For example: "How do we make this ready for paying customers? Agree on the 3 most valuable changes and who builds each."
+2. Choose who speaks first and how many rounds. Each round is one turn each, followed by a closing summary and a confirmation.
+
+What happens:
+- Both models read the project's files, docs and Git history (including the GitHub remote and recent commits) and talk to each other. Each one replies to what the other said.
+- You see every turn as it arrives, with who said it, the model and the round. **Stop meeting** ends it after the current turn.
+- At the end they agree on up to 6 proposals. Each proposal says what to do, why, who builds it and who reviews it, and how to check it's done.
+
+During the meeting the models can read but can't change anything. Every turn uses your AI plan.
+
+**Create task** on a proposal makes a normal task: the model they chose builds it and the other one reviews it. It still asks for your plan approval and your approval to merge. It runs with your Full access setting, so on your laptop and GitHub only when you've switched that on. Away mode can answer those approvals for you.
+
 ## Full access: let the agents use your laptop and GitHub
 
 By default, the coding agent changes only the files the task allows, in a separate copy of the project.

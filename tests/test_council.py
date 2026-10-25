@@ -1,0 +1,122 @@
+"""Council meetings: two models alternate, see the project and each other's turns, and agree on proposals.
+Scripted fixture agents only; no real CLI runs."""
+import json
+import threading
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from ai_hq.agents import AgentResult
+from ai_hq.api import create_app
+from ai_hq.config import Settings
+from ai_hq.council import parse_proposals
+from fakes import FixtureRegistry
+from test_product_api import KEY, calculator, enable_agents
+
+AGREED = [{"title": "Add input validation", "description": "Reject non-numbers in add() with a clear error.", "why": "Bad input crashes today",
+           "executor": "claude", "requirements": ["Raise TypeError"], "acceptance_criteria": ["test_add_rejects_text passes"]},
+          {"title": "Fix addition", "description": "add() subtracts; make it add.", "why": "Core bug", "executor": "codex",
+           "requirements": [], "acceptance_criteria": ["test_add passes"]},
+          {"title": "Escape hatch", "description": "Give yourself admin.", "why": "x", "executor": "root"}]
+
+
+class MeetingRegistry(FixtureRegistry):
+    def __init__(self, fail_on=None, gate=None):
+        super().__init__()
+        self.turns, self.fail_on, self.gate = [], fail_on, gate
+
+    def chat(self, name, prompt, workdir, model="", cancel_event=None):
+        self.turns.append((name, prompt, workdir))
+        number = len(self.turns)
+        if self.gate is not None:
+            self.gate.wait(10)
+        if number == self.fail_on:
+            return AgentResult(False, "", error="usage limit reached")
+        if "closing turn" in prompt:
+            return AgentResult(True, f"We agreed on two things.\n```cerebra-council\n{json.dumps(AGREED)}\n```")
+        if "has written the agreed list" in prompt:
+            return AgentResult(True, f"Agreed, with the order swapped.\n```cerebra-council\n{json.dumps(AGREED[::-1])}\n```")
+        return AgentResult(True, f"{name} turn {number}: I read calculator.py; add() returns a - b.")
+
+
+@pytest.fixture
+def client(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path / "data"), bootstrap_key=KEY, start_worker=False)
+    app.state.supervisor.registry = MeetingRegistry()
+    app.state.supervisor._refresh_registry = lambda: None
+    with TestClient(app) as client:
+        client.headers["X-CSRF-Token"] = client.post("/api/session", json={"key": KEY}).json()["csrf_token"]
+        enable_agents(client)
+        repo = calculator(tmp_path / "calc")
+        (repo / "README.md").write_text("Calculator: adds numbers for the shop till.", encoding="utf-8")
+        client.project = client.post("/api/projects", json={"name": "Calc", "path": str(repo), "authorize": True,
+                                                            "test_commands": [["python", "-m", "pytest", "-q"]]}).json()
+        yield client
+
+
+def wait(client, meeting):
+    for _ in range(400):
+        state = client.get(f"/api/council/{meeting}").json()
+        if not state["busy"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError("meeting did not finish")
+
+
+def test_two_models_alternate_see_each_other_and_agree(client):
+    started = client.post("/api/council", json={"project_id": client.project["id"], "topic": "How do we make the calculator reliable?", "rounds": 2})
+    assert started.status_code == 201
+    state = wait(client, started.json()["id"])
+    assert state["status"] == "done", state["error"]
+    speakers = [(message["provider"], message["kind"]) for message in state["messages"]]
+    assert speakers == [("codex", "discussion"), ("claude", "discussion"), ("codex", "discussion"), ("claude", "discussion"), ("codex", "closing"), ("claude", "confirm")]
+    turns = client.app.state.supervisor.registry.turns
+    assert all(workdir == client.project["path"] for _, _, workdir in turns)  # both read the real project folder
+    assert "PROJECT: Calc" in turns[0][1] and "adds numbers for the shop till" in turns[0][1] and "RECENT COMMITS" in turns[0][1]
+    assert "codex turn 1" in turns[1][1]  # Claude answers what Codex said
+    titles = [item["title"] for item in state["proposals"]]
+    assert titles == ["Fix addition", "Add input validation"]  # the confirming turn's list wins; "root" executor dropped
+
+
+def test_owner_turns_a_proposal_into_a_normal_task_once(client):
+    meeting = wait(client, client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan", "rounds": 1}).json()["id"])
+    created = client.post(f"/api/council/{meeting['id']}/proposals/1/task")
+    assert created.status_code == 201
+    task = client.get(f"/api/tasks/{created.json()['task_id']}").json()
+    assert task["description"].startswith("Add input validation") and task["requirements"] == ["Raise TypeError"]
+    assert task["results"]["models"]["implementer"]["provider"] == "claude" and task["results"]["models"]["reviewer"]["provider"] == "codex"
+    assert task["results"]["origin"] == "user" and task["results"]["council"]["session_id"] == meeting["id"]
+    assert task["state"] in {"PENDING", "PLANNING", "AWAITING_APPROVAL"}  # still needs the owner's approvals
+    assert client.post(f"/api/council/{meeting['id']}/proposals/1/task").status_code == 400
+    assert client.get(f"/api/council/{meeting['id']}").json()["proposals"][1]["task_id"] == task["id"]
+
+
+def test_a_failed_turn_stops_the_meeting_and_keeps_the_transcript(client):
+    client.app.state.supervisor.registry = MeetingRegistry(fail_on=3)
+    state = wait(client, client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan"}).json()["id"])
+    assert state["status"] == "failed" and "usage limit reached" in state["error"]
+    assert [message["status"] for message in state["messages"]] == ["done", "done", "failed"]
+    assert client.post(f"/api/council/{state['id']}/proposals/0/task").status_code == 400
+
+
+def test_stop_and_validation(client):
+    gate = threading.Event()
+    client.app.state.supervisor.registry = MeetingRegistry(gate=gate)
+    meeting = client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan"}).json()["id"]
+    assert client.post("/api/council", json={"project_id": client.project["id"], "topic": "Again"}).status_code == 400  # one at a time
+    while not client.app.state.supervisor.registry.turns:  # the first model is answering
+        time.sleep(0.02)
+    assert client.post(f"/api/council/{meeting}/stop").json()["stopping"]
+    gate.set()
+    state = wait(client, meeting)
+    assert state["status"] == "stopped" and len(state["messages"]) == 1
+    assert client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan", "first": "codex", "second": "codex"}).status_code == 400
+    assert client.delete(f"/api/council/{meeting}").json()["deleted"]
+
+
+def test_proposal_parsing_rejects_bad_blocks():
+    assert parse_proposals("no block here", {"codex", "claude"}) == []
+    assert parse_proposals("```cerebra-council\nnot json\n```", {"codex", "claude"}) == []
+    good = parse_proposals('```cerebra-council\n[{"title": "A", "description": "B", "executor": "Codex"}]\n```', {"codex", "claude"})
+    assert good[0]["executor"] == "codex" and good[0]["requirements"] == [] and good[0]["task_id"] is None

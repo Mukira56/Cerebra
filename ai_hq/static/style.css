@@ -313,6 +313,12 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .proof-run.pass span { color: var(--green); }
 .proof-run.fail span { color: var(--red); }
 .proof-run code { overflow-wrap: anywhere; }
+.council .chat-main > .report-section { padding: 4px 16px 16px; }
+.council-proposals { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.proposal { border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.proposal p { margin: 0; }
+.proposal ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.proposal .button { align-self: flex-start; margin-top: 4px; }
 .detect-note { color: var(--green); font-size: 12px; }
 .advanced-tests summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 4px 0; }
 .update-meter { display: flex; align-items: center; gap: 12px; margin: 10px 0; }

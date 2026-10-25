@@ -177,6 +177,36 @@ class ChatAction(Base):
     result: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(String, default=now)
 
+class CouncilSession(Base):
+    """A recorded meeting where two models discuss a project and agree on proposals (see council.py)."""
+    __tablename__ = "council_sessions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    topic: Mapped[str] = mapped_column(Text)
+    first: Mapped[str] = mapped_column(String, default="codex")  # model profile ids, in speaking order
+    second: Mapped[str] = mapped_column(String, default="claude")
+    rounds: Mapped[int] = mapped_column(Integer, default=3)
+    status: Mapped[str] = mapped_column(String, default="running")  # running | done | stopped | failed
+    error: Mapped[str] = mapped_column(Text, default="")
+    proposals: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+class CouncilMessage(Base):
+    __tablename__ = "council_messages"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    session_id: Mapped[str] = mapped_column(ForeignKey("council_sessions.id"))
+    speaker: Mapped[str] = mapped_column(String)  # model profile id
+    provider: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    round: Mapped[int] = mapped_column(Integer, default=1)
+    kind: Mapped[str] = mapped_column(String, default="discussion")  # discussion | closing | confirm
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | done | failed
+    content: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    finished_at: Mapped[str] = mapped_column(String, default="")
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

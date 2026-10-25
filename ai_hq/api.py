@@ -53,6 +53,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         return supervisor.registry
     chats = ChatService(db, settings, chat_registry)
     chats.recover()
+    from .council import CouncilService
+    council = CouncilService(db, settings, chat_registry)
+    council.recover()
     from .commerce import Commerce, public as connection_public
     from . import gmail, notify
     commerce = Commerce(db)
@@ -79,7 +82,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     app = FastAPI(title="Cerebra", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
-    app.state.integrations, app.state.chats = integrations, chats
+    app.state.integrations, app.state.chats, app.state.council = integrations, chats, council
     app.state.commerce, app.state.mailbox, app.state.notifier = commerce, mailbox, notifier
 
     @app.middleware("http")
@@ -591,6 +594,46 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/chats/{conversation_id}/stop")
     def chat_stop(conversation_id: str): return chats.stop(conversation_id)
+
+    # ---- council: two models discuss a project; the owner turns agreed proposals into tasks ----
+    from .schemas import CouncilCreate
+
+    @app.get("/api/council")
+    def council_list(): return council.list()
+
+    @app.post("/api/council", status_code=201)
+    def council_start(payload: CouncilCreate): return council.start(payload.project_id, payload.topic, payload.rounds, payload.first, payload.second)
+
+    @app.get("/api/council/{session_id}")
+    def council_get(session_id: str): return chat_or_404(council.get, session_id)
+
+    @app.post("/api/council/{session_id}/stop")
+    def council_stop(session_id: str): return council.stop(session_id)
+
+    @app.delete("/api/council/{session_id}")
+    def council_delete(session_id: str):
+        chat_or_404(council.delete, session_id)
+        return {"deleted": True}
+
+    @app.post("/api/council/{session_id}/proposals/{index}/task", status_code=201)
+    def council_task(session_id: str, index: int):
+        """The owner's click turns an agreed proposal into an ordinary task (normal approvals, the owner's own settings)."""
+        meeting, proposal = chat_or_404(council.proposal, session_id, index)
+        executor = meeting["first"] if proposal["executor"] == get_profile_provider(meeting["first"]) else meeting["second"]
+        reviewer = meeting["second"] if executor == meeting["first"] else meeting["first"]
+        task = supervisor.propose(meeting["project_id"], f"{proposal['title']}: {proposal['description']}",
+                                  requirements=proposal["requirements"], acceptance_criteria=proposal["acceptance_criteria"],
+                                  implementer=executor, reviewer=reviewer, origin="user")
+        with db.Session.begin() as session:
+            stored = session.get(Task, task.id)
+            stored.results = {**stored.results, "council": {"session_id": session_id, "proposal": index, "why": proposal["why"]}}
+        council.mark_task(session_id, index, task.id)
+        return {"task_id": task.id, "implementer": executor, "reviewer": reviewer}
+
+    def get_profile_provider(identifier):
+        from .profiles import get_profile
+        with db.Session() as session:
+            return get_profile(session, identifier)["provider"]
 
     # ---- support actions: validated requests from the support chat, run like dashboard buttons ----
     def find_project(reference):

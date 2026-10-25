@@ -5,6 +5,7 @@
   const pages = {
     overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
+    council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
     connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
     job: ["WORK", "Business result", ""],
@@ -124,7 +125,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, connections: connectionView, business: businessView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -424,7 +425,7 @@
   }
 
   // ---------- chat ----------
-  let chatId = "", chatPoll = 0;
+  let chatId = "", chatPoll = 0, councilId = "", councilPoll = 0;
   function markdown(text) {
     // A deliberately small renderer that builds DOM nodes: fences, headings, lists, inline code, bold.
     const root = el("div"), lines = String(text || "").split("\n"); let paragraph = [], listNode = null, fence = null;
@@ -464,6 +465,77 @@
     const conversation = await act(null, () => mutate("/api/chats", {profile, project_id: projectId || null}));
     if (conversation) { chatId = conversation.id; cache.chats = null; if (page === "chat") render(); else location.hash = "chat"; }
   }
+  // ---------- council: a recorded meeting between two models ----------
+  function councilView() {
+    const root = el("div", "chat council"), side = el("div", "chat-list"), head = el("div", "chat-list-head"), items = el("div", "chat-items"), main = el("div", "chat-main"), token = renderToken;
+    append(head, button("+ New meeting", () => councilForm(), "button primary"));
+    append(side, head, items); append(root, side, main);
+    async function loadList() {
+      let meetings = []; try { meetings = await api("/api/council"); } catch (issue) { toast(issue.message, true); }
+      if (token !== renderToken) return;
+      items.replaceChildren();
+      if (!meetings.length) items.append(el("p", "hint", "No meetings yet. Start one and pick what Codex and Claude should decide."));
+      meetings.forEach(item => { const entry = button("", () => { councilId = item.id; openMeeting(); paint(); }, `chat-item${item.id === councilId ? " active" : ""}`); entry.dataset.id = item.id;
+        append(entry, el("strong", "", item.topic.slice(0, 80)), el("small", "", `${projectFor(item.project_id)?.name || "project"} · ${nice(item.status)} · ${relative(item.updated_at)}`)); items.append(entry); });
+      if (!councilId && meetings.length) councilId = meetings[0].id;
+      paint(); openMeeting();
+    }
+    function paint() { items.querySelectorAll(".chat-item").forEach(node => node.classList.toggle("active", node.dataset.id === councilId)); }
+    async function openMeeting() {
+      clearTimeout(councilPoll);
+      if (!councilId) { main.replaceChildren(body(empty("Council", "Codex and Claude read your project, talk it through with each other, and agree on a short list of improvements, each with who should build it. You can follow the whole conversation and turn any idea into a task.", button("+ New meeting", () => councilForm(), "button primary"), "⇄"))); return; }
+      let state; try { state = await api(`/api/council/${encodeURIComponent(councilId)}`); } catch (issue) { main.replaceChildren(body(empty("Meeting unavailable", issue.message))); return; }
+      if (token !== renderToken || page !== "council") return;
+      const previous = main.querySelector(".messages"), atBottom = !previous || previous.scrollHeight - previous.scrollTop - previous.clientHeight < 40;
+      const header = el("div", "chat-head"), messages = el("div", "messages");
+      append(header, el("strong", "", state.topic.slice(0, 120)), badge(projectFor(state.project_id)?.name || "project", "purple"), badge(`${profileLabel(state.first)} ⇄ ${profileLabel(state.second)}`, "blue"), badge("read-only meeting", "green"),
+        badge(nice(state.status), state.status === "done" ? "green" : state.status === "failed" ? "red" : state.status === "running" ? "cyan" : "muted"), el("span", "", ""),
+        state.busy ? button("Stop meeting", () => act("Stopping after the current turn…", () => mutate(`/api/council/${encodeURIComponent(councilId)}/stop`, {})), "button small danger")
+                   : button("Delete", async () => { if (await act("Meeting deleted.", () => api(`/api/council/${encodeURIComponent(councilId)}`, {method: "DELETE"}))) { councilId = ""; loadList(); } }, "button small ghost"));
+      if (!agentsOn()) messages.append(hint("AI agents are switched off, so the meeting can't run. Turn them on in Settings › Agent permissions.", true));
+      messages.append(hint(`The owner asked: “${state.topic}”`));
+      const kinds = {discussion: "", closing: " · closing summary", confirm: " · confirms the list"};
+      state.messages.forEach(message => {
+        const row = el("div", `message ${message.speaker === state.second ? "user" : "assistant"}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
+        if (message.status === "pending") bubble.append(append(el("div", "typing"), el("span"), el("span"), el("span")), el("small", "", `${nice(message.provider)} is reading the project and replying…`));
+        else if (message.status === "failed") bubble.append(el("p", "", `⚠ ${message.error || "No answer."}`));
+        else bubble.append(markdown(message.content.replace(/```cerebra-council[\s\S]*?```/g, "").trim() || "(agreed list below)"));
+        append(holder, bubble, el("div", "message-meta", `${nice(message.provider)}${message.model ? ` · ${message.model}` : ""} · round ${message.round}${kinds[message.kind] || ""} · ${relative(message.created_at)}`));
+        append(row, el("span", "avatar", PROVIDER_ICON[message.provider] || "AI"), holder); messages.append(row);
+      });
+      if (state.error) messages.append(hint(state.error, state.status === "failed"));
+      const parts = [header, messages];
+      if (state.proposals.length) {
+        const list = el("div", "council-proposals");
+        state.proposals.forEach((proposal, index) => {
+          const card = append(el("div", "proposal"), el("strong", "", proposal.title), el("p", "", proposal.description), proposal.why ? el("p", "row-meta", `Why: ${proposal.why}`) : null,
+            el("p", "row-meta", `Builds it: ${nice(proposal.executor)} · reviews it: ${nice(proposal.reviewer)}`),
+            proposal.acceptance_criteria.length ? append(el("ul", ""), ...proposal.acceptance_criteria.map(item => el("li", "", item))) : null);
+          card.append(proposal.task_id ? button("Open task →", () => taskDetail(proposal.task_id), "button small ghost")
+            : button("Create task", async () => { const made = await act("Task created. It still asks for your approval before any work starts.", () => mutate(`/api/council/${encodeURIComponent(councilId)}/proposals/${index}/task`, {})); if (made) { await refresh(true); openMeeting(); } }, "button small primary"));
+          list.append(card);
+        });
+        parts.push(append(el("section", "report-section"), el("h2", "", "What they agreed"), el("p", "row-meta", "Each task runs through the normal steps: your plan approval, tests, the other model's review, and your approval to merge. Full access applies only if you've switched it on."), list));
+      }
+      main.replaceChildren(...parts);
+      const scroller = main.querySelector(".messages"); if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+      if (state.busy) councilPoll = setTimeout(() => { if (token === renderToken && page === "council") openMeeting().then(() => loadListQuiet()); }, 2500);
+    }
+    async function loadListQuiet() { try { const meetings = await api("/api/council"); const current = meetings.find(item => item.id === councilId); const entry = items.querySelector(`[data-id="${councilId}"] small`); if (current && entry) entry.textContent = `${projectFor(current.project_id)?.name || "project"} · ${nice(current.status)} · ${relative(current.updated_at)}`; } catch (issue) { /* the next refresh retries */ } }
+    function councilForm() {
+      if (!array(data.projects).length) { toast("Add a project first (Projects › Add project).", true); return; }
+      const form = el("form"), project = select(array(data.projects).map(item => [item.id, item.name])), topic = textarea("e.g. How should we make this project ready for paying customers? Agree on the 3 most valuable changes and who builds each.");
+      const choices = roleChoices().filter(([id]) => id !== "auto"), first = select(choices, "codex"), second = select(choices, "claude"), rounds = select([["1", "1 round (quick)"], ["2", "2 rounds"], ["3", "3 rounds (recommended)"], ["4", "4 rounds"], ["6", "6 rounds (deep)"]], "3");
+      append(form, field("Which project?", project), field("What should they decide?", topic, "Both models read this project's files, docs and Git history. They can't change anything during the meeting."),
+        field("Speaks first", first), field("Replies", second), field("How long?", rounds, "Each round is one turn each, plus a closing summary and a confirmation. Every turn uses your AI plan."));
+      const submit = submitButton("Start meeting"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
+      wireForm(form, submit, async () => { const meeting = await mutate("/api/council", {project_id: project.value, topic: topic.value, rounds: Number(rounds.value), first: first.value, second: second.value}); closeDialog(); councilId = meeting.id; toast("Meeting started. The first model is reading the project."); loadList(); });
+      showDialog("New council meeting", form);
+    }
+    loadList();
+    return root;
+  }
+
   function chatView() {
     const root = el("div", "chat"), side = el("div", "chat-list"), head = el("div", "chat-list-head"), items = el("div", "chat-items"), main = el("div", "chat-main");
     const profile = select(roleChoices().filter(([id]) => id !== "auto"), chatDefault()), project = select([["", "All projects"], ...array(data.projects).map(item => [item.id, item.name])]);
