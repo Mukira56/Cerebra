@@ -1,4 +1,4 @@
-// Drives every dashboard page in headless Edge against a throwaway AI HQ server (agents off, temp data).
+// Drives every dashboard page in headless Edge against a throwaway Cerebra server (agents off, temp data).
 // Usage: set AIHQ_PLAYWRIGHT=<path to playwright-core>, AIHQ_URL=http://127.0.0.1:<port>/#key=<key>, AIHQ_SHOTS=<dir>
 const { chromium } = require(process.env.AIHQ_PLAYWRIGHT);
 const assert = require('node:assert/strict');
@@ -38,6 +38,10 @@ const path = require('node:path');
     await page.locator('dialog input').nth(1).fill('Claude Opus');
     await page.locator('dialog').getByRole('button', {name: 'Add model', exact: true}).click();
     await page.locator('table strong', {hasText: 'Claude Opus'}).waitFor();
+    await page.getByText('Available models', {exact: true}).waitFor();
+    assert.ok(await page.locator('.model-row strong', {hasText: 'Claude Opus 5.5'}).count() >= 1, 'Claude catalog listed');
+    assert.ok(await page.locator('.panel-header h2', {hasText: 'Supervisor: who picks the models'}).count() === 1);
+    assert.equal(await page.locator('form select').filter({hasText: 'Auto: the supervisor picks'}).count(), 3, 'Each default role offers Auto');
     await page.locator('.card h3', {hasText: 'OpenAI Codex'}).waitFor();
     await shot('models');
 
@@ -95,6 +99,15 @@ const path = require('node:path');
     await page.getByText(/run on my own accounts/).click();
     await page.getByText(/read files outside the project folder/).click();
     await page.getByRole('button', {name: 'Switch agents on'}).click();
+    await page.getByRole('button', {name: 'Give full access'}).click();
+    await page.locator('.form-error', {hasText: 'Tick both boxes to give full access'}).waitFor();
+    await page.getByText(/run any command on this laptop/).click();
+    await page.getByText(/use my GitHub login/).click();
+    await page.getByRole('button', {name: 'Give full access'}).click();
+    await page.locator('.badge', {hasText: 'FULL ACCESS'}).waitFor();
+    await shot('full-access');
+    await page.getByRole('button', {name: 'Limit agents to the project copy'}).click();
+    await page.locator('.badge', {hasText: 'PROJECT ONLY'}).waitFor();
     await page.getByRole('button', {name: 'Turn Away mode on'}).click();
     await page.locator('.form-error', {hasText: 'Tick the first box'}).waitFor();
     await page.getByText(/approve plans, start the AI team/).click();

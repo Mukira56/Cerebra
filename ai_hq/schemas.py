@@ -32,9 +32,9 @@ class TaskCreate(StrictModel):
     project_id: str
     description: str = Field(min_length=8, max_length=30000)
     # Model profile IDs (see Models). Omitted roles use the saved defaults.
-    planner: str | None = Field(default=None, max_length=48)
-    implementer: str | None = Field(default=None, max_length=48)
-    reviewer: str | None = Field(default=None, max_length=48)
+    planner: str | None = Field(default=None, max_length=120)
+    implementer: str | None = Field(default=None, max_length=120)
+    reviewer: str | None = Field(default=None, max_length=120)
     requirements: list[str] = Field(default_factory=list, max_length=100)
     acceptance_criteria: list[str] = Field(default_factory=list, max_length=100)
     dependencies: list[str] = Field(default_factory=list, max_length=100)
@@ -99,9 +99,9 @@ class ProfileUpdate(StrictModel):
     label: str | None = Field(default=None, max_length=80)
 
 class RolesUpdate(StrictModel):
-    planner: str | None = Field(default=None, max_length=48)
-    implementer: str | None = Field(default=None, max_length=48)
-    reviewer: str | None = Field(default=None, max_length=48)
+    planner: str | None = Field(default=None, max_length=120)
+    implementer: str | None = Field(default=None, max_length=120)
+    reviewer: str | None = Field(default=None, max_length=120)
 
 class AgentPermissions(StrictModel):
     enabled: bool
@@ -113,12 +113,23 @@ class AutopilotUpdate(StrictModel):
     enabled: bool
     hours: int = Field(default=8, ge=1, le=72)
     auto_merge: bool = False
+    auto_push: bool = False
     projects: list[str] = Field(default_factory=list, max_length=100)
     acknowledge_auto_approval: bool = False
     acknowledge_auto_merge: bool = False
 
+class FullAccess(StrictModel):
+    enabled: bool
+    acknowledge_full_access: bool = False
+    acknowledge_github: bool = False
+
+class RoutingUpdate(StrictModel):
+    mode: str = Field(pattern="^(rules|model)$")
+    provider: str = Field(default="claude", pattern="^(codex|claude)$")
+    model: str = Field(default="", max_length=100)
+
 class ChatCreate(StrictModel):
-    profile: str = Field(default="codex", max_length=48)
+    profile: str = Field(default="codex", max_length=120)
     project_id: str | None = Field(default=None, max_length=64)
     title: str = Field(default="", max_length=120)
 

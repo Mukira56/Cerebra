@@ -1,10 +1,10 @@
 "use strict";
-// System view: a live map of AI HQ's real backend parts, driven only by recorded telemetry.
+// System view: a live map of Cerebra's real backend parts, driven only by recorded telemetry.
 window.AIHQSystem = (() => {
   const SVG = "http://www.w3.org/2000/svg";
   const W = 190, H = 92;
   const NODES = [
-    {id: "browser", kind: "YOU", title: "This window", x: 30, y: 60, plain: "Where you see everything and give your yes or no. It talks only to the server on this computer.", where: () => "Your AI HQ window"},
+    {id: "browser", kind: "YOU", title: "This window", x: 30, y: 60, plain: "Where you see everything and give your yes or no. It talks only to the server on this computer.", where: () => "Your Cerebra window"},
     {id: "server", kind: "LOCAL SERVER", title: "Web server", x: 30, y: 250, plain: "A small private web server (FastAPI) on 127.0.0.1. Only this computer can reach it. Every request needs your private session.", where: system => system?.server},
     {id: "supervisor", kind: "CONTROL", title: "Supervisor", x: 275, y: 155, plain: "The boss. A plain Python program (no AI) that follows fixed rules: it hands out work, runs the tests, and always stops to ask you before anything important.", where: () => "Python state machine inside the server"},
     {id: "planner", kind: "AI · PLAN", title: "Planner", x: 525, y: 30, plain: "An AI (usually Claude) reads the project and writes a plan. It can read files but cannot change anything.", where: () => "Read-only copy of your project"},
@@ -14,7 +14,7 @@ window.AIHQSystem = (() => {
     {id: "tests", kind: "VERIFY", title: "Test runner", x: 775, y: 290, plain: "Runs your project's own tests on the AI's code. The AI cannot fake this: the supervisor runs the tests itself.", where: () => "Your project's test commands"},
     {id: "gate", kind: "YOU DECIDE", title: "Approval gate", x: 1000, y: 60, plain: "Nothing important happens without your yes: the plan, letting agents run, and adding the code to your project.", where: () => "Approvals page"},
     {id: "project", kind: "RESULT", title: "Your project", x: 1000, y: 250, plain: "Your real repository. Finished, tested, reviewed code is merged here only after you approve. Nothing is pushed to GitHub unless you press Push.", where: (system, task, telemetry, overview) => overview?.projects?.find(project => project.id === task?.project_id)?.path || "Projects page"},
-    {id: "database", kind: "STORAGE", title: "Database", x: 275, y: 470, plain: "A single file that remembers every task, step, test result and decision, so nothing is lost when you close AI HQ.", where: system => system?.database?.path},
+    {id: "database", kind: "STORAGE", title: "Database", x: 275, y: 470, plain: "A single file that remembers every task, step, test result and decision, so nothing is lost when you close Cerebra.", where: system => system?.database?.path},
     {id: "logs", kind: "STORAGE", title: "Run logs", x: 775, y: 470, plain: "One text file per AI run, with exactly what the AI said (secrets removed).", where: system => system?.logs?.path}
   ];
   const EDGES = [["browser", "server"], ["server", "supervisor"], ["supervisor", "planner"], ["supervisor", "coder"], ["supervisor", "reviewer"], ["coder", "worktree"], ["planner", "worktree"], ["reviewer", "worktree"], ["supervisor", "tests"], ["tests", "worktree"], ["supervisor", "gate"], ["gate", "project"], ["worktree", "project"], ["supervisor", "database"], ["supervisor", "logs"]];
@@ -38,7 +38,7 @@ window.AIHQSystem = (() => {
     taskPicker.setAttribute("aria-label", "Task to follow");
     taskPicker.addEventListener("change", () => { focusTask = taskPicker.value; paint(); });
     append(toolbar, el("span", "row-meta", "Follow:"), taskPicker);
-    const wrap = el("div", "diagram-wrap"), diagram = svg("svg", {class: "diagram", viewBox: "0 0 1220 590", role: "img", "aria-label": "Live map of AI HQ's backend"});
+    const wrap = el("div", "diagram-wrap"), diagram = svg("svg", {class: "diagram", viewBox: "0 0 1220 590", role: "img", "aria-label": "Live map of Cerebra's backend"});
     wrap.append(diagram);
     const legend = append(el("div", "legend"), el("span", "l-active", "working now"), el("span", "l-wait", "waiting for you"), el("span", "l-ok", "ready / done"), el("span", "l-fail", "problem"));
     const traceBody = el("div", "trace"), ledger = el("div");

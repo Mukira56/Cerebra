@@ -43,7 +43,7 @@ def test_cli_confinement_policy_requires_acknowledgement_and_is_revocable(tmp_pa
 def test_cli_confinement_policy_refuses_while_server_runs(tmp_path,monkeypatch):
     identity=process_identity(os.getpid())
     (tmp_path/"server.json").write_text(json.dumps(identity))
-    with pytest.raises(RuntimeError,match="Stop AI HQ"):
+    with pytest.raises(RuntimeError,match="Stop Cerebra"):
         run_manage(monkeypatch,tmp_path,"accept-cli-confinement","--acknowledge-residual-read-risk")
 
 def test_doctor_records_stored_sandbox_policy_for_dashboard(tmp_path,monkeypatch):

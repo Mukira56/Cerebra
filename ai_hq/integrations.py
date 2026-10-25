@@ -1,6 +1,6 @@
 """Provider sign-in, engineering toolchain and GitHub integration.
 
-AI HQ never reads, stores or forwards credentials. Sign-in opens each tool's own login flow in a
+Cerebra never reads, stores or forwards credentials. Sign-in opens each tool's own login flow in a
 visible terminal window that the user completes; status checks only report what the tool prints
 about itself, with secrets redacted. Installs run only on an explicit click, from a fixed command
 list, in a visible window the user can watch and cancel.
@@ -19,7 +19,7 @@ import time
 from .processes import ProcessRunner
 from .security import redact
 
-# Providers AI HQ knows how to sign in to. Only "execution" providers can run task roles today.
+# Providers Cerebra knows how to sign in to. Only "execution" providers can run task roles today.
 PROVIDERS = {
     "codex": {"label": "OpenAI Codex", "vendor": "OpenAI", "execution": True, "command": "codex",
               "login": ["login"], "logout": ["logout"], "status": ["login", "status"],
@@ -31,18 +31,18 @@ PROVIDERS = {
                "install": "claude-code"},
     "copilot": {"label": "GitHub Copilot CLI", "vendor": "GitHub", "execution": False, "command": "copilot",
                 "login": [], "logout": [], "status": [],
-                "models": [], "model_hint": "Copilot can be installed and signed in here. Running it inside AI HQ tasks is not supported yet; its adapter has not been verified.",
+                "models": [], "model_hint": "Copilot can be installed and signed in here. Running it inside Cerebra tasks is not supported yet; its adapter has not been verified.",
                 "install": "copilot-cli"},
     "gemini": {"label": "Gemini CLI", "vendor": "Google", "execution": False, "command": "gemini",
                "login": [], "logout": [], "status": [],
-               "models": [], "model_hint": "Gemini CLI can be installed and signed in here. Running it inside AI HQ tasks is not supported yet.",
+               "models": [], "model_hint": "Gemini CLI can be installed and signed in here. Running it inside Cerebra tasks is not supported yet.",
                "install": "gemini-cli"},
 }
 
 # Engineering toolchain. The install command list is fixed here; nothing user-supplied is executed.
 TOOLS = [
-    {"id": "git", "label": "Git", "group": "Essentials", "commands": ["git"], "version": ["--version"], "install": ["winget", "install", "--id", "Git.Git", "-e"], "why": "Saves every version of your code. AI HQ needs it for every project."},
-    {"id": "gh", "label": "GitHub CLI", "group": "Essentials", "commands": ["gh"], "version": ["--version"], "install": ["winget", "install", "--id", "GitHub.cli", "-e"], "why": "Connects AI HQ to your GitHub account: clone, publish and push repositories."},
+    {"id": "git", "label": "Git", "group": "Essentials", "commands": ["git"], "version": ["--version"], "install": ["winget", "install", "--id", "Git.Git", "-e"], "why": "Saves every version of your code. Cerebra needs it for every project."},
+    {"id": "gh", "label": "GitHub CLI", "group": "Essentials", "commands": ["gh"], "version": ["--version"], "install": ["winget", "install", "--id", "GitHub.cli", "-e"], "why": "Connects Cerebra to your GitHub account: clone, publish and push repositories."},
     {"id": "node", "label": "Node.js LTS + npm", "group": "Languages", "commands": ["node"], "version": ["--version"], "install": ["winget", "install", "--id", "OpenJS.NodeJS.LTS", "-e"], "why": "Runs JavaScript and web tooling. Needed to install the Codex, Copilot and Gemini CLIs."},
     {"id": "python", "label": "Python 3.13", "group": "Languages", "commands": ["python", "py"], "version": ["--version"], "install": ["winget", "install", "--id", "Python.Python.3.13", "-e"], "why": "Python projects and their tests (pytest)."},
     {"id": "dotnet", "label": ".NET SDK 8", "group": "Languages", "commands": ["dotnet"], "version": ["--version"], "install": ["winget", "install", "--id", "Microsoft.DotNet.SDK.8", "-e"], "why": "C#, ASP.NET and Windows apps."},
@@ -76,9 +76,9 @@ def open_terminal(args, title, cwd=None, keep_open=True):
         raise RuntimeError("Visible terminal windows are only supported on Windows")
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"  # PowerShell literal; @, $ and ; stay inert
     shown = subprocess.list2cmdline([Path(str(args[0])).name, *map(str, args[1:])])
-    script = f"$Host.UI.RawUI.WindowTitle = {quote(title)}; Write-Host {quote('AI HQ opened this window to run: ' + shown)} -ForegroundColor Cyan; & {' '.join(quote(arg) for arg in args)}"
+    script = f"$Host.UI.RawUI.WindowTitle = {quote(title)}; Write-Host {quote('Cerebra opened this window to run: ' + shown)} -ForegroundColor Cyan; & {' '.join(quote(arg) for arg in args)}"
     if keep_open:
-        script += "; Write-Host ''; Write-Host 'Finished. You can close this window and return to AI HQ.' -ForegroundColor Green; Read-Host 'Press Enter to close'"
+        script += "; Write-Host ''; Write-Host 'Finished. You can close this window and return to Cerebra.' -ForegroundColor Green; Read-Host 'Press Enter to close'"
     powershell = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     subprocess.Popen([str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], cwd=cwd,
                      creationflags=subprocess.CREATE_NEW_CONSOLE, stdin=subprocess.DEVNULL)
@@ -112,7 +112,7 @@ class Integrations:
                 + ("" if provider["login"] else " Type /login in that window if it asks.")}
 
     def sign_out(self, name):
-        """Run the tool's own logout command. It removes the tool's saved sign-in; AI HQ never had it."""
+        """Run the tool's own logout command. It removes the tool's saved sign-in; Cerebra never had it."""
         provider = PROVIDERS.get(name)
         if provider is None:
             raise ValueError("Unknown provider")
@@ -191,7 +191,7 @@ class Integrations:
             raise ValueError(f"Install {needed} first, then try again.")
         self.terminal([installer, *tool["install"][1:]], f"Install {tool['label']}", cwd=str(self.settings.data_dir))
         self._tools_cache = (0.0, None)
-        return {"opened": True, "message": f"An install window for {tool['label']} opened. Follow it there; press Refresh here when it finishes. You may need to restart AI HQ for new tools to be found."}
+        return {"opened": True, "message": f"An install window for {tool['label']} opened. Follow it there; press Refresh here when it finishes. You may need to restart Cerebra for new tools to be found."}
 
     # ---- GitHub ----------------------------------------------------------------------------
     def _gh(self):

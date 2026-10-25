@@ -12,7 +12,9 @@ BUILT_IN = {
     "codex": {"id": "codex", "provider": "codex", "model": "", "label": "Codex (default model)", "built_in": True},
     "claude": {"id": "claude", "provider": "claude", "model": "", "label": "Claude Code (default model)", "built_in": True},
 }
-DEFAULT_ROLES = {"planner": "claude", "implementer": "codex", "reviewer": "claude"}
+AUTO = "auto"  # the supervisor picks the model for the role (see routing.py)
+DEFAULT_ROLES = {"planner": AUTO, "implementer": AUTO, "reviewer": AUTO}
+CATALOG_ID = re.compile(r"^catalog:(codex|claude):([A-Za-z0-9._:/\[\]-]{0,100})$")
 
 
 def _stored(session):
@@ -37,12 +39,25 @@ def list_profiles(session):
 def default_roles(session):
     _, value = _stored(session)
     roles = {**DEFAULT_ROLES, **value.get("roles", {})}
-    known = {profile["id"] for profile in list_profiles(session)}
-    return {role: identifier if identifier in known else DEFAULT_ROLES[role] for role, identifier in roles.items()}
+    known = {profile["id"] for profile in list_profiles(session)} | {AUTO}
+    return {role: identifier if identifier in known or CATALOG_ID.fullmatch(str(identifier)) else DEFAULT_ROLES[role] for role, identifier in roles.items()}
+
+
+def catalog_profile(identifier):
+    """A profile for a model picked straight from the catalog: catalog:<provider>:<model>."""
+    from .catalog import catalog
+    match = CATALOG_ID.fullmatch(str(identifier))
+    if not match:
+        return None
+    provider, model = match.group(1), valid_model(match.group(2))
+    known = next((item for item in catalog().get(provider, []) if item["model"] == model), None)
+    return {"id": identifier, "provider": provider, "model": model, "built_in": True,
+            "label": known["label"] if known else f"{PROVIDERS[provider]['label']} · {model or 'default model'}",
+            "provider_label": PROVIDERS[provider]["label"], "can_run_tasks": True}
 
 
 def get_profile(session, identifier):
-    profile = next((item for item in list_profiles(session) if item["id"] == identifier), None)
+    profile = catalog_profile(identifier) or next((item for item in list_profiles(session) if item["id"] == identifier), None)
     if profile is None:
         raise ValueError(f"Unknown model profile: {identifier}")
     return profile
@@ -111,6 +126,10 @@ def delete_profile(session, identifier):
 def set_default_roles(session, roles):
     known = {profile["id"]: profile for profile in list_profiles(session)}
     for role, identifier in roles.items():
+        if role in DEFAULT_ROLES and identifier == AUTO:
+            continue
+        if role in DEFAULT_ROLES and catalog_profile(identifier):
+            known[identifier] = catalog_profile(identifier)
         if role not in DEFAULT_ROLES or identifier not in known:
             raise ValueError("Unknown role or model profile")
         if not known[identifier]["can_run_tasks"]:

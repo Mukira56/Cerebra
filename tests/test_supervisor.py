@@ -122,7 +122,9 @@ def test_chosen_models_reach_the_agents(hq):
     task_id = ready(hq, reviewer="claude-opus")
     supervisor.run_until_idle()
     models = {request.role: (name, request.model) for name, request in supervisor.registry.requests}
-    assert models == {"plan": ("claude", ""), "implement": ("codex", ""), "review": ("claude", "opus")}
+    assert models["review"] == ("claude", "opus")
+    # Planner and coder default to Auto: the supervisor's rules picked a Claude planner and a Codex coder.
+    assert models["plan"][0] == "claude" and models["plan"][1] in {"sonnet", "opus"} and models["implement"][0] == "codex"
     assert supervisor.get(task_id).results["models"]["reviewer"]["profile"] == "claude-opus"
 
 

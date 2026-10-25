@@ -11,7 +11,7 @@ from .security import redact
 
 HISTORY_TURNS = 12
 HISTORY_CHARACTERS = 24000
-GUIDANCE = ("You are chatting with a software engineer inside AI HQ, a local development workspace. "
+GUIDANCE = ("You are chatting with a software engineer inside Cerebra, a local development workspace. "
             "You are in read-only mode: you may read files in the current project folder, but you cannot edit files, "
             "run commands that change anything, install software, or access the network. If the engineer wants code "
             "changed, explain the change and tell them to press 'Make it a task' above this chat: a task gets its own "
@@ -30,10 +30,10 @@ class ChatService:
         self._cancels: dict[str, threading.Event] = {}
 
     def recover(self):
-        """Answers that were in flight when AI HQ stopped can never arrive; say so instead of spinning."""
+        """Answers that were in flight when Cerebra stopped can never arrive; say so instead of spinning."""
         with self.db.Session.begin() as session:
             for row in session.scalars(select(ChatMessage).where(ChatMessage.status == "pending")).all():
-                row.status, row.error, row.finished_at = "failed", "AI HQ restarted before this answer arrived. Send the message again.", now()
+                row.status, row.error, row.finished_at = "failed", "Cerebra restarted before this answer arrived. Send the message again.", now()
 
     def conversations(self):
         with self.db.Session() as session:
@@ -44,7 +44,7 @@ class ChatService:
         with self.db.Session.begin() as session:
             chosen = get_profile(session, profile)
             if not chosen["can_run_tasks"]:
-                raise ValueError(f"{chosen['provider_label']} cannot chat inside AI HQ yet")
+                raise ValueError(f"{chosen['provider_label']} cannot chat inside Cerebra yet")
             if project_id and not session.get(Project, project_id):
                 raise ValueError("Project not found")
             conversation = ChatConversation(id=uid(), profile=profile, project_id=project_id or None,

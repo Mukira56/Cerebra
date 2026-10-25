@@ -97,8 +97,9 @@ class Supervisor:
     def propose(self, project_id, objective, assigned_agent=None, dependencies=None,
                 allowed_paths=None, requirements=None, acceptance_criteria=None,
                 implementer=None, reviewer=None, planner=None):
-        """Propose a task. Roles name model profiles; `assigned_agent` is the older name for implementer."""
-        from .profiles import default_roles, get_profile
+        """Propose a task. Roles name model profiles or "auto"; `assigned_agent` is the older name for implementer."""
+        from .profiles import AUTO, default_roles, get_profile
+        from . import routing
         if not str(objective).strip():
             raise ValueError("An objective is required")
         with self._lock, self.db.Session.begin() as session:
@@ -106,17 +107,31 @@ class Supervisor:
             if project is None:
                 raise ValueError("Project not found")
             defaults = default_roles(session)
-            chosen = {}
+            chosen, automatic = {}, []
             for role, value in (("planner", planner), ("implementer", implementer or assigned_agent), ("reviewer", reviewer)):
-                profile = get_profile(session, value or defaults[role])
+                value = value or defaults[role]
+                if value == AUTO:
+                    automatic.append(role)
+                    continue
+                profile = get_profile(session, value)
                 if not profile["can_run_tasks"]:
                     raise ValueError(f"{profile['provider_label']} cannot run tasks yet; choose Codex or Claude")
                 chosen[role] = {"profile": profile["id"], "provider": profile["provider"], "model": profile["model"], "label": profile["label"]}
-            if reviewer is None and chosen["reviewer"]["provider"] == chosen["implementer"]["provider"]:
+            if "reviewer" in chosen and "implementer" in chosen and reviewer is None and chosen["reviewer"]["provider"] == chosen["implementer"]["provider"]:
                 # Default review always comes from the other provider, keeping the review independent.
-                other = "claude" if chosen["implementer"]["provider"] == "codex" else "codex"
-                profile = get_profile(session, other)
-                chosen["reviewer"] = {"profile": profile["id"], "provider": profile["provider"], "model": profile["model"], "label": profile["label"]}
+                automatic.append("reviewer")
+                chosen.pop("reviewer")
+            assessment = routing.assess(objective, requirements or [], allowed_paths or ["."])
+            policy = routing.load(session)
+            if automatic:
+                picked = routing.route(assessment, fixed=chosen)
+                for role in automatic:
+                    chosen[role] = {"profile": AUTO, **picked[role]}
+            ask_model = bool(automatic) and policy["mode"] == "model" and self.settings.live_enabled and self.settings.cli_confinement_accepted
+            routing_record = {"automatic": automatic, "assessment": assessment,
+                              "decided_by": "supervisor rules" if automatic else "you",
+                              "status": "asking supervisor model" if ask_model else "done",
+                              "supervisor_model": {"provider": policy["provider"], "model": policy["model"]} if ask_model else None}
             if chosen["reviewer"]["provider"] == chosen["implementer"]["provider"]:
                 raise ValueError("The reviewer must be a different AI provider from the coder, so the review is independent")
             assigned_agent = chosen["implementer"]["provider"]
@@ -131,7 +146,7 @@ class Supervisor:
                 mode="live", allowed_paths=self._allowed(allowed_paths or ["."]),
                 requirements=_clean(requirements or [objective]),
                 acceptance_criteria=_clean(acceptance_criteria or ["Configured verification commands pass", "Independent review has no unresolved defects", "Human approves integration"]),
-                max_retries=min(3, max(0, self.settings.max_retries)), results={"queued": False, "models": chosen})
+                max_retries=min(3, max(0, self.settings.max_retries)), results={"queued": False, "models": chosen, "routing": routing_record})
             session.add(task)
             session.flush()
             self._state(session, task, "PLANNING", "Deterministic supervisor is preparing an execution plan")
@@ -144,9 +159,55 @@ class Supervisor:
             ]
             for identifier in dependency_ids:
                 session.add(Dependency(task_id=task.id, depends_on=identifier))
-            self._approval(session, task, "plan", {"plan": task.plan, "models": chosen,
+            self._approval(session, task, "plan", {"plan": task.plan, "models": chosen, "routing": routing_record,
                 "notice": "Approving the plan makes the task ready. Starting it asks once more before any AI agent runs."})
-            return task
+            task_id = task.id
+        if ask_model:
+            self._spawn(self.route_with_model, task_id)
+        return self.get(task_id)
+
+    def _spawn(self, function, *args):
+        threading.Thread(target=function, args=args, name="cerebra-router", daemon=True).start()
+
+    def route_with_model(self, task_id):
+        """Ask the supervisor model to choose the models for automatic roles. The rules' choice stays if it fails."""
+        from . import routing
+        from .catalog import catalog
+        task = self.get(task_id)
+        record = dict(task.results.get("routing") or {})
+        models = catalog()
+        fixed = {role: value for role, value in task.results.get("models", {}).items() if role not in record.get("automatic", [])}
+        supervisor = record.get("supervisor_model") or {}
+        outcome, chosen, reason = "kept the rules' choice", None, ""
+        try:
+            self._refresh_registry()
+            workspace = self.settings.data_dir / "chat-workspace"
+            workspace.mkdir(parents=True, exist_ok=True)
+            prompt = routing.router_prompt(task.description, task.requirements, record.get("assessment", {}), task.results.get("models", {}), models)
+            answer = self.registry.chat(supervisor.get("provider", "claude"), prompt, str(workspace), supervisor.get("model", ""))
+            if not answer.success:
+                raise ValueError(answer.error or "no answer")
+            chosen, reason = routing.parse_router(answer.output, models, fixed)
+            outcome = "chose the models"
+        except Exception as exc:
+            outcome = f"could not decide ({redact(str(exc))[:200]}), so the rules' choice stands"
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            if chosen and (stored.approved or stored.state != "AWAITING_APPROVAL"):
+                chosen, outcome = None, "answered after the plan was already approved, so its choice was not applied"
+            if chosen:
+                models_now = {**stored.results.get("models", {}), **{role: {"profile": "auto", **chosen[role]} for role in record.get("automatic", [])}}
+                stored.assigned_agent, stored.reviewer = models_now["implementer"]["provider"], models_now["reviewer"]["provider"]
+                stored.plan = [{**step, "agent": stored.assigned_agent if step["milestone"] == "Implementation" else stored.reviewer if step["milestone"] == "Review" else step["agent"]} for step in stored.plan]
+                record.update(decided_by="supervisor model", reason=reason)
+                stored.results = {**stored.results, "models": models_now}
+                for approval in session.scalars(select(Approval).where(Approval.task_id == task_id, Approval.kind == "plan")).all():
+                    if approval.status.lower() == "pending":
+                        approval.payload = _clean({**approval.payload, "plan": stored.plan, "models": models_now, "routing": {**record, "status": "done"}})
+            record["status"] = "done"
+            stored.results = {**stored.results, "routing": record}
+            label = f"{supervisor.get('provider', '')} {supervisor.get('model', '')}".strip()
+            self._event(session, task_id, "routing", f"Supervisor model ({label}) {outcome}", {"reason": reason})
 
     def _approval(self, session, task, kind, payload):
         approval = Approval(id=uid(), task_id=task.id, kind=kind, status="pending", payload=_clean(payload))
@@ -289,7 +350,29 @@ class Supervisor:
                     self._state(session, task, "COMPLETED", "Approved candidate integrated locally")
             except Exception as exc:
                 self._fail(task_id, f"Integration blocked: {exc}", blocked=True)
+                return self.get(task_id)
+            self._auto_push(task_id, repo, payload["base_branch"])
             return self.get(task_id)
+
+    def _auto_push(self, task_id, repo, branch):
+        """In Away mode with automatic pushing, publish the merged branch to the project's own GitHub remote."""
+        from . import autopilot
+        with self.db.Session() as session:
+            policy = autopilot.load(session)
+            project_id = self._get(session, task_id).project_id
+        if not (autopilot.active(policy) and policy.get("auto_push") and autopilot.covers(policy, project_id)):
+            return
+        remote = self.runner.run(["git", "remote", "get-url", "origin"], repo, timeout=30)
+        if remote.exit_code:
+            message, data = "Away mode did not push: this project has no GitHub remote (use Publish to GitHub)", {}
+        else:
+            result = self.runner.run(["git", "push", "origin", branch], repo, timeout=600)
+            message = f"Away mode pushed {branch} to GitHub" if result.exit_code == 0 else "Away mode push failed: " + redact(result.stderr.strip())[:500]
+            data = {"remote": redact(remote.stdout.strip()), "pushed": result.exit_code == 0}
+        with self._lock, self.db.Session.begin() as session:
+            task = self._get(session, task_id)
+            task.results = {**task.results, "auto_push": data or {"pushed": False}}
+            self._event(session, task_id, "github", message, data)
 
     def startup(self):
         with self._lock:
@@ -359,6 +442,8 @@ class Supervisor:
                         continue
                 elif approval.kind not in {"plan", "live_execution", "review_findings"}:
                     continue
+                elif approval.kind == "plan" and (task.results.get("routing") or {}).get("status") == "asking supervisor model":
+                    continue  # wait for the supervisor model's choice of models
                 self._event(session, task.id, "autopilot", f"Away mode answered the {approval.kind.replace('_', ' ')} step for you", {"approval_id": approval.id})
                 decisions.append(approval.id)
                 if approval.kind == "plan":
@@ -484,7 +569,7 @@ class Supervisor:
             if self.git.inspect_repository(task.worktree_path).get("current_branch") != task.branch:
                 raise ValueError("Agent changed its assigned branch")
             self._validate_paths(task, snapshot.get("changed_paths", []))
-            candidate = self.git.commit(task.worktree_path, f"AI HQ task {task.id} attempt {task.retry_count}", allowed_paths=task.allowed_paths)
+            candidate = self.git.commit(task.worktree_path, f"Cerebra task {task.id} attempt {task.retry_count}", allowed_paths=task.allowed_paths)
             fingerprint = candidate["commit"]
             progress_fingerprint = hashlib.sha256(snapshot.get("diff", "").encode("utf-8")).hexdigest()
             previous = task.results.get("candidate_commit")
@@ -615,6 +700,7 @@ class Supervisor:
         self.registry.timeout = self.settings.agent_timeout
         self.registry.allow_live = self.settings.live_enabled
         self.registry.confinement_mode = "cli-confinement" if self.settings.cli_confinement_accepted else "none"
+        self.registry.full_access = self.settings.full_access
         for name in ("codex", "claude"):
             adapter = self.registry.get(name)
             configured = getattr(self.settings, f"{name}_path")

@@ -229,7 +229,7 @@ class GitManager:
             if paths:
                 # Explicit pathspecs ensure a filename cannot inject a Git option.
                 self._git(root, "add", "--", *paths)
-                self._git(root, "-c", "user.name=AI HQ", "-c", "user.email=ai-hq@localhost", "commit", "--no-verify", "-m", message)
+                self._git(root, "-c", "user.name=Cerebra", "-c", "user.email=ai-hq@localhost", "commit", "--no-verify", "-m", message)
             return {"commit": self._git(root, "rev-parse", "HEAD").stdout.strip(), "changed": bool(paths), "changed_paths": paths}
 
     def integrate(self, repo, branch, expected_base=None, approved=False, expected_branch=None, expected_candidate=None):

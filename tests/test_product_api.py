@@ -97,7 +97,7 @@ def test_model_profiles_crud_and_roles(client):
     assert client.put("/api/models/roles", json={"implementer": copilot["id"]}).status_code == 400
     assert client.delete("/api/models/claude").status_code == 400
     assert client.delete(f"/api/models/{added['id']}").status_code == 200
-    assert client.get("/api/models").json()["roles"]["reviewer"] == "claude"
+    assert client.get("/api/models").json()["roles"]["reviewer"] == "auto"
 
 
 def test_chat_round_trip_is_read_only_and_recorded(client):

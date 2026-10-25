@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate)
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate)
 from .security import redact
 from . import __version__
 
@@ -62,7 +62,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         supervisor.shutdown()
         db.close()
 
-    app = FastAPI(title="AI Development HQ", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="Cerebra", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
     app.state.integrations, app.state.chats = integrations, chats
 
@@ -156,7 +156,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def public_settings():
         values = asdict(settings)
         values["data_dir"] = str(values["data_dir"])
-        values["cost_information"] = "AI usage is billed by your provider account (ChatGPT, Claude, GitHub). AI HQ does not estimate costs."
+        values["cost_information"] = "AI usage is billed by your provider account (ChatGPT, Claude, GitHub). Cerebra does not estimate costs."
         return values
 
     @app.get("/api/overview")
@@ -169,12 +169,14 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             agents = [dict(as_dict(row)["status"], name=row.id) for row in session.scalars(select(Agent)) if not row.id.startswith("mock-")]
             from .profiles import list_profiles, default_roles
             profiles, roles = list_profiles(session), default_roles(session)
-            from . import autopilot
+            from . import autopilot, routing
+            from .catalog import catalog
             away = autopilot.describe(autopilot.load(session))
+            route_policy = routing.load(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -195,7 +197,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             project_path.mkdir(parents=True)
             from .processes import ProcessRunner
             runner = ProcessRunner()
-            for args in (["git","init","--initial-branch=main"], ["git","-c","user.name=AI HQ","-c","user.email=local@ai-hq.invalid","-c","commit.gpgsign=false","-c","core.hooksPath=" + str(settings.data_dir/"disabled-hooks"),"commit","--allow-empty","-m","Initialize authorized AI HQ project"]):
+            for args in (["git","init","--initial-branch=main"], ["git","-c","user.name=Cerebra","-c","user.email=local@ai-hq.invalid","-c","commit.gpgsign=false","-c","core.hooksPath=" + str(settings.data_dir/"disabled-hooks"),"commit","--allow-empty","-m","Initialize authorized Cerebra project"]):
                 result = runner.run(args, project_path, timeout=30)
                 if result.exit_code != 0: raise ValueError("Git initialization failed: " + result.stderr)
         else:
@@ -316,8 +318,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.get("/api/models")
     def models():
         from .profiles import list_profiles, default_roles
+        from .catalog import catalog, TIER_LABEL
+        from . import routing
         with db.Session() as session:
-            return {"profiles": list_profiles(session), "roles": default_roles(session)}
+            return {"profiles": list_profiles(session), "roles": default_roles(session), "catalog": catalog(), "tiers": TIER_LABEL, "routing": routing.load(session)}
 
     @app.post("/api/models", status_code=201)
     def add_model(payload: ProfileCreate):
@@ -365,10 +369,43 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             if not payload.enabled:
                 from . import autopilot
                 autopilot.save(session, False)
+                row = session.get(Metadata, "access_policy")
+                if row: row.value = {"level": "project"}
             apply_stored_policies(session, settings)
         supervisor._refresh_registry()
         for adapter in supervisor.registry.adapters.values(): adapter._capability = None
         return public_settings()
+
+    @app.post("/api/permissions/full-access")
+    def full_access(payload: FullAccess):
+        """The user's explicit choice to let coding agents run anything with their account and GitHub login."""
+        if payload.enabled:
+            if not (settings.live_enabled and settings.cli_confinement_accepted):
+                raise ValueError("Switch AI agents on first")
+            if not (payload.acknowledge_full_access and payload.acknowledge_github):
+                raise ValueError("Tick both boxes to give the agents full access")
+        with db.Session.begin() as session:
+            value = {"level": "full", "acknowledged": True, "accepted_at": now()} if payload.enabled else {"level": "project"}
+            row = session.get(Metadata, "access_policy")
+            if row: row.value = value
+            else: session.add(Metadata(key="access_policy", value=value))
+            session.add(Event(kind="policy", message="User gave coding agents full access to this computer and GitHub" if payload.enabled else "User limited coding agents to the project copy again"))
+            apply_stored_policies(session, settings)
+        supervisor._refresh_registry()
+        return public_settings()
+
+    @app.get("/api/routing")
+    def routing_status():
+        from . import routing
+        with db.Session() as session: return routing.load(session)
+
+    @app.put("/api/routing")
+    def routing_update(payload: RoutingUpdate):
+        from . import routing
+        with db.Session.begin() as session:
+            value = routing.save(session, payload.mode, payload.provider, payload.model)
+            session.add(Event(kind="settings_changed", message="Supervisor now picks models with rules" if payload.mode == "rules" else f"Supervisor now asks {payload.provider} {payload.model or ''} to pick models".replace("  ", " ")))
+            return value
 
     @app.get("/api/autopilot")
     def autopilot_status():
@@ -383,14 +420,14 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             if not (settings.live_enabled and settings.cli_confinement_accepted):
                 raise ValueError("Switch AI agents on first (Agent permissions, above)")
             if not payload.acknowledge_auto_approval:
-                raise ValueError("Tick the box to let AI HQ approve plans and runs for you")
+                raise ValueError("Tick the box to let Cerebra approve plans and runs for you")
             if payload.auto_merge and not payload.acknowledge_auto_merge:
                 raise ValueError("Tick the merge box too, or turn automatic merging off")
         with db.Session.begin() as session:
             for project_id in payload.projects: project_or_404(session, project_id)
-            policy = autopilot.save(session, payload.enabled, payload.hours, payload.auto_merge, payload.projects)
+            policy = autopilot.save(session, payload.enabled, payload.hours, payload.auto_merge, payload.projects, payload.auto_push)
             session.add(Event(kind="policy", message=(f"User turned Away mode on until {policy['until'][:16].replace('T', ' ')} UTC"
-                + (" with automatic local merging" if policy["auto_merge"] else "")) if payload.enabled else "User turned Away mode off"))
+                + (" with automatic merging" if policy["auto_merge"] else "") + (" and pushing to GitHub" if policy["auto_push"] else "")) if payload.enabled else "User turned Away mode off"))
         supervisor._wake.set()
         return policy
 

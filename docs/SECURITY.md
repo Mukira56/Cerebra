@@ -1,6 +1,6 @@
 # Security boundaries
 
-AI HQ controls local subprocesses and repository changes. Treat project code and model output as untrusted. The current implementation is intended for a single trusted Windows user on a private loopback session.
+Cerebra controls local subprocesses and repository changes. Treat project code and model output as untrusted. The current implementation is intended for a single trusted Windows user on a private loopback session.
 
 ## Local access
 
@@ -22,9 +22,26 @@ The process runner uses argument lists instead of shell interpolation, bounded e
 
 ## Human approvals
 
-Plan approval, task start, agent execution, and integration are deliberate operations. Since 0.5.0 AI HQ has no simulated mode: every task uses real provider CLIs, so agents are switched off on a fresh install. They cannot be switched on through a generic Settings PATCH. The only switch is the dedicated **Settings › Agent permissions** action (`POST /api/permissions`), which requires a session, a CSRF token, and **both** explicit acknowledgements (provider usage, and the residual outside-repository read risk below). Switching off needs neither. The tray's *Enable live agents* and `manage enable-live` / `accept-cli-confinement` remain equivalent alternatives. Each task still needs its own plan approval and agent consent, unless the user delegated those to Away mode (below). A CLI's output cannot grant approval, turn Away mode on, or widen scope.
+Plan approval, task start, agent execution, and integration are deliberate operations. Since 0.5.0 Cerebra has no simulated mode: every task uses real provider CLIs, so agents are switched off on a fresh install. They cannot be switched on through a generic Settings PATCH. The only switch is the dedicated **Settings › Agent permissions** action (`POST /api/permissions`), which requires a session, a CSRF token, and **both** explicit acknowledgements (provider usage, and the residual outside-repository read risk below). Switching off needs neither. The tray's *Enable live agents* and `manage enable-live` / `accept-cli-confinement` remain equivalent alternatives. Each task still needs its own plan approval and agent consent, unless the user delegated those to Away mode (below). A CLI's output cannot grant approval, turn Away mode on, or widen scope.
 
 Integration requires the recorded approval and fresh repository checks. The system never pushes, force-pushes, deploys, or publishes on its own. **Push** and **Publish to GitHub** run only when you press them, using your own `gh`/Git credentials. The system never reads browser credentials or purchases services. Existing projects remain untouched until explicitly registered and authorized.
+
+## Full access (0.6.0, opt-in)
+
+**Settings › Full access** (`POST /api/permissions/full-access`) is refused unless agents are switched on and both acknowledgements are ticked (machine, and GitHub). It is stored as the `access_policy` record, and switching agents off resets it.
+
+While it is on, **implementation runs only** change:
+- Codex runs with `--sandbox danger-full-access`, without the Windows elevated sandbox.
+- Claude gets `Read,Grep,Glob,Edit,Write,Bash,WebFetch,WebSearch`, unscoped. It still runs with `--safe-mode`, no MCP servers, and no settings sources.
+- The prompt policy tells the agent it may run commands, install dependencies, use the network and use git/gh. It must still not merge into the base branch or touch approvals.
+
+Planning, review and chat keep their read-only flags.
+
+This deliberately removes the write and network boundary on the user's machine. Prompt injection from repository content can then run arbitrary commands with the user's Windows account and GitHub credentials. The supervisor's controls still apply to what reaches the project: path validation of the worktree diff, branch checks, registered tests, independent review, and merge approval. They cannot undo side effects outside the worktree.
+
+**Routing.** Automatic model choice is rule-based by default (`routing.py`). With *Ask a supervisor model*, a read-only chat turn in the empty chat workspace returns JSON. The supervisor accepts it only if every model is in the catalog and the reviewer's provider differs from the coder's; otherwise the rules' choice stands. The model's text never becomes a command.
+
+The Codex catalog is read from `~/.codex/models_cache.json`, which holds model names and descriptions only. `auth.json` and other credential files are never read.
 
 ## Away mode: delegated approvals (0.5.1)
 
@@ -37,7 +54,7 @@ Away mode changes nothing about execution scope:
 - no push, publish, install or network access
 - no access outside the task worktree beyond what the CLIs already had
 
-**Sign out** runs only the tool's own logout command (`codex logout`, `claude auth logout`, `gh auth logout --hostname github.com --user <account>`). AI HQ never held the credential.
+**Sign out** runs only the tool's own logout command (`codex logout`, `claude auth logout`, `gh auth logout --hostname github.com --user <account>`). Cerebra never held the credential.
 
 ## Sign-in, toolchain installs, chat, and GitHub (0.5.0)
 
@@ -47,16 +64,16 @@ Away mode changes nothing about execution scope:
   - `gh auth login --web`
   - `copilot` or `gemini` (then `/login`)
 
-  AI HQ never receives, reads or stores passwords, tokens or API keys. **Check sign-in** runs only the tool's status command (`codex login status`, `claude auth status --json`, `gh auth status`). It keeps only the signed-in flag, account name, method and plan, with redaction applied.
+  Cerebra never receives, reads or stores passwords, tokens or API keys. **Check sign-in** runs only the tool's status command (`codex login status`, `claude auth status --json`, `gh auth status`). It keeps only the signed-in flag, account name, method and plan, with redaction applied.
 - **Toolchain installs** run only on a click. Each one runs a command from the fixed list in `integrations.py` (winget package IDs, or `npm install -g` for the agent CLIs) in a visible PowerShell window that you can watch or close. No argument comes from the browser, and every argument is PowerShell single-quote literal, so `@`, `$` and `;` stay inert.
 - **Chat** is read-only. Codex runs with `--sandbox read-only`, and Claude with Read/Grep/Glob tools only. Chat runs inside the chosen project folder, or an empty `chat-workspace` folder. Chat cannot edit files or run write commands; code changes go through a task. Each message is a real provider call on your account. Messages are redacted before they are stored, and any answer interrupted by a restart is marked failed.
 - **Model profiles** store only a provider name and a model name, validated against `^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$`. The model reaches the CLI as a single `-m`/`--model` argument. The reviewer must be a different provider from the coder. GitHub Copilot CLI and Gemini CLI can be installed and signed in, but they cannot run tasks or chat until an adapter for them has been verified.
-- **GitHub clone** accepts only `owner/name` and clones into the AI HQ data folder. The cloned project still needs your trust tick for its test commands.
-- **Old demo data cleanup** runs only when you press it. It first backs up the database to `data\backups`. It then deletes only `mode="mock"` tasks and the demo-only projects/working copies that live inside AI HQ's own `projects`/`worktrees` folders.
+- **GitHub clone** accepts only `owner/name` and clones into the Cerebra data folder. The cloned project still needs your trust tick for its test commands.
+- **Old demo data cleanup** runs only when you press it. It first backs up the database to `data\backups`. It then deletes only `mode="mock"` tasks and the demo-only projects/working copies that live inside Cerebra's own `projects`/`worktrees` folders.
 
 ## Authentication and providers
 
-Use each provider's own supported login flow only with explicit consent. AI HQ does not extract/store provider tokens or bypass login. A provider CLI uses its own authenticated session; any status check requires the appropriate user authorization. Detection of an executable/version is not proof that authentication is valid. No real agent run belongs in routine test execution.
+Use each provider's own supported login flow only with explicit consent. Cerebra does not extract/store provider tokens or bypass login. A provider CLI uses its own authenticated session; any status check requires the appropriate user authorization. Detection of an executable/version is not proof that authentication is valid. No real agent run belongs in routine test execution.
 
 Real CLI flags must be checked against installed help output, with conservative supported permissions. A missing or incompatible CLI fails closed. Live execution requires the effective live policy and either a verified external confinement boundary or the separately accepted CLI-confinement policy below. Configuration and installed providers do not prove a genuine task succeeds; current verification belongs in `progress.md`.
 

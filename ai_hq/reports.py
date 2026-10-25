@@ -8,7 +8,7 @@ from .integrations import PROVIDERS
 NAMES = {name: provider["label"] for name, provider in PROVIDERS.items()}
 STATE_STORY = {
     "PENDING": ("📝", "Just created", "The task was written down. Nothing has started yet."),
-    "PLANNING": ("🗺️", "Making a plan", "AI HQ is writing down the steps."),
+    "PLANNING": ("🗺️", "Making a plan", "Cerebra is writing down the steps."),
     "AWAITING_APPROVAL": ("✋", "Waiting for you", "The work is paused until you say yes or no."),
     "READY": ("🚦", "Ready to start", "You said yes to the plan. Press Start when you are ready."),
     "RUNNING": ("🛠️", "Working on it", "An AI helper is writing code right now."),
@@ -89,7 +89,7 @@ def build(task, project, data_dir):
         if str(approval.get("status")).lower() == "pending":
             words = {"plan": "the plan", "live_execution": "letting the AI helpers work", "merge": "adding the finished code to your project",
                      "review_findings": "the problems the checker found"}.get(approval.get("kind"), approval.get("kind"))
-            step("✋", "AI HQ is waiting for you", f"AI HQ needs you to say yes or no to {words}.", approval.get("created_at"))
+            step("✋", "Cerebra is waiting for you", f"Cerebra needs you to say yes or no to {words}.", approval.get("created_at"))
     if state == "COMPLETED":
         step("🎉", "Added to your project", f"The finished code was added to the “{task.get('results', {}).get('base_branch') or project.get('default_branch', 'main')}” branch of {project.get('name')}.", task.get("updated_at"), True)
     if state == "FAILED" and task.get("results", {}).get("error"):
@@ -97,7 +97,7 @@ def build(task, project, data_dir):
 
     data_dir = Path(data_dir)
     saved = [
-        {"what": "The task's history (every step above)", "where": str(data_dir / "hq.sqlite3"), "explain": "A small database file on this computer. AI HQ writes every step into it."},
+        {"what": "The task's history (every step above)", "where": str(data_dir / "hq.sqlite3"), "explain": "A small database file on this computer. Cerebra writes every step into it."},
         {"what": "Your project", "where": project.get("path", ""), "explain": "The folder with your code. Finished work is added here only after you say yes."},
     ]
     if task.get("worktree_path"):

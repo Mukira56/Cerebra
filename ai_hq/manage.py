@@ -48,7 +48,7 @@ def owned_process(settings):
     # A Windows venv python.exe is a launcher; the interpreter process it starts runs the base executable image.
     interpreters={Path(sys.executable).resolve(),Path(getattr(sys,"_base_executable",sys.executable)).resolve()}
     if any(actual[key]!=stored[key] for key in ("pid","created","image")) or Path(actual["image"]) not in interpreters:
-        raise RuntimeError("PID identity does not match the managed AI HQ server; refusing to act")
+        raise RuntimeError("PID identity does not match the managed Cerebra server; refusing to act")
     return stored
 
 def start(settings,open_browser=True,desktop=False):
@@ -57,12 +57,12 @@ def start(settings,open_browser=True,desktop=False):
         if desktop:
             print(json.dumps({"url":f"http://127.0.0.1:{existing['port']}/", "already_running":True}))
             return
-        print(f"AI HQ is already running at http://127.0.0.1:{existing['port']}. Browser session is required; stop and restart if it was lost.")
+        print(f"Cerebra is already running at http://127.0.0.1:{existing['port']}. Browser session is required; stop and restart if it was lost.")
         if open_browser: webbrowser.open(f"http://127.0.0.1:{existing['port']}")
         return
     with socket.socket() as probe:
         try: probe.bind(("127.0.0.1",settings.port))
-        except OSError as exc: raise RuntimeError(f"Port {settings.port} is occupied; AI HQ will not reuse an unrelated server") from exc
+        except OSError as exc: raise RuntimeError(f"Port {settings.port} is occupied; Cerebra will not reuse an unrelated server") from exc
     key=secrets.token_urlsafe(32)
     env=os.environ.copy();env["AIHQ_BOOTSTRAP_KEY"]=key;env["AIHQ_DATA_DIR"]=str(settings.data_dir)
     log_path=settings.data_dir/"server.log"
@@ -85,13 +85,13 @@ def start(settings,open_browser=True,desktop=False):
         print(json.dumps({"url":f"http://127.0.0.1:{settings.port}/#key={key}", "already_running":False}))
     else:
         if open_browser: webbrowser.open(f"http://127.0.0.1:{settings.port}/#key={key}")
-        print(f"AI HQ running at http://127.0.0.1:{settings.port}. Launch key sent directly to your browser; it is not persisted or logged.")
+        print(f"Cerebra running at http://127.0.0.1:{settings.port}. Launch key sent directly to your browser; it is not persisted or logged.")
     return f"http://127.0.0.1:{settings.port}/#key={key}"
 
 def stop(settings):
     owned=owned_process(settings)
     if not owned:
-        print("No matching AI HQ server is running.");return
+        print("No matching Cerebra server is running.");return
     if os.name=="nt":
         # Recheck immediately before termination; PID plus creation time protects against PID reuse.
         if not owned_process(settings): return
@@ -102,7 +102,7 @@ def stop(settings):
         import signal
         os.kill(owned["pid"],signal.SIGTERM)
     (settings.data_dir/"server.json").unlink(missing_ok=True)
-    print("Stopped the verified AI HQ process tree. Task files and history are preserved; interrupted tasks require resume.")
+    print("Stopped the verified Cerebra process tree. Task files and history are preserved; interrupted tasks require resume.")
 
 def serve(settings):
     # One backend process owns this data directory; release the lock on exit/crash.
@@ -146,7 +146,7 @@ def main():
     if args.command in {"accept-cli-confinement","revoke-cli-confinement"}:
         accepted=args.command=="accept-cli-confinement"
         if accepted and not args.acknowledge_residual_read_risk: parser.error("Explicit --acknowledge-residual-read-risk is required. CLI confinement is not an OS sandbox: Claude is limited to read-only review tools, but Codex can still read files outside the repository.")
-        if owned_process(settings): raise RuntimeError("Stop AI HQ before changing the sandbox policy")
+        if owned_process(settings): raise RuntimeError("Stop Cerebra before changing the sandbox policy")
         from .db import Database
         from .models import Metadata
         value={"mode":"cli-confinement","residual_read_risk_acknowledged":True,"accepted_at":time.strftime("%Y-%m-%dT%H:%M:%S%z")} if accepted else {"mode":"none"}
@@ -166,7 +166,7 @@ def main():
     if args.command in {"enable-live","disable-live"}:
         enabled=args.command=="enable-live"
         if enabled and not args.acknowledge_provider_usage: parser.error("Explicit --acknowledge-provider-usage is required. CLI execution may consume paid usage and access authenticated provider sessions. Per-task approval is also required.")
-        if owned_process(settings): raise RuntimeError("Stop AI HQ before changing live execution policy")
+        if owned_process(settings): raise RuntimeError("Stop Cerebra before changing live execution policy")
         from .db import Database
         from .models import Metadata
         db=Database(settings.db_path);db.init()
@@ -184,5 +184,5 @@ if __name__=="__main__":
     try:
         raise SystemExit(main())
     except (RuntimeError, OSError, ValueError) as exc:
-        print("AI HQ: " + str(exc), file=sys.stderr)
+        print("Cerebra: " + str(exc), file=sys.stderr)
         raise SystemExit(1)

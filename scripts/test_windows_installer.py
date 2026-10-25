@@ -79,12 +79,12 @@ def main():
     assert 'docs/progress.md' not in manifest['files'] and 'docs/environment-report.md' not in manifest['files']
     assert not (target/'data').exists() and not (target/'.env').exists()
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY) as registry:assert winreg.QueryValueEx(registry,'InstallLocation')[0]==str(target)
-    menu=Path(manifest['menu']);assert (menu/'AI Development HQ.lnk').is_file()
+    menu=Path(manifest['menu']);assert (menu/'Cerebra.lnk').is_file()
     python=target/'runtime/python.exe';launcher=target/'AIHQ.exe'
     env=os.environ.copy();env['PYTHONPATH']=r'C:\Users\ADMIN\AI-Development-HQ';env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
     code="import ai_hq,fastapi,pydantic,sqlalchemy,pytest,httpx,json,sys;print(json.dumps({'file':ai_hq.__file__,'version':ai_hq.__version__,'path':sys.path}))"
     modules=json.loads(run([python,'-X','utf8','-c',code],cwd=target,env=env))
-    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.5.1'
+    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.6.0'
     assert r'C:\Users\ADMIN\AI-Development-HQ' not in modules['path']
     assert not any('__editable__' in p.name for p in target.rglob('*'))
     print('Private runtime imports application/dependencies without source Python...',flush=True)
@@ -95,8 +95,8 @@ def main():
         began=time.monotonic();run([launcher,'--start-no-browser'],cwd=target,timeout=120);started=True
         startup_seconds=round(time.monotonic()-began,2)
         with urlopen('http://127.0.0.1:18765/health',timeout=10) as response:health=json.load(response)
-        assert health['version']=='0.5.1'
-        with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'AI HQ' in response.read()
+        assert health['version']=='0.6.0'
+        with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'Cerebra' in response.read()
         try:urlopen('http://127.0.0.1:18765/api/overview',timeout=10);raise AssertionError('Unauthenticated API allowed')
         except HTTPError as error:assert error.code==401
         status=json.loads(run([launcher,'--status'],cwd=target));assert status['running'] and status['active_tasks']==0
@@ -128,11 +128,11 @@ def main():
     assert (target/'keep-my-file.txt').read_text()=='Unknown user file must survive uninstall'
     assert (data/'user-project.txt').read_text()=='Retain this user data'
     with sqlite3.connect(data/'hq.sqlite3') as db:assert db.execute('select state from tasks where id=?',(proof['task_id'],)).fetchone()[0]=='AWAITING_APPROVAL'
-    assert not (menu/'AI Development HQ.lnk').exists()
+    assert not (menu/'Cerebra.lnk').exists()
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY):raise AssertionError('Test uninstall registration was not removed')
     except FileNotFoundError:pass
-    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':'0.5.0','private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'pipeline':proof,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
+    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':health['version'],'private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'pipeline':proof,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
     (ROOT/'work/windows-build/installer-test-results.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(json.dumps(report),flush=True)
 

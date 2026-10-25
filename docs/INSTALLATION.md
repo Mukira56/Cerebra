@@ -1,6 +1,6 @@
 # Installation and startup
 
-AI HQ uses a project-local Python environment. It does not require administrator privileges, npm, Docker, a cloud account, or a local language model.
+Cerebra uses a project-local Python environment. It does not require administrator privileges, npm, Docker, a cloud account, or a local language model.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ $env:AIHQ_DATA_DIR = 'D:\AIHQ-Data'
 
 Use the same environment variable when running doctor and stop. Choose an actual available drive. Changing the directory selects a different database; it does not migrate old data. The example `.env` and YAML files document values but are not automatically loaded.
 
-For backup, stop AI HQ first, then copy the application and its complete data directory to a safe location. Preserve registered repositories and their `.git` worktree metadata together. Moving active worktrees to a different absolute path requires Git worktree repair; do not assume a copied database updates repository paths.
+For backup, stop Cerebra first, then copy the application and its complete data directory to a safe location. Preserve registered repositories and their `.git` worktree metadata together. Moving active worktrees to a different absolute path requires Git worktree repair; do not assume a copied database updates repository paths.
 
 ## Missing agents
 
@@ -71,7 +71,7 @@ Live execution requires separate live/confinement policies and task approval. Th
 | Virtual environment missing | Run setup inside the application root. |
 | No local session | Stop/start and use the browser opened by start. |
 | Port already occupied | Choose `-Port 8766` or inspect the owning application; never kill an unidentified process. |
-| Doctor reports low disk | Free space through your normal reviewed process, or choose an authorized data drive. AI HQ performs no cleanup. |
+| Doctor reports low disk | Free space through your normal reviewed process, or choose an authorized data drive. Cerebra performs no cleanup. |
 | Repository registration rejected | Supply an exact absolute Git root; avoid linked/junction paths, drive roots, and your profile root. |
 | No verification commands | Register the project with reviewed command argument arrays. No commands means no verified completion. |
 | Agent unavailable | Install it from Toolchain, press Sign in on Models & sign-in, then Re-check tools. |

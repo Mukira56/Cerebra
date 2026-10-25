@@ -29,6 +29,9 @@ class Settings:
     # Sandbox policy B: the user accepted CLI-enforced confinement and its residual read risk.
     # Loaded only from the "sandbox_policy" record written by `manage accept-cli-confinement`.
     cli_confinement_accepted: bool = False
+    # Full access: the user let coding agents run any command with their Windows account and GitHub login.
+    # Loaded only from the "access_policy" record written by the acknowledged Settings switch.
+    full_access: bool = False
     codex_path: str = ""
     claude_path: str = ""
     ollama_url: str = "http://127.0.0.1:11434"
@@ -53,3 +56,6 @@ def apply_stored_policies(session, settings):
     sandbox_policy = session.get(Metadata, "sandbox_policy")
     settings.cli_confinement_accepted = bool(sandbox_policy and sandbox_policy.value.get("mode") == "cli-confinement"
                                              and sandbox_policy.value.get("residual_read_risk_acknowledged") is True)
+    access_policy = session.get(Metadata, "access_policy")
+    settings.full_access = bool(access_policy and access_policy.value.get("level") == "full"
+                                and access_policy.value.get("acknowledged") is True)

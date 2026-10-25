@@ -9,8 +9,13 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.5.1";
+    internal const string Version = "0.6.0";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
+    // Product name. Internal ids (AppId, registry key, AIHQ.exe, install/data folders) keep their pre-rename
+    // values so upgrades from "AI HQ" replace the same installation and keep the same data.
+    internal const string Product = "Cerebra";
+    internal const string MenuName = "Cerebra", TestMenuName = "Cerebra InstallerTest", ShortcutFile = "Cerebra.lnk", UninstallShortcutFile = "Uninstall Cerebra.lnk";
+    internal const string LegacyMenuName = "AI Development HQ", LegacyTestMenuName = "AI HQ InstallerTest", LegacyShortcutFile = "AI Development HQ.lnk", LegacyUninstallShortcutFile = "Uninstall AI HQ.lnk";
     internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16777216 };
     internal static string Root { get { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar); } }
     internal static string DefaultInstall { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "AI HQ"); } }
@@ -52,9 +57,9 @@ internal static class Shared {
                     string name = process.ProcessName.ToLowerInvariant();
                     if(name != "python" && name != "pythonw" && name != "aihq") continue;
                     string image = process.MainModule.FileName;
-                    if(Inside(image, root)) throw new InvalidOperationException("AI HQ is running. Use its tray menu to stop and exit before installing or uninstalling.");
+                    if(Inside(image, root)) throw new InvalidOperationException("Cerebra is running. Use its tray menu to stop and exit before installing or uninstalling.");
                 } catch(System.ComponentModel.Win32Exception) {} catch(InvalidOperationException exception) {
-                    if(exception.Message.StartsWith("AI HQ is running")) throw;
+                    if(exception.Message.StartsWith("Cerebra is running")) throw;
                 }
             }
         }
@@ -85,7 +90,7 @@ internal static class Shared {
         info.EnvironmentVariables.Remove("PYTHONPATH");
         using(var process = Process.Start(info)) {
             var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
-            if(!process.WaitForExit(seconds * 1000)) throw new TimeoutException("AI HQ did not respond in time. Check its data folder before retrying; no unrelated process was terminated.");
+            if(!process.WaitForExit(seconds * 1000)) throw new TimeoutException("Cerebra did not respond in time. Check its data folder before retrying; no unrelated process was terminated.");
             System.Threading.Tasks.Task.WaitAll(stdout, stderr);
             code = process.ExitCode; return stdout.Result + stderr.Result;
         }
@@ -107,7 +112,7 @@ internal static class Shared {
         if(Directory.Exists(root)&&Directory.GetFileSystemEntries(root).Length==0)Directory.Delete(root);
     }
     // Upgrades move the old program folder aside as "<target>.previous-<guid>". Once the new copy is in place,
-    // remove each verified AI HQ backup's recorded files; a backup holding unknown files keeps only those.
+    // remove each verified backup's recorded files; a backup holding unknown files keeps only those.
     internal static void RemovePreviousCopies(string target) {
         string parent=Path.GetDirectoryName(target), prefix=Path.GetFileName(target)+".previous-";
         foreach(string folder in Directory.GetDirectories(parent,prefix+"*")) {
@@ -135,6 +140,14 @@ internal static class Shared {
         link.InvokeMember("IconLocation", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[]{target + ",0"});
         link.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, new object[0]);
         System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut); System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+    }
+    // Shortcuts made by pre-rename versions, removed only when they point at this installation.
+    internal static void RemoveLegacyShortcuts(string root, bool test) {
+        string menu=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),test?LegacyTestMenuName:LegacyMenuName);
+        RemoveShortcut(Path.Combine(menu,LegacyShortcutFile),Path.Combine(root,"AIHQ.exe"));
+        RemoveShortcut(Path.Combine(menu,LegacyUninstallShortcutFile),Path.Combine(root,"Uninstall.exe"));
+        if(Directory.Exists(menu) && Directory.GetFileSystemEntries(menu).Length==0) Directory.Delete(menu);
+        if(!test) RemoveShortcut(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),LegacyShortcutFile),Path.Combine(root,"AIHQ.exe"));
     }
     internal static void RemoveShortcut(string path, string expected) {
         if(!File.Exists(path)) return;

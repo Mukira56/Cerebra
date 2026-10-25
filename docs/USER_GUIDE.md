@@ -1,6 +1,6 @@
-# Using AI HQ
+# Using Cerebra
 
-AI HQ is a local command center where real AI coding agents work on your projects:
+Cerebra is a local command center where real AI coding agents work on your projects:
 - OpenAI **Codex** and Anthropic **Claude Code** do the work.
 - GitHub Copilot CLI and Gemini CLI can be installed and signed in, and their task support is coming later.
 
@@ -12,13 +12,13 @@ The **Overview** page shows a *Get started* checklist:
 
 1. **Toolchain**: check what is installed.
    - Install anything that's missing: Git, Node.js, Python, the Codex CLI, Claude Code, the GitHub CLI and more.
-   - **Install** opens a visible window running the official installer (winget or npm). Restart AI HQ afterwards so it finds the new tools.
+   - **Install** opens a visible window running the official installer (winget or npm). Restart Cerebra afterwards so it finds the new tools.
 2. **Models & sign-in**: press **Sign in** for Codex and for Claude.
-   - Each tool opens its own login window. Your password goes only to OpenAI or Anthropic; AI HQ never sees it, and you don't need API keys.
+   - Each tool opens its own login window. Your password goes only to OpenAI or Anthropic; Cerebra never sees it, and you don't need API keys.
    - Press **Check sign-in** to confirm. Once you're signed in, the button becomes **Sign out**, which runs the tool's own logout.
 3. **Settings › Agent permissions**: tick both boxes and press **Switch agents on**. This is a one-time permission; every task still asks you before agents run.
 4. **Projects › Add project**: pick an existing folder, a new empty project, or **Clone from GitHub**.
-   - Add the project's **test commands**, for example `[["python","-m","pytest","-q"]]` or `[["npm","test"]]`. AI HQ uses them to prove that the AI's code works.
+   - Add the project's **test commands**, for example `[["python","-m","pytest","-q"]]` or `[["npm","test"]]`. Cerebra uses them to prove that the AI's code works.
 5. **Tasks › New task**: describe what you want.
 
 ## How a task works
@@ -72,8 +72,37 @@ Open **Reports** from the sidebar, or press **Plain report** in any task. Each r
 ## Models
 
 In **Models & sign-in**:
-- **Add model** pairs a provider with a model name, for example Claude with `opus` or `sonnet`, or Codex with any model your plan offers. Leave the name blank for the tool's default.
-- **Default AI team** chooses who plans, codes and reviews new tasks. Each task can override these choices.
+- **Available models** lists every model you can use.
+  - Claude: Opus 5.5 (frontier), Sonnet 5.5 (balanced), Haiku 5.5 (fast), and Fable 5.1.
+  - ChatGPT/Codex: the list comes from your own Codex app, so new OpenAI models appear by themselves, for example GPT-6-Astra (frontier), GPT-6.1-Sol (balanced) and GPT-6-Luna (fast).
+- **Default AI team** sets the planner, coder and reviewer for new tasks. Choose a model for each role, or **Auto**. Each new task can change these.
+- **Auto** lets the supervisor decide:
+  - It rates the task. Words like *architecture*, *security* or *refactor* make it hard; *typo*, *rename* or *readme* make it small.
+  - Hard work gets frontier models, everyday work gets balanced ones, and small jobs get fast ones.
+  - Claude plans and reviews; Codex writes the code, except documentation, which goes to Claude.
+  - The reviewer always comes from the other company.
+  - The task's window shows what was decided and why.
+- **Supervisor: who picks the models** chooses how Auto works.
+  - **Supervisor rules** is instant and free.
+  - **Ask a supervisor model** (for example Claude Opus 5.5) lets that model read the task and choose. Its answer is used only if every pick is a listed model and the reviewer is still from the other company; otherwise the rules' choice stays. Asking uses your plan, like any message.
+- **Add model** saves your own provider + model pair under a name.
+
+## Full access: let the agents use your laptop and GitHub
+
+By default, the coding agent changes only the files the task allows, in a separate copy of the project.
+
+**Settings › Full access** removes that limit for coding runs:
+- Codex runs without its sandbox.
+- Claude gets the shell, the web and all file tools.
+- Both can install software, use the network, change files anywhere your Windows account can, and use your GitHub login (push, open pull requests, create or change repositories).
+
+Turning it on takes two ticks. Switching agents off also turns it off.
+
+What still holds:
+- Planning, reviewing and chat stay read-only.
+- The supervisor still runs your tests and an independent review before anything is merged.
+
+The risk: a mistake, or a hidden instruction planted in some project file, can delete files, leak data or change your repositories, and nothing stops a command while it runs. Use it on projects you trust, and keep backups.
 
 ## GitHub
 
@@ -84,12 +113,12 @@ In **Models & sign-in**:
 
 ## Away mode: let the AI work while you're away
 
-Normally every task waits for you three times: to approve the plan, to let the agents run, and to merge the result. **Settings › Away mode** lets AI HQ answer those for you for a set time (2 to 72 hours), so tasks you created keep going while you're away.
+Normally every task waits for you three times: to approve the plan, to let the agents run, and to merge the result. **Settings › Away mode** lets Cerebra answer those for you for a set time (2 to 72 hours), so tasks you created keep going while you're away.
 
 1. Create your tasks first. Each one needs test commands on its project.
 2. Make sure agents are switched on (Settings › Agent permissions).
 3. In **Away mode**, pick how long, and optionally which projects. Tick the first box and press **Turn Away mode on**.
-4. Optional: tick **Also merge finished work** to let AI HQ merge work into your project folder. It merges only when every test passed and the independent review found nothing to fix. Merging is local: nothing is ever pushed to GitHub.
+4. Optional: tick **Also merge finished work** to let Cerebra merge work into your project folder. It merges only when every test passed and the independent review found nothing to fix. Merging is local: nothing is ever pushed to GitHub.
 
 While Away mode is on:
 - Plans are approved, the AI team starts, and review findings are sent back to the coder for repair (up to the repair limit).
@@ -98,8 +127,8 @@ While Away mode is on:
 - It switches itself off when the time is up, or when you switch agents off.
 
 What it does **not** do:
-- It doesn't give the AI your whole laptop. Agents still work only in a separate copy of the project, can change only the files the task allows, and can't install software, use the network (Codex), or push to GitHub.
-- It doesn't keep your laptop awake. Set Windows to not sleep while plugged in, and leave AI HQ running in the tray.
+- It doesn't widen what the agents may touch. Unless you also turned on **Full access**, they still work only in a separate copy of the project, can change only the files the task allows, and can't install software, use the network (Codex), or push to GitHub. Cerebra itself pushes merged work only if you ticked that option.
+- It doesn't keep your laptop awake. Set Windows to not sleep while plugged in, and leave Cerebra running in the tray.
 
 ## Pause, resume, cancel
 
@@ -107,7 +136,7 @@ Open a task:
 - **Pause** stops the current step and keeps everything.
 - **Resume** continues the task.
 - **Cancel** stops the task for good. Its history and branch are kept for inspection.
-- Stopping AI HQ from the tray keeps all records. Interrupted work waits for you to press Resume.
+- Stopping Cerebra from the tray keeps all records. Interrupted work waits for you to press Resume.
 
 ## Old demo data
 

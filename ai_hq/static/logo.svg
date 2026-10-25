@@ -1,7 +1,52 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AI HQ">
-  <rect width="256" height="256" rx="56" fill="#101b2b"/>
-  <path d="M48 72h32v40h48V72h32v112h-32v-44H80v44H48z" fill="#c5f277"/>
-  <path d="M192 72h24v112h-24z" fill="#63d9ce"/>
-  <path d="M160 168h44v24h-44z" fill="#63d9ce"/>
-  <circle cx="204" cy="48" r="12" fill="#c5f277"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Cerebra">
+  <title>Cerebra</title>
+  <defs>
+    <linearGradient id="cb-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#151b2e"/>
+      <stop offset="1" stop-color="#070a12"/>
+    </linearGradient>
+    <linearGradient id="cb-left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5ee7ff"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="cb-right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c084fc"/>
+      <stop offset="1" stop-color="#f472b6"/>
+    </linearGradient>
+    <radialGradient id="cb-glow" cx="0.5" cy="0.48" r="0.5">
+      <stop offset="0" stop-color="#7c5cff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#7c5cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#cb-bg)"/>
+  <circle cx="128" cy="124" r="112" fill="url(#cb-glow)"/>
+  <!-- left hemisphere: logic -->
+  <g fill="none" stroke="url(#cb-left)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M120 44 C96 34 66 42 58 66 C38 70 28 94 38 112 C24 126 28 154 48 162 C48 186 70 204 94 198 C104 214 120 214 120 214"/>
+    <path d="M120 44 V214"/>
+    <path d="M120 78 H92 L80 66"/>
+    <path d="M120 116 H70"/>
+    <path d="M120 154 H96 L84 168"/>
+  </g>
+  <g fill="#5ee7ff">
+    <circle cx="80" cy="66" r="9"/><circle cx="66" cy="116" r="9"/><circle cx="84" cy="168" r="9"/>
+  </g>
+  <!-- right hemisphere: code -->
+  <g fill="none" stroke="url(#cb-right)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M136 44 C160 34 190 42 198 66 C218 70 228 94 218 112 C232 126 228 154 208 162 C208 186 186 204 162 198 C152 214 136 214 136 214"/>
+    <path d="M136 44 V214"/>
+    <path d="M136 92 H170 L184 78"/>
+    <path d="M136 140 H190"/>
+    <path d="M136 178 H160"/>
+  </g>
+  <g fill="#e879f9">
+    <circle cx="184" cy="78" r="9"/><circle cx="194" cy="140" r="9"/><circle cx="164" cy="178" r="9"/>
+  </g>
+  <!-- core: </> -->
+  <rect x="88" y="104" width="80" height="48" rx="14" fill="#0b0f1a" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
+  <g fill="none" stroke="#a7f3d0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M110 116 L99 128 L110 140"/>
+    <path d="M146 116 L157 128 L146 140"/>
+    <path d="M134 113 L122 143"/>
+  </g>
 </svg>

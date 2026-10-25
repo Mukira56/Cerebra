@@ -16,7 +16,7 @@ try {
     if (Test-Path -LiteralPath $constraintsPath) { $pipArguments += @('--constraint', $constraintsPath) }
     & $venvPython @pipArguments
     if ($LASTEXITCODE -ne 0) { throw 'Project dependency installation failed. Check available disk space and the pip output.' }
-    Write-Host 'Project dependencies installed in the local .venv. Preparing and checking AI HQ...'
+    Write-Host 'Project dependencies installed in the local .venv. Preparing and checking Cerebra...'
     & $venvPython -m ai_hq.manage doctor
     if ($LASTEXITCODE -ne 0) { throw 'Doctor reported a required dependency failure. Review the checks above.' }
     Write-Host 'Setup complete. Run .\scripts\start.ps1 to launch your private local dashboard.'

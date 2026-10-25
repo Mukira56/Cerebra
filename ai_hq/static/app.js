@@ -1,12 +1,12 @@
 "use strict";
-// AI HQ dashboard. Every value from the server or a model is inserted as text, never as HTML.
+// Cerebra dashboard. Every value from the server or a model is inserted as text, never as HTML.
 (() => {
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
     overview: ["WORKSPACE", "Overview", "Everything happening in your development HQ, at a glance."],
     chat: ["WORK", "Chat", "Ask Codex or Claude about a project. Chat is read-only: to change code, create a task."],
     tasks: ["WORK", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
-    projects: ["WORK", "Projects", "Repositories AI HQ is allowed to work in."],
+    projects: ["WORK", "Projects", "Repositories Cerebra is allowed to work in."],
     approvals: ["WORK", "Approvals", "Nothing important happens without your yes."],
     system: ["INSIGHT", "System view", "A live map of the backend: what runs where, right now."],
     reports: ["INSIGHT", "Reports", "What happened in each task, explained in plain words."],
@@ -79,7 +79,7 @@
   const profiles = () => array(data?.profiles);
   const runnable = () => profiles().filter(profile => profile.can_run_tasks);
   const agentRow = name => array(data?.agents).find(agent => agent.name === name) || {};
-  function profileLabel(id) { const profile = profiles().find(item => item.id === id); return profile ? profile.label : id; }
+  function profileLabel(id) { if (id === "auto") return "Auto"; const profile = profiles().find(item => item.id === id); if (profile) return profile.label; const [, provider, model] = String(id).split(":"); const known = array(data?.catalog?.[provider]).find(item => item.model === model); return known ? known.label : id; }
   function taskModels(task) { const models = task?.results?.models || {}; return {planner: models.planner?.label || "Claude", implementer: models.implementer?.label || nice(task?.assigned_agent), reviewer: models.reviewer?.label || nice(task?.reviewer)}; }
 
   // ---------- chrome ----------
@@ -99,7 +99,7 @@
     $("#project-count").textContent = array(data.projects).length;
     const count = pendingApprovals().length; $("#approval-count").textContent = count; $("#approval-count").classList.toggle("hidden", !count);
     const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "away mode" : "agents on") : "agents off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
-    $("#version-label").textContent = `AI HQ v${data.version || ""}`;
+    $("#version-label").textContent = `Cerebra v${data.version || ""}`;
   }
 
   function render() {
@@ -117,7 +117,7 @@
     const signIn = name => cache.providers?.find(item => item.id === name)?.sign_in?.signed_in === true || agentRow(name).authentication === "verified_by_execution";
     const items = [
       ["Install Git and the AI coding tools", "Toolchain checks and installs Git, Codex and Claude Code.", agentRow("codex").installed && agentRow("claude").installed, "toolchain"],
-      ["Sign in to Codex and Claude", "Use your own accounts; AI HQ never sees your password.", signIn("codex") && signIn("claude"), "models"],
+      ["Sign in to Codex and Claude", "Use your own accounts; Cerebra never sees your password.", signIn("codex") && signIn("claude"), "models"],
       ["Switch AI agents on", "One-time permission in Settings. Every task still asks you first.", agentsOn(), "settings"],
       ["Add a project", "An existing folder, a new project, or one cloned from GitHub.", array(data.projects).length > 0, "projects"],
       ["Create your first task", "Describe what you want built.", realTasks().length > 0, "tasks"]
@@ -164,7 +164,14 @@
     projectFilter.addEventListener("change", paint); stateFilter.addEventListener("change", paint);
     append(filters, field("Project", projectFilter), field("State", stateFilter)); append(node, panel("Filter", body(filters)), holder); paint(); return node;
   }
-  function profileSelect(role, value) { return select(runnable().map(profile => [profile.id, `${profile.label}`]), value || data.roles?.[role]); }
+  const TIER_NAME = {frontier: "frontier", balanced: "balanced", fast: "fast"};
+  function catalogModels() { return ["claude", "codex"].flatMap(provider => array(data?.catalog?.[provider]).map(item => ({...item, provider}))); }
+  function roleChoices() {
+    const fromCatalog = catalogModels().map(item => [`catalog:${item.provider}:${item.model}`, `${item.label}${item.tier ? ` · ${TIER_NAME[item.tier]}` : ""}`]);
+    const custom = runnable().map(profile => [profile.id, `${profile.label} (saved profile)`]);
+    return [["auto", "⚡ Auto: the supervisor picks the best model"], ...fromCatalog, ...custom];
+  }
+  function profileSelect(role, value) { const chosen = value || data.roles?.[role] || "auto", choices = roleChoices(); if (!choices.some(([id]) => id === chosen)) choices.push([chosen, profileLabel(chosen)]); return select(choices, chosen); }
   function taskForm(projectId = "", description = "") {
     if (!array(data?.projects).length) { toast("Add a project first."); projectForm(); return; }
     const form = el("form"), project = select(array(data.projects).map(item => [item.id, item.name]), projectId || array(data.projects)[0].id);
@@ -172,7 +179,8 @@
     const planner = profileSelect("planner"), implementer = profileSelect("implementer"), reviewer = profileSelect("reviewer");
     objective.required = true; objective.minLength = 8; objective.value = description;
     const team = el("div", "form-grid"); append(team, field("Planner", planner, "Writes the plan"), field("Coder", implementer, "Writes the code"), field("Reviewer", reviewer, "Checks the code; must be a different provider"));
-    const project_info = el("div"); function describe() { const chosen = projectFor(project.value); project_info.replaceChildren(chosen && !array(chosen.test_commands).length ? hint("This project has no test commands, so AI HQ cannot verify the work. Add them on the Projects page first.", true) : hint(`Tests: ${array(chosen?.test_commands).map(command => command.join(" ")).join("  |  ") || "none"}`)); } project.addEventListener("change", describe); describe();
+    [planner, implementer, reviewer].forEach(control => { control.addEventListener("change", () => { if (control === implementer && control.value !== "auto" && reviewer.value !== "auto") { const coder = control.value.split(":")[1] || profiles().find(item => item.id === control.value)?.provider; const checker = reviewer.value.split(":")[1] || profiles().find(item => item.id === reviewer.value)?.provider; if (coder && coder === checker) reviewer.value = "auto"; } }); });
+    const project_info = el("div"); function describe() { const chosen = projectFor(project.value); project_info.replaceChildren(chosen && !array(chosen.test_commands).length ? hint("This project has no test commands, so Cerebra cannot verify the work. Add them on the Projects page first.", true) : hint(`Tests: ${array(chosen?.test_commands).map(command => command.join(" ")).join("  |  ") || "none"}`)); } project.addEventListener("change", describe); describe();
     append(form, field("Project", project), project_info, field("What do you want?", objective), team, field("Requirements", requirements), field("Acceptance criteria", criteria), field("Files the AI may change", allowed, "Comma-separated paths inside the project. Leave blank for the whole project."), !agentsOn() ? hint("AI agents are switched off. You can create the task now, but it will only run after you switch agents on in Settings.", true) : null);
     const submit = submitButton("Create plan"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
     wireForm(form, submit, async () => {
@@ -222,7 +230,7 @@
       root.append(actions);
       const tabs = el("div", "tabs"), pane = el("div");
       const views = {
-        "Overview": () => append(el("div", "section"), kv([["Project", projectFor(task.project_id)?.name], ["Planner", models.planner], ["Coder", models.implementer], ["Reviewer", models.reviewer], ["Files allowed", array(task.allowed_paths).join(", ")], ["Repairs", `${task.retry_count || 0} / ${task.max_retries ?? 3}`], ["Created", date(task.created_at)], ["Task ID", task.id]]), el("h3", "", "Plan"), plan(task.plan), array(task.requirements).length ? [el("h3", "", "Requirements"), list(task.requirements)] : null, task.results?.architecture?.output ? [el("h3", "", "AI architecture advisory"), code(task.results.architecture.output)] : null),
+        "Overview": () => append(el("div", "section"), routingCard(task), kv([["Project", projectFor(task.project_id)?.name], ["Planner", models.planner], ["Coder", models.implementer], ["Reviewer", models.reviewer], ["Files allowed", array(task.allowed_paths).join(", ")], ["Repairs", `${task.retry_count || 0} / ${task.max_retries ?? 3}`], ["Created", date(task.created_at)], ["Task ID", task.id]]), el("h3", "", "Plan"), plan(task.plan), array(task.requirements).length ? [el("h3", "", "Requirements"), list(task.requirements)] : null, task.results?.architecture?.output ? [el("h3", "", "AI architecture advisory"), code(task.results.architecture.output)] : null),
         "Results": () => { const node = append(el("div", "section"), el("h3", "", "Tests")); if (!array(task.test_results).length) node.append(el("p", "", "No tests have run yet.")); array(task.test_results).forEach(result => append(node, append(el("div", "row-meta"), badge(result.passed ? "passed" : "failed", result.passed ? "green" : "red"), el("code", "", array(result.command).join(" "))), code((result.stdout || "") + (result.stderr ? `\n${result.stderr}` : "")))); node.append(el("h3", "", "Review findings")); if (!array(task.review_findings).length) node.append(el("p", "", array(task.reviews).length ? "The reviewer found no problems." : "No review yet.")); array(task.review_findings).forEach(finding => append(node, append(el("div", "row-meta"), badge(finding.severity, ["critical", "high"].includes(finding.severity) ? "red" : "amber"), el("code", "", `${finding.path || ""}${finding.line ? `:${finding.line}` : ""}`), finding.validated ? badge("verified", "green") : badge("unverified", "muted")), el("p", "", finding.message))); return node; },
         "Changes": () => append(el("div", "section"), kv([["Branch", task.branch], ["Base commit", task.base_commit], ["Working copy", task.worktree_path]]), code(task.diff || task.results?.diff || "No changes yet.")),
         "Runs & logs": () => { const node = el("div", "section"); if (!array(task.runs).length) node.append(el("p", "", "No AI runs yet.")); array(task.runs).forEach(run => append(node, append(el("div", "row-meta"), el("strong", "", `${nice(run.agent)} · ${run.role}`), badge(run.status, run.status === "succeeded" ? "green" : run.status === "running" ? "blue" : "red"), el("span", "", date(run.started_at))), run.error ? code(run.error) : null, run.output ? code(run.output.slice(-6000)) : null)); node.append(el("h3", "", "Event history")); node.append(activityList([...array(task.events)].reverse(), 200)); return node; }
@@ -231,6 +239,16 @@
       Object.keys(views).forEach(label => tabs.append(button(label, () => choose(label), ""))); append(root, tabs, pane); choose(views[detailTab] ? detailTab : "Overview");
       showDialog(task.description, root); dialog.scrollTop = scroll;
     } catch (issue) { if (!background) toast(issue.message, true); }
+  }
+  function routingCard(task) {
+    const routing = task.results?.routing, chosen = task.results?.models || {};
+    if (!routing || !array(routing.automatic).length) return null;
+    const node = el("div", "progress-card"), assessment = routing.assessment || {};
+    append(node, el("strong", "", routing.status === "done" ? `Models chosen by the ${routing.decided_by}` : "The supervisor model is choosing the models…"),
+      el("p", "", `Task looks ${assessment.level || "normal"}${assessment.kind === "writing" ? " and writing-heavy" : ""}: ${array(assessment.signals).join(", ")}.`),
+      list(array(routing.automatic).map(role => `${{planner: "Planner", implementer: "Coder", reviewer: "Reviewer"}[role]}: ${chosen[role]?.label || "?"} (${chosen[role]?.why || ""})`)),
+      routing.reason ? el("p", "row-meta", `Supervisor model: ${routing.reason}`) : null);
+    return node;
   }
   function list(values) { const node = el("ul"); array(values).forEach(value => node.append(el("li", "", typeof value === "string" ? value : json(value)))); return node; }
   function plan(milestones) { const node = el("ol"); array(milestones).forEach(item => { const entry = el("li"); append(entry, el("strong", "", `${item.milestone} · ${nice(item.agent)}`), list(item.tasks)); node.append(entry); }); return node; }
@@ -282,9 +300,9 @@
   }
   function commandsInput(value) { return textarea('[["python", "-m", "pytest", "-q"]]', value); }
   function parseCommands(text) { let commands; try { commands = JSON.parse(text || "[]"); } catch { throw new Error("Test commands must be JSON, for example [[\"npm\", \"test\"]]"); } if (!Array.isArray(commands) || commands.some(command => !Array.isArray(command) || !command.length || command.some(arg => typeof arg !== "string"))) throw new Error("Use a list of argument lists, each argument a string."); return commands; }
-  const TEST_HELP = "How AI HQ checks the work. Examples: [[\"python\",\"-m\",\"pytest\",\"-q\"]] · [[\"npm\",\"test\"]] · [[\"dotnet\",\"test\"]]. These run as your Windows user, so only add projects you trust.";
+  const TEST_HELP = "How Cerebra checks the work. Examples: [[\"python\",\"-m\",\"pytest\",\"-q\"]] · [[\"npm\",\"test\"]] · [[\"dotnet\",\"test\"]]. These run as your Windows user, so only add projects you trust.";
   function projectForm(source = "existing") {
-    const form = el("form"), kind = select([["existing", "A folder on this computer"], ["new", "A new, empty project"], ["github", "Clone from GitHub"]], source), name = input("e.g. Booking platform"), path = input("C:\\Users\\you\\Projects\\my-app"), repo = el("select"), tests = commandsInput("[]"), consent = check("I trust this project and allow AI HQ to create working copies and run its test commands as my Windows user.");
+    const form = el("form"), kind = select([["existing", "A folder on this computer"], ["new", "A new, empty project"], ["github", "Clone from GitHub"]], source), name = input("e.g. Booking platform"), path = input("C:\\Users\\you\\Projects\\my-app"), repo = el("select"), tests = commandsInput("[]"), consent = check("I trust this project and allow Cerebra to create working copies and run its test commands as my Windows user.");
     const pathField = field("Folder", path, "The exact Git repository folder."), repoField = field("GitHub repository", repo, "Sign in on the GitHub page to see your repositories.");
     async function loadRepos() { repo.replaceChildren(option("", "Loading your repositories…")); try { cache.repos = cache.repos || await api("/api/github/repositories", {timeout: 60000}); repo.replaceChildren(...cache.repos.map(item => option(item.name, `${item.name} · ${item.visibility?.toLowerCase() || ""}`))); if (!cache.repos.length) repo.replaceChildren(option("", "No repositories found")); } catch (issue) { repo.replaceChildren(option("", issue.message)); } }
     function sync() { pathField.classList.toggle("hidden", kind.value !== "existing"); repoField.classList.toggle("hidden", kind.value !== "github"); if (kind.value === "github" && !repo.options.length) loadRepos(); }
@@ -333,13 +351,14 @@
     if (fence) root.append(append(el("pre"), el("code", "", fence.join("\n"))));
     flush(); return root;
   }
-  async function newChat(projectId = "", profile = data?.roles?.implementer || "codex") {
+  const chatDefault = () => (data?.roles?.implementer && data.roles.implementer !== "auto" ? data.roles.implementer : "codex");
+  async function newChat(projectId = "", profile = chatDefault()) {
     const conversation = await act(null, () => mutate("/api/chats", {profile, project_id: projectId || null}));
     if (conversation) { chatId = conversation.id; cache.chats = null; if (page === "chat") render(); else location.hash = "chat"; }
   }
   function chatView() {
     const root = el("div", "chat"), side = el("div", "chat-list"), head = el("div", "chat-list-head"), items = el("div", "chat-items"), main = el("div", "chat-main");
-    const profile = select(runnable().map(item => [item.id, item.label]), data.roles?.implementer), project = select([["", "No project (general chat)"], ...array(data.projects).map(item => [item.id, item.name])]);
+    const profile = select(roleChoices().filter(([id]) => id !== "auto"), chatDefault()), project = select([["", "No project (general chat)"], ...array(data.projects).map(item => [item.id, item.name])]);
     append(head, field("Talk to", profile), field("About", project), button("+ New chat", () => newChat(project.value, profile.value), "button primary"));
     append(side, head, items); append(root, side, main);
     const token = renderToken;
@@ -416,7 +435,7 @@
   // ---------- models & sign-in ----------
   function modelsView() {
     const root = el("div"), providersHolder = el("div", "grid cards"), token = renderToken;
-    root.append(panel("Your AI accounts", body(hint("Sign in uses each tool's own login window. AI HQ never sees your passwords or keys; your plan (ChatGPT, Claude, Copilot…) pays for usage."), el("div", "", ""), providersHolder)));
+    root.append(panel("Your AI accounts", body(hint("Sign in uses each tool's own login window. Cerebra never sees your passwords or keys; your plan (ChatGPT, Claude, Copilot…) pays for usage."), el("div", "", ""), providersHolder)));
     function paintProviders() {
       providersHolder.replaceChildren();
       array(cache.providers).forEach(provider => {
@@ -438,12 +457,30 @@
     (async () => { try { cache.providers = await api("/api/providers"); } catch (issue) { toast(issue.message, true); } if (token === renderToken) paintProviders(); })();
     if (cache.providers) paintProviders();
 
+    const how = el("form"), policy = data.routing || {}, mode = select([["rules", "Supervisor rules (instant, free)"], ["model", "Ask a supervisor model (uses your plan)"]], policy.mode || "rules");
+    const brain = select(catalogModels().filter(item => item.model).map(item => [`${item.provider}:${item.model}`, item.label]), `${policy.provider || "claude"}:${policy.model || "opus"}`), brainField = field("Supervisor model", brain, "Reads the task and the model list, then picks planner, coder and reviewer. Its answer is checked: only listed models, and the reviewer must be from the other company.");
+    const syncMode = () => brainField.classList.toggle("hidden", mode.value !== "model"); mode.addEventListener("change", syncMode); syncMode();
+    append(how, hint("When a role is set to Auto, the supervisor rates how hard the task is and picks a model: frontier models for hard work, balanced for everyday work, fast ones for small jobs. Claude plans and reviews; Codex codes (Claude writes docs). The reviewer always comes from the other company."), field("How the supervisor decides", mode), brainField);
+    const saveHow = submitButton("Save"); how.append(actionsRow(saveHow));
+    wireForm(how, saveHow, async () => { const [provider, model] = brain.value.split(":"); await mutate("/api/routing", {mode: mode.value, provider, model}, "PUT"); await refresh(true); toast(mode.value === "model" ? "The supervisor model will now pick the AI team." : "The supervisor's rules will pick the AI team."); });
+    root.append(panel("Supervisor: who picks the models", body(how)));
+
     const roles = el("form"), planner = profileSelect("planner"), implementer = profileSelect("implementer"), reviewer = profileSelect("reviewer");
     append(roles, el("div", "form-grid"), hint("New tasks start with these. You can still change them per task. The reviewer must use a different provider from the coder, so the review is truly independent."));
     append(roles.firstChild, field("Planner", planner), field("Coder", implementer), field("Reviewer", reviewer));
     const saveRoles = submitButton("Save defaults"); roles.append(actionsRow(saveRoles));
     wireForm(roles, saveRoles, async () => { await mutate("/api/models/roles", {planner: planner.value, implementer: implementer.value, reviewer: reviewer.value}, "PUT"); await refresh(true); toast("Default AI team saved."); });
     root.append(panel("Default AI team", body(roles)));
+
+    const catalogHolder = el("div", "grid cards");
+    ["claude", "codex"].forEach(provider => {
+      const card = el("article", "card"), top = el("div", "card-top"), info = el("div");
+      append(info, el("h3", "", provider === "claude" ? "Claude (Anthropic)" : "ChatGPT / Codex (OpenAI)"), el("div", "row-meta", provider === "codex" ? "List read from your Codex app, so new models appear by themselves" : "Aliases always use the newest model of that family"));
+      append(top, el("span", `icon-tile ${provider}`, PROVIDER_ICON[provider] || "AI"), info); card.append(top);
+      array(data.catalog?.[provider]).forEach(item => append(card, append(el("div", "model-row"), append(el("div"), el("strong", "", item.label), el("div", "row-meta", item.strengths)), append(el("div", "row-meta"), item.tier ? badge(item.tier, item.tier === "frontier" ? "purple" : item.tier === "fast" ? "green" : "blue") : badge("manual only", "muted"), el("code", "", item.model || "(default)")))));
+      catalogHolder.append(card);
+    });
+    root.append(panel("Available models", body(hint("Pick any of these for a role above or per task, or leave the role on Auto."), catalogHolder)));
 
     const rows = profiles().map(profile => [append(el("div"), el("strong", "", profile.label), el("div", "row-meta", profile.id)), append(el("span"), el("span", `icon-tile ${profile.provider}`, PROVIDER_ICON[profile.provider] || "AI")), el("code", "", profile.model || "(CLI default)"), profile.can_run_tasks ? badge("ready", "green") : badge("not runnable yet", "muted"),
       append(el("div", "card-footer"), button("Edit", () => profileForm(profile), "button small"), profile.built_in ? null : button("Remove", () => act("Model removed.", async () => { await api(`/api/models/${profile.id}`, {method: "DELETE"}); await refresh(true); }), "button small danger"))]);
@@ -469,7 +506,7 @@
       account.replaceChildren(el("div", "loading", "checking GitHub…"));
       try { cache.github = await api("/api/github", {timeout: 60000}); } catch (issue) { account.replaceChildren(body(hint(issue.message, true))); return; }
       if (token !== renderToken) return; const status = cache.github;
-      if (!status.installed) { account.replaceChildren(body(empty("GitHub CLI is not installed", "AI HQ talks to GitHub through the official GitHub CLI.", link("Install it from Toolchain →", "toolchain", "button primary"), "⑂"))); return; }
+      if (!status.installed) { account.replaceChildren(body(empty("GitHub CLI is not installed", "Cerebra talks to GitHub through the official GitHub CLI.", link("Install it from Toolchain →", "toolchain", "button primary"), "⑂"))); return; }
       if (!status.signed_in) { account.replaceChildren(body(empty("Not connected", "Sign in once; GitHub's own window handles your password and two-factor code.", button("Connect GitHub", () => act(result => result.message, () => mutate("/api/github/sign-in")), "button primary"), "⑂"), append(el("div", "actions"), button("Check again", loadAccount, "button small")))); return; }
       account.replaceChildren(body(kv([["Signed in as", status.account], ["Name", status.name], ["Profile", status.url], ["Public repositories", status.public_repos]]), append(el("div", "actions"), button("Check again", loadAccount, "button small ghost"), button("Sign out", async () => { if (await act("Signed out of GitHub.", () => mutate("/api/github/sign-out", {}, "POST", 60000))) { cache.repos = null; loadAccount(); loadRepos(); } }, "button small danger"), button("+ Clone a repository", () => projectForm("github"), "button small primary"))));
       loadRepos();
@@ -487,7 +524,7 @@
   // ---------- toolchain ----------
   function toolchainView() {
     const root = el("div"), holder = el("div"), token = renderToken;
-    root.append(hint("Install opens a visible window running the official installer (winget or npm), so you can watch it. Nothing is installed without your click. Restart AI HQ after installing so it finds new tools."), el("div", "", ""), holder);
+    root.append(hint("Install opens a visible window running the official installer (winget or npm), so you can watch it. Nothing is installed without your click. Restart Cerebra after installing so it finds new tools."), el("div", "", ""), holder);
     async function load(refresh = false) {
       holder.replaceChildren(el("div", "loading", "checking tools on this computer…"));
       try { cache.tools = await api(`/api/tools${refresh ? "?refresh=true" : ""}`, {timeout: 120000}); } catch (issue) { holder.replaceChildren(hint(issue.message, true)); return; }
@@ -499,32 +536,53 @@
     load(); return root;
   }
 
+  // ---------- full access ----------
+  const fullOn = () => data?.settings?.full_access === true;
+  function fullAccessForm() {
+    const form = el("form");
+    if (fullOn()) {
+      append(form, append(el("div", "row-meta"), badge("full access", "red"), el("span", "", "Coding agents can run any command with your Windows account and use your GitHub login.")),
+        hint("Planning, review and chat stay read-only. The supervisor still tests and reviews every change before it is merged."));
+      const off = submitButton("Limit agents to the project copy"); off.className = "button"; form.append(actionsRow(off));
+      wireForm(form, off, async () => { await mutate("/api/permissions/full-access", {enabled: false}); await refresh(true); toast("Agents are limited to the project copy again."); });
+      return form;
+    }
+    const machine = check("I let Codex and Claude run any command on this laptop (install software, use the network, change files outside the project) while they code a task."), github = check("I let them use my GitHub login (push, open pull requests, create or change repositories) when a task needs it.");
+    append(form, append(el("div", "row-meta"), badge("project only", "green"), el("span", "", "Agents can only change the files a task allows, in a separate copy.")),
+      hint("Full access is powerful and risky: a mistake, or a hidden instruction inside some project file, could delete files, leak data or change your repositories, and nothing stops a command while it runs. Use it on projects you trust, and keep backups.", true),
+      machine.wrap, github.wrap, !agentsOn() ? hint("Switch AI agents on above first.", true) : null);
+    const on = submitButton("Give full access"); on.className = "button danger"; on.disabled = !agentsOn(); form.append(actionsRow(on));
+    wireForm(form, on, async () => { if (!machine.control.checked || !github.control.checked) throw new Error("Tick both boxes to give full access."); await mutate("/api/permissions/full-access", {enabled: true, acknowledge_full_access: true, acknowledge_github: true}); await refresh(true); toast("Coding agents now have full access."); });
+    return form;
+  }
+
   // ---------- away mode ----------
   const awayOn = () => data?.autopilot?.active === true;
   function awayForm() {
     const policy = data.autopilot || {}, form = el("form");
     if (awayOn()) {
-      append(form, append(el("div", "row-meta"), badge("away mode on", "purple"), el("span", "", `Until ${date(policy.until)}${policy.auto_merge ? " · merges passing work" : " · stops before merging"}`)),
+      append(form, append(el("div", "row-meta"), badge("away mode on", "purple"), el("span", "", `Until ${date(policy.until)}${policy.auto_merge ? (policy.auto_push ? " · merges and pushes passing work" : " · merges passing work") : " · stops before merging"}`)),
         kv([["Projects", array(policy.projects).length ? array(policy.projects).map(id => projectFor(id)?.name || id).join(", ") : "All projects"], ["Started", date(policy.started_at)]]),
-        hint("AI HQ approves plans, starts the AI team and sends review findings back for repair for you. Everything it answers is written in Activity with “Away mode answered…”."));
+        hint("Cerebra approves plans, starts the AI team and sends review findings back for repair for you. Everything it answers is written in Activity with “Away mode answered…”."));
       const off = submitButton("Turn Away mode off"); off.className = "button danger"; form.append(actionsRow(off));
       wireForm(form, off, async () => { await mutate("/api/autopilot", {enabled: false}, "PUT"); await refresh(true); toast("Away mode is off. Every step asks you again."); });
       return form;
     }
     const hours = select([[2, "2 hours"], [4, "4 hours"], [8, "8 hours (a work day or a night)"], [12, "12 hours"], [24, "24 hours"], [48, "48 hours"], [72, "72 hours"]].map(([value, label]) => [String(value), label]), "8");
     const scope = el("div", "check-list"), boxes = array(data.projects).map(project => { const box = check(project.name); box.control.value = project.id; scope.append(box.wrap); return box; });
-    const approve = check("Let AI HQ approve plans, start the AI team and send review findings back for repair, without asking me."), merge = check("Also merge finished work into my project when every test passed and the review found nothing to fix."), mergeOk = check("I understand merged work changes my real project folder (locally only — nothing is pushed or published).");
-    mergeOk.wrap.classList.add("hidden"); merge.control.addEventListener("change", () => mergeOk.wrap.classList.toggle("hidden", !merge.control.checked));
+    const push = check("Then push merged work to the project's GitHub repository."); push.wrap.classList.add("hidden");
+    const approve = check("Let Cerebra approve plans, start the AI team and send review findings back for repair, without asking me."), merge = check("Also merge finished work into my project when every test passed and the review found nothing to fix."), mergeOk = check("I understand merged work changes my real project folder (locally only — nothing is pushed or published).");
+    mergeOk.wrap.classList.add("hidden"); merge.control.addEventListener("change", () => { mergeOk.wrap.classList.toggle("hidden", !merge.control.checked); push.wrap.classList.toggle("hidden", !merge.control.checked); if (!merge.control.checked) push.control.checked = false; });
     append(form, append(el("div", "row-meta"), badge("away mode off", "muted"), el("span", "", "Every plan, run and merge waits for you.")),
       hint("Turn this on before you leave so queued tasks keep going. Create the tasks first; Away mode answers their approval steps for the time you choose, then switches itself off."),
-      field("For how long", hours), field("Which projects (none ticked = all)", scope), approve.wrap, merge.wrap, mergeOk.wrap,
-      hint("What stays the same: agents still work only in a separate copy of the project, may change only the files the task allows, have no network in Codex, and cannot install software, push to GitHub or touch the rest of your laptop. Keep the computer awake and AI HQ running. Usage counts against your Codex/Claude plans."),
+      field("For how long", hours), field("Which projects (none ticked = all)", scope), approve.wrap, merge.wrap, mergeOk.wrap, push.wrap,
+      hint(fullOn() ? "Full access is on, so coding agents can also run commands, use the network and your GitHub login. Keep the computer awake and Cerebra running. Usage counts against your Codex/Claude plans." : "What stays the same: agents still work only in a separate copy of the project, may change only the files the task allows, have no network in Codex, and cannot install software, push to GitHub or touch the rest of your laptop. Keep the computer awake and Cerebra running. Usage counts against your Codex/Claude plans."),
       !agentsOn() ? hint("Switch AI agents on above first.", true) : null);
     const on = submitButton("Turn Away mode on"); on.disabled = !agentsOn(); form.append(actionsRow(on));
     wireForm(form, on, async () => {
-      if (!approve.control.checked) throw new Error("Tick the first box to let AI HQ answer for you.");
+      if (!approve.control.checked) throw new Error("Tick the first box to let Cerebra answer for you.");
       if (merge.control.checked && !mergeOk.control.checked) throw new Error("Tick the merge confirmation too, or untick automatic merging.");
-      const result = await mutate("/api/autopilot", {enabled: true, hours: Number(hours.value), auto_merge: merge.control.checked, projects: boxes.filter(box => box.control.checked).map(box => box.control.value), acknowledge_auto_approval: true, acknowledge_auto_merge: merge.control.checked}, "PUT");
+      const result = await mutate("/api/autopilot", {enabled: true, hours: Number(hours.value), auto_merge: merge.control.checked, auto_push: push.control.checked, projects: boxes.filter(box => box.control.checked).map(box => box.control.value), acknowledge_auto_approval: true, acknowledge_auto_merge: merge.control.checked}, "PUT");
       await refresh(true); toast(`Away mode is on until ${date(result.until)}.`);
     });
     return form;
@@ -544,6 +602,7 @@
       wireForm(permissions, on, async () => { if (!usage.control.checked || !reads.control.checked) throw new Error("Tick both boxes to switch agents on."); await mutate("/api/permissions", {enabled: true, acknowledge_provider_usage: true, acknowledge_residual_read_risk: true}); await refresh(true); toast("AI agents switched on."); });
     }
     root.append(panel("Agent permissions", body(permissions)));
+    root.append(panel("Full access — let agents control this laptop", body(fullAccessForm())));
     root.append(panel("Away mode — work while I'm away", body(awayForm())));
 
     const limits = el("form"), controls = {}, grid = el("div", "form-grid");
@@ -554,7 +613,7 @@
     wireForm(limits, save, async () => { const payload = {}; Object.entries(controls).forEach(([name, control]) => { payload[name] = control.type === "number" ? Number(control.value) : control.value.trim(); }); await mutate("/api/settings", payload, "PATCH"); await refresh(true); toast("Settings saved."); });
     root.append(panel("Limits & programs", body(limits)));
 
-    root.append(panel("Where your data lives", body(kv([["Everything AI HQ records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop AI HQ before copying it for a backup."))));
+    root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));
 
     const cleanup = el("div");
     (async () => { try { const preview = await api("/api/maintenance/demo-data"); if (!preview.tasks && !preview.projects.length) { cleanup.replaceChildren(el("p", "", "No old demo data. ✓")); return; } const go = button(`Remove ${preview.tasks} demo task(s)${preview.projects.length ? ` and ${preview.projects.length} demo project(s)` : ""}`, async () => { go.disabled = true; const result = await act(r => `Removed ${r.tasks_removed} demo tasks. Backup saved.`, () => mutate("/api/maintenance/demo-data", {confirm: true}, "POST", 120000)); if (result) { await refresh(true); } else go.disabled = false; }, "button danger"); cleanup.replaceChildren(el("p", "", "Earlier versions had a simulated demo. Its records are no longer used. Real tasks and projects are kept, and the database is backed up first."), preview.projects.length ? el("p", "row-meta", `Demo projects: ${preview.projects.join(", ")}`) : null, go); } catch (issue) { cleanup.replaceChildren(hint(issue.message, true)); } })();
@@ -585,8 +644,8 @@
       setInterval(() => { if (!document.hidden) refresh(); }, 3000);
       document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
     } catch (issue) {
-      notice(`Session required. Use the AI HQ tray menu: Restart workspace. ${issue.message}`, true);
-      content.replaceChildren(empty("Open your private launch link", "AI HQ needs a private local session. Choose Restart workspace from the AI HQ tray icon (or run scripts\\start.ps1).", null, "⌘"));
+      notice(`Session required. Use the Cerebra tray menu: Restart workspace. ${issue.message}`, true);
+      content.replaceChildren(empty("Open your private launch link", "Cerebra needs a private local session. Choose Restart workspace from the Cerebra tray icon (or run scripts\\start.ps1).", null, "⌘"));
     }
   }
   route(); boot();

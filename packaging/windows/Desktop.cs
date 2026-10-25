@@ -13,7 +13,7 @@ internal sealed class DesktopWindow : Form {
     internal bool AllowClose;
     internal event Action ExitRequested;
     internal DesktopWindow(int value,bool smoke=false) {
-        port=value; Text="AI Development HQ"; Width=1380; Height=900;
+        port=value; Text="Cerebra"; Width=1380; Height=900;
         MinimumSize=new Size(860,600); StartPosition=FormStartPosition.CenterScreen;
         BackColor=Color.FromArgb(16,22,32); Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if(smoke) { ShowInTaskbar=false;StartPosition=FormStartPosition.Manual;Location=new Point(-20000,-20000); }
@@ -44,7 +44,7 @@ internal sealed class DesktopWindow : Form {
             view.CoreWebView2.DownloadStarting+=delegate(object sender,CoreWebView2DownloadStartingEventArgs args) { args.Cancel=true; };
             view.CoreWebView2.PermissionRequested+=delegate(object sender,CoreWebView2PermissionRequestedEventArgs args) { args.State=CoreWebView2PermissionState.Deny; };
             view.CoreWebView2.NavigationCompleted+=delegate { loading.Visible=false; };
-            view.CoreWebView2.ProcessFailed+=delegate { loading.Text="The workspace renderer stopped. Use the tray menu to restart AI HQ.";loading.Visible=true;loading.BringToFront(); };
+            view.CoreWebView2.ProcessFailed+=delegate { loading.Text="The workspace renderer stopped. Use the tray menu to restart Cerebra.";loading.Visible=true;loading.BringToFront(); };
         }
         view.CoreWebView2.Navigate(url);
     }

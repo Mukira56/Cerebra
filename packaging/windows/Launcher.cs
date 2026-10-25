@@ -6,8 +6,8 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Reflection;
 
-[assembly: AssemblyTitle("AI Development HQ")]
-[assembly: AssemblyVersion("0.5.1.0")]
+[assembly: AssemblyTitle("Cerebra")]
+[assembly: AssemblyVersion("0.6.0.0")]
 [assembly: AssemblyDescription("Local AI development headquarters")]
 
 internal static class Launcher {
@@ -39,7 +39,7 @@ internal static class Launcher {
             return 0;
         } catch(Exception error) {
             if(args.Length > 0) Console.Error.WriteLine(error.Message);
-            else MessageBox.Show(error.Message, "AI HQ", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            else MessageBox.Show(error.Message, "Cerebra", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
     }
@@ -54,7 +54,7 @@ internal sealed class TrayContext : ApplicationContext {
         smoke=test;
         window=new DesktopWindow(Convert.ToInt32(Shared.Config(Shared.Root)["port"]),smoke);
         window.ExitRequested+=async delegate {await StopAndExit();};
-        tray = new NotifyIcon { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), Text = "AI Development HQ", Visible = true };
+        tray = new NotifyIcon { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), Text = "Cerebra", Visible = true };
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open workspace",null,async delegate { await Execute(new[]{"start"}); });
         menu.Items.Add("Restart workspace",null,async delegate { await Restart(); });
@@ -62,14 +62,14 @@ internal sealed class TrayContext : ApplicationContext {
         menu.Items.Add("Enable live agents...",null,async delegate { await EnableLive(); });
         menu.Items.Add("Open data folder",null,delegate { System.Diagnostics.Process.Start("explorer.exe", Shared.Quote((string)Shared.Config(Shared.Root)["data_dir"])); });
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Stop AI HQ and exit",null,async delegate { await StopAndExit(); });
+        menu.Items.Add("Stop Cerebra and exit",null,async delegate { await StopAndExit(); });
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += async delegate { await Execute(new[]{"start"}); };
         SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         Begin();
     }
     private async void Begin() {
-        tray.ShowBalloonTip(2500,"AI HQ","Checking local tools and starting your private dashboard.",ToolTipIcon.Info);
+        tray.ShowBalloonTip(2500,"Cerebra","Checking local tools and starting your private dashboard.",ToolTipIcon.Info);
         if(!await Execute(new[]{"start"})) { ExitThread(); return; }
         if(smoke) {
             try { await window.SmokeCheck(); }
@@ -90,9 +90,9 @@ internal sealed class TrayContext : ApplicationContext {
                     var status=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(previous);
                     if(Convert.ToBoolean(status["running"])) {
                         int active=Convert.ToInt32(status["active_tasks"]);
-                        string message="The previous source version of AI HQ is still running. Switch to this installed version now?\n\nYour projects and history will be preserved.";
+                        string message="The previous source version of Cerebra (AI HQ) is still running. Switch to this installed version now?\n\nYour projects and history will be preserved.";
                         if(active>0) message+="\n\n"+active+" task(s) are active. Switching interrupts them; you can explicitly resume them afterward.";
-                        if(MessageBox.Show(message,"Switch to installed AI HQ",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes) {
+                        if(MessageBox.Show(message,"Switch to installed Cerebra",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes) {
                             string stopped=await Task.Run(()=>Shared.RunPreviousSource(Shared.Root,"stop",out previousCode));
                             if(previousCode!=0) throw new Exception(stopped);
                             output=await Task.Run(()=>Shared.Run(Shared.Root,command,out code,120));
@@ -100,38 +100,38 @@ internal sealed class TrayContext : ApplicationContext {
                     }
                 }
             }
-            if(code!=0) { if(report) MessageBox.Show(output,"AI HQ",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
+            if(code!=0) { if(report) MessageBox.Show(output,"Cerebra",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
             if(command[0]=="start") {
                 var launch=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(output);
                 await window.OpenWorkspace((string)launch["url"]);
             }
             return true;
-        } catch(Exception error) { if(report) MessageBox.Show(error.Message,"AI HQ",MessageBoxButtons.OK,MessageBoxIcon.Error); return false; }
+        } catch(Exception error) { if(report) MessageBox.Show(error.Message,"Cerebra",MessageBoxButtons.OK,MessageBoxIcon.Error); return false; }
         finally { busy=false; }
     }
     private async Task Diagnostics() {
         if(busy) return; busy=true;
         try {
             int code=0; string text=await Task.Run(()=>Shared.Run(Shared.Root,new[]{"doctor"},out code,120));
-            using(var form=new Form {Text="AI HQ diagnostics",Width=780,Height=550,StartPosition=FormStartPosition.CenterScreen}) {
+            using(var form=new Form {Text="Cerebra diagnostics",Width=780,Height=550,StartPosition=FormStartPosition.CenterScreen}) {
                 form.Controls.Add(new TextBox {Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Both,WordWrap=false,Dock=DockStyle.Fill,Font=new Font("Consolas",10),Text=text});form.ShowDialog();
             }
-        } catch(Exception error) { MessageBox.Show(error.Message,"AI HQ diagnostics",MessageBoxButtons.OK,MessageBoxIcon.Error); }
+        } catch(Exception error) { MessageBox.Show(error.Message,"Cerebra diagnostics",MessageBoxButtons.OK,MessageBoxIcon.Error); }
         finally { busy=false; }
     }
     private bool ConfirmStop() {
         try {
         int code; string text=Shared.Run(Shared.Root,new[]{"status"},out code,20);
-        if(code!=0) { MessageBox.Show(text,"AI HQ"); return false; }
+        if(code!=0) { MessageBox.Show(text,"Cerebra"); return false; }
         var status=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(text);
-        return Convert.ToInt32(status["active_tasks"])==0 || MessageBox.Show("Tasks are active. Stop them and preserve their files/history for explicit resume?","Stop AI HQ",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
-        } catch(Exception error) { MessageBox.Show(error.Message,"AI HQ",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
+        return Convert.ToInt32(status["active_tasks"])==0 || MessageBox.Show("Tasks are active. Stop them and preserve their files/history for explicit resume?","Stop Cerebra",MessageBoxButtons.YesNo,MessageBoxIcon.Question)==DialogResult.Yes;
+        } catch(Exception error) { MessageBox.Show(error.Message,"Cerebra",MessageBoxButtons.OK,MessageBoxIcon.Warning); return false; }
     }
     private async Task Restart() { if(!busy && ConfirmStop() && await Execute(new[]{"stop"})) await Execute(new[]{"start"}); }
     private async Task StopAndExit() { if(!busy && ConfirmStop() && await Execute(new[]{"stop"})) ExitThread(); }
     private async Task EnableLive() {
         if(busy) return;
-        string notice="Enable genuine Codex and Claude execution? Provider usage may be billable. CLI confinement is not full OS read isolation; outside-project reads remain possible. Only enable this for trusted projects. Every task still needs its own approval. No software or credentials will be installed.\n\nAI HQ must restart to change this policy.";
+        string notice="Enable genuine Codex and Claude execution? Provider usage may be billable. CLI confinement is not full OS read isolation; outside-project reads remain possible. Only enable this for trusted projects. Every task still needs its own approval. No software or credentials will be installed.\n\nCerebra must restart to change this policy.";
         if(MessageBox.Show(notice,"Enable live agents",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes || !ConfirmStop()) return;
         if(!await Execute(new[]{"stop"})) return;
         if(!await Execute(new[]{"accept-cli-confinement","--acknowledge-residual-read-risk"})) return;

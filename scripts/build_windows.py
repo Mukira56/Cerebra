@@ -15,7 +15,7 @@ import sys
 import zipfile
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.5.1'
+VERSION='0.6.0'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 TRACE_MODULES=['ai_hq.api','ai_hq.manage','ai_hq.doctor','ai_hq.telemetry','ai_hq.gitops','ai_hq.agents','ai_hq.supervisor','ai_hq.processes',
@@ -131,7 +131,7 @@ def main():
     with zipfile.ZipFile(payload,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
         for name in [*files,'release-files.json']:
             archive.write(stage/name,name)
-    installer=args.output/f'AI-HQ-Setup-{VERSION}-Windows-x64.exe'
+    installer=args.output/f'Cerebra-Setup-{VERSION}-Windows-x64.exe'
     print('Embedding the offline application payload...',flush=True)
     compile_program(compiler,'Installer.cs',installer,resource=payload,icon=icon)
     digest=hashlib.file_digest(installer.open('rb'),'sha256').hexdigest()

@@ -1,6 +1,6 @@
 # Architecture
 
-AI HQ is a single local Python application with a dependency-free browser dashboard and SQLite persistence. It uses a deterministic supervisor so normal coordination needs no additional model, cloud service, or large resident process.
+Cerebra is a single local Python application with a dependency-free browser dashboard and SQLite persistence. It uses a deterministic supervisor so normal coordination needs no additional model, cloud service, or large resident process.
 
 ```text
 Local browser (HTML / CSS / JavaScript)
@@ -33,6 +33,9 @@ Optional Ollama interface; deterministic coordination remains the default
 | `agents.py` | Capability detection, model selection and the Codex/Claude CLI adapters (tasks and read-only chat). |
 | `integrations.py` | Provider sign-in windows, sign-in status, toolchain detection/installs, GitHub (`gh`). |
 | `profiles.py` | Model profiles (provider + model) and the default planner/coder/reviewer. |
+| `catalog.py` | Known models per provider, tiered frontier/balanced/fast (Codex list read from its model cache). |
+| `routing.py` | Automatic model choice per role: supervisor rules, optionally checked advice from a supervisor model. |
+| `autopilot.py` | Away mode: time-limited delegation of approval gates, optional merge and push. |
 | `chat.py` | Read-only chat conversations, answered in background threads. |
 | `reports.py` | Plain-language task reports built from recorded facts. |
 | `maintenance.py` | Explicit, backed-up removal of pre-0.5 demo records. |
