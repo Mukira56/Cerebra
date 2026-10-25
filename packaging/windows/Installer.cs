@@ -9,24 +9,59 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Cerebra Setup")]
-[assembly: AssemblyVersion("0.15.0.0")]
+[assembly: AssemblyVersion("0.15.1.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
     internal int Port=8765;
-    internal bool Quiet, Desktop=true, Shortcuts=true, TestRegistration;
+    internal bool Quiet, Desktop=true, Shortcuts=true, TestRegistration, InstallGit;
     internal string Registration { get { return Shared.RegistryPath + (TestRegistration ? ".InstallerTest" : ""); } }
 }
 internal static class Prerequisites {
-    // Git for Windows' standard locations, plus anything on PATH (a fresh install isn't on this process's PATH yet).
+    internal const string GitPage="https://git-scm.com/download/win";
+    // Git that actually runs: PATH, Git for Windows' recorded install folder, then its standard folders
+    // (a fresh install isn't on this process's PATH yet).
     internal static string FindGit() {
         var candidates=new List<string>();
-        foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) if(folder.Trim().Length>0) candidates.Add(Path.Combine(folder.Trim(),"git.exe"));
-        foreach(var root in new[]{Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),Environment.GetEnvironmentVariable("ProgramW6432")??"",Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs")})
+        foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) { try { if(folder.Trim().Length>0) candidates.Add(Path.Combine(folder.Trim().Trim('"'),"git.exe")); } catch(ArgumentException) {} }
+        foreach(var hive in new[]{Registry.CurrentUser,Registry.LocalMachine}) {
+            try { using(var key=hive.OpenSubKey(@"Software\GitForWindows")) { string root=key==null?null:key.GetValue("InstallPath") as string; if(!string.IsNullOrEmpty(root)) candidates.Add(Path.Combine(root,"cmd","git.exe")); } }
+            catch(Exception) {}
+        }
+        foreach(var root in new[]{Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs"),Environment.GetEnvironmentVariable("ProgramW6432")??"",
+                                  Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)})
             if(root.Length>0) candidates.Add(Path.Combine(root,"Git","cmd","git.exe"));
-        foreach(var candidate in candidates) { try { if(File.Exists(candidate)) return candidate; } catch(ArgumentException) {} }
+        foreach(var candidate in candidates) { try { if(File.Exists(candidate) && Works(candidate)) return candidate; } catch(ArgumentException) {} }
         return null;
     }
+    // "git --version" must succeed; a leftover or broken git.exe doesn't count as installed.
+    internal static bool Works(string git) {
+        try {
+            var info=new System.Diagnostics.ProcessStartInfo(git,"--version"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+            using(var process=System.Diagnostics.Process.Start(info)) {
+                var output=process.StandardOutput.ReadToEndAsync(); process.StandardError.ReadToEndAsync();
+                if(!process.WaitForExit(15000)) { try { process.Kill(); } catch(Exception) {} return false; }
+                return process.ExitCode==0 && output.Result.StartsWith("git version");
+            }
+        } catch(Exception) { return false; }
+    }
+    internal const string WingetArguments="install --id Git.Git --exact --source winget --scope user --accept-package-agreements --accept-source-agreements";
+    // Runs Windows Package Manager; returns its exit code, -1 when it couldn't start (cancelled or blocked), -2 on timeout.
+    internal static int InstallGit(string winget,bool silent) {
+        try {
+            var info=new System.Diagnostics.ProcessStartInfo(winget,WingetArguments+(silent?" --silent --disable-interactivity":"")){UseShellExecute=!silent,CreateNoWindow=silent};
+            using(var process=System.Diagnostics.Process.Start(info)) {
+                if(!process.WaitForExit(1200000)) return -2;
+                return process.ExitCode;
+            }
+        } catch(Exception) { return -1; }
+    }
+    internal static string Describe(int code) {
+        if(code==-1) return "Windows Package Manager couldn't start (it may have been cancelled or blocked).";
+        if(code==-2) return "Git setup took longer than 20 minutes and may still be running.";
+        return "Windows Package Manager stopped with code "+code+". This usually means no internet connection, a cancelled permission request, or a download that failed.";
+    }
+    internal static string Json(string value) { return value==null?"null":"\""+value.Replace("\\","\\\\").Replace("\"","\\\"")+"\""; }
     internal static string FindWinget() {
         string apps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Microsoft","WindowsApps","winget.exe");
         if(File.Exists(apps)) return apps;
@@ -48,9 +83,24 @@ internal static class Setup {
                 else if(args[i]=="--no-shortcuts") { options.Shortcuts=false; options.Desktop=false; }
                 else if(args[i]=="--no-desktop") options.Desktop=false;
                 else if(args[i]=="--test-registration") options.TestRegistration=true;
+                else if(args[i]=="--install-git") options.InstallGit=true;
+                else if(args[i]=="--check-git") {
+                    // Diagnostic for support: which Git and winget Setup would use (exit code 3 when Git is missing).
+                    string git=Prerequisites.FindGit(), winget=Prerequisites.FindWinget();
+                    Console.WriteLine("{\"git\": "+Prerequisites.Json(git)+", \"winget\": "+Prerequisites.Json(winget)+"}"); return git==null?3:0;
+                }
                 else throw new ArgumentException("Unknown setup argument: " + args[i]);
             }
             if(options.Quiet) {
+                // Quiet installs (updates, tests) never install system software unless --install-git explicitly allows it.
+                if(options.InstallGit && Prerequisites.FindGit()==null) {
+                    string winget=Prerequisites.FindWinget();
+                    if(winget==null) throw new IOException("Git is missing and Windows Package Manager (winget) isn't available. Install Git from "+Prerequisites.GitPage+" and run Setup again.");
+                    int code=Prerequisites.InstallGit(winget,true);
+                    string installed=Prerequisites.FindGit();
+                    if(installed==null) throw new IOException("Git was not installed. "+Prerequisites.Describe(code));
+                    Console.WriteLine("Git installed and verified: "+installed);
+                }
                 Install(options,delegate(int value){}); Console.WriteLine("Cerebra installed: " + options.Target);
                 if(Prerequisites.FindGit()==null) Console.WriteLine("Note: Git is not installed. Cerebra needs it; install it from Cerebra's Required tools page or git-scm.com.");
             }
@@ -154,24 +204,24 @@ internal sealed class SetupForm:Form {
         if(Prerequisites.FindGit()!=null) return true;
         var answer=MessageBox.Show("Cerebra needs Git, and it isn't installed on this computer yet.\n\n"+
             "Git is free. It keeps every version of your projects safe, and Cerebra uses it for every task so your work can always be checked and undone.\n\n"+
-            "Install Git now? Windows will ask for your permission.\n\n"+
+            "Install Git now? This needs an internet connection. Windows Package Manager downloads Git for Windows from its official source "+
+            "and accepts the Git package's licence (GPL v2) and the winget source agreement on your behalf. Windows may ask for your permission.\n\n"+
             "Yes: install Git, then Cerebra.\nNo: install Cerebra only (it will remind you to add Git).\nCancel: stop for now.",
             "Cerebra needs Git",MessageBoxButtons.YesNoCancel,MessageBoxIcon.Information);
         if(answer==DialogResult.No) return true;
         if(answer!=DialogResult.Yes) return false;
         string winget=Prerequisites.FindWinget();
         if(winget==null) {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://git-scm.com/download/win"){UseShellExecute=true});
-            MessageBox.Show("Windows' installer tool (winget) isn't available, so the official Git download page opened in your browser.\n\nInstall Git from there (the default options are fine), then press Install here again.","Install Git",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Prerequisites.GitPage){UseShellExecute=true}); } catch(Exception) {}
+            MessageBox.Show("Windows' installer tool (winget) isn't available, so the official Git download page opened in your browser.\n\nInstall Git from there (the default options are fine), then press Install here again. Setup finds it without restarting.","Install Git",MessageBoxButtons.OK,MessageBoxIcon.Information);
             return false;
         }
         state.Text="Installing Git… a window shows its progress. Approve Windows' permission request.";
-        int code=await Task.Run(()=>{
-            var info=new System.Diagnostics.ProcessStartInfo(winget,"install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements"){UseShellExecute=true};
-            using(var process=System.Diagnostics.Process.Start(info)) { process.WaitForExit(); return process.ExitCode; }
-        });
-        if(Prerequisites.FindGit()!=null) { state.Text="Git is installed. Installing Cerebra…"; return true; }
-        return MessageBox.Show("Git didn't finish installing (code "+code+").\n\nYou can install Cerebra now and add Git later from its Required tools page, or press Cancel and try again.","Git was not installed",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)==DialogResult.OK;
+        int code=await Task.Run(()=>Prerequisites.InstallGit(winget,false));
+        state.Text="Checking that Git works…";
+        string git=await Task.Run(()=>Prerequisites.FindGit());
+        if(git!=null) { state.Text="Git is installed and working. Installing Cerebra…"; return true; }
+        return MessageBox.Show("Git didn't finish installing. "+Prerequisites.Describe(code)+"\n\nPress OK to install Cerebra now and add Git later from its Required tools page, or Cancel to try again.","Git was not installed",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)==DialogResult.OK;
     }
     private async void Install(object sender,EventArgs args) {
         install.Enabled=false;target.Enabled=false;data.Enabled=false;desktop.Enabled=false;launch.Enabled=false;

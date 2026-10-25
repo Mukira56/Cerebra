@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import socket
 import sqlite3
 import subprocess
@@ -21,6 +22,24 @@ def run(args,**kwargs):
     result=subprocess.run([str(arg) for arg in args],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=kwargs.pop('timeout',240),creationflags=subprocess.CREATE_NO_WINDOW,**kwargs)
     if result.returncode: raise RuntimeError(str(args[0])+': '+result.stdout+'\n'+result.stderr)
     return result.stdout.strip()
+
+MISSING_GIT=r'''
+import json,os,tempfile
+from pathlib import Path
+from fastapi.testclient import TestClient
+from ai_hq import toolpath
+toolpath._registry_path=lambda:[];toolpath._git_folders=lambda:[]  # hide this laptop's Git completely
+from ai_hq.api import create_app
+from ai_hq.config import Settings
+app=create_app(Settings(data_dir=Path(os.environ['AIHQ_DATA_DIR'])),bootstrap_key='KEY',start_worker=False)
+with TestClient(app) as c:
+    health=c.get('/health').json()['status']
+    c.headers['X-CSRF-Token']=c.post('/api/session',json={'key':'KEY'}).json()['csrf_token']
+    git=next(t for t in c.get('/api/tools').json() if t['id']=='git')
+    folder=Path(tempfile.mkdtemp())
+    refused=c.post('/api/projects',json={'name':'x','path':str(folder),'authorize':True,'test_commands':[]})
+    print(json.dumps({'health':health,'git_listed_missing':git['installed'] is False,'project_refused':refused.status_code==400 and 'Required tools' in refused.json()['detail']}))
+'''
 
 PIPELINE_TEST=r'''
 # The installed app ships no simulated agents. This test-only stand-in replaces the provider CLIs
@@ -72,6 +91,13 @@ def main():
     except FileNotFoundError:pass
     with socket.socket() as probe:probe.bind(('127.0.0.1',18765))
     data.mkdir(parents=True,exist_ok=True);(data/'user-project.txt').write_text('Retain this user data',encoding='utf-8')
+    # Git prerequisite detection, run for real: with the normal PATH and with a PATH that has no Git folder on it.
+    system32=str(Path(os.environ['SystemRoot'])/'System32')
+    found=json.loads(run([args.installer,'--check-git']))
+    assert found['git'] and Path(found['git']).is_file(),found
+    outside=json.loads(run([args.installer,'--check-git'],env={**os.environ,'PATH':system32}))
+    assert outside['git'] and Path(outside['git']).is_file(),outside
+    print('Setup finds working Git on PATH and outside PATH (registry/standard folder)...',flush=True)
     print('Installing the actual EXE into an isolated directory...',flush=True)
     run([args.installer,'--quiet','--dir',target,'--data',data,'--port','18765','--no-desktop','--test-registration'],timeout=360)
     manifest=json.loads((target/'aihq-install.json').read_text())
@@ -84,10 +110,15 @@ def main():
     env=os.environ.copy();env['PYTHONPATH']=r'C:\Users\ADMIN\AI-Development-HQ';env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
     code="import ai_hq,fastapi,pydantic,sqlalchemy,pytest,httpx,json,sys;print(json.dumps({'file':ai_hq.__file__,'version':ai_hq.__version__,'path':sys.path}))"
     modules=json.loads(run([python,'-X','utf8','-c',code],cwd=target,env=env))
-    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.15.0'
+    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.15.1'
     assert r'C:\Users\ADMIN\AI-Development-HQ' not in modules['path']
     assert not any('__editable__' in p.name for p in target.rglob('*'))
     print('Private runtime imports application/dependencies without source Python...',flush=True)
+    # A laptop without Git: the packaged app must still start and point to Required tools instead of crashing.
+    nogit=MISSING_GIT.replace('KEY',secrets.token_urlsafe(32))
+    missing=json.loads(run([python,'-X','utf8','-c',nogit],cwd=target,env={**env,'PATH':system32,'AIHQ_DATA_DIR':str(args.test_root/'no-git-data')}))
+    assert missing=={'health':'ok','git_listed_missing':True,'project_refused':True},missing
+    print('Packaged app starts without Git and explains how to install it...',flush=True)
     diagnostics=run([launcher,'--doctor'],cwd=target,timeout=180)
     assert 'FAIL' not in diagnostics,diagnostics
     started=False
@@ -95,7 +126,7 @@ def main():
         began=time.monotonic();run([launcher,'--start-no-browser'],cwd=target,timeout=120);started=True
         startup_seconds=round(time.monotonic()-began,2)
         with urlopen('http://127.0.0.1:18765/health',timeout=10) as response:health=json.load(response)
-        assert health['version']=='0.15.0'
+        assert health['version']=='0.15.1'
         with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'Cerebra' in response.read()
         try:urlopen('http://127.0.0.1:18765/api/overview',timeout=10);raise AssertionError('Unauthenticated API allowed')
         except HTTPError as error:assert error.code==401
@@ -132,7 +163,7 @@ def main():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY):raise AssertionError('Test uninstall registration was not removed')
     except FileNotFoundError:pass
-    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':health['version'],'private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'pipeline':proof,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
+    report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':health['version'],'private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'pipeline':proof,'git_found_on_and_off_path':True,'starts_without_git':True,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
     (ROOT/'work/windows-build/installer-test-results.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(json.dumps(report),flush=True)
 

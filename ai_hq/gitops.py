@@ -15,6 +15,7 @@ import uuid
 from .agents import _allows
 from .processes import ProcessRunner
 from .security import canonical, redact, relative_paths
+from .toolpath import GIT_MISSING, find_git
 
 
 class GitError(RuntimeError):
@@ -34,11 +35,19 @@ class GitManager:
         for directory in (self.worktrees_dir, self.lock_dir, self.empty_hooks):
             directory.mkdir(parents=True, exist_ok=True)
         self.runner = runner or ProcessRunner()
-        self.executable = shutil.which("git")
+        # Cerebra must open (and show Required tools) on a laptop without Git, so Git is looked up when needed.
+        self.executable = find_git()
+
+    def require(self):
+        """The git executable, found even if it was installed after Cerebra started; GitError if missing."""
         if not self.executable:
-            raise GitError("Git executable is unavailable")
+            self.executable = find_git()
+        if not self.executable:
+            raise GitError(GIT_MISSING)
+        return self.executable
 
     def _git(self, repo, *args, check=True, timeout=60):
+        self.require()
         filters = []
         if any(argument in {"add", "commit", "merge", "worktree", "checkout", "diff", "status", "reset", "revert", "show"} for argument in args):
             # Configured clean/smudge/process filters are arbitrary executables too.

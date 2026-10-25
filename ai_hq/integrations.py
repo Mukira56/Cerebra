@@ -158,6 +158,9 @@ class Integrations:
         if cached is not None and not refresh and time.monotonic() - stamp < 300:
             return cached
 
+        from .toolpath import refresh_path
+        refresh_path()  # tools installed since Cerebra started are found without a restart
+
         def detect(tool):
             executable = which(tool["commands"])
             row = {key: tool[key] for key in ("id", "label", "group", "why")}
@@ -262,7 +265,10 @@ class Integrations:
         return {"created": True, "output": redact(result.stdout.strip())[:800]}
 
     def push(self, path, branch):
-        git = which(["git"])
+        from .toolpath import GIT_MISSING, find_git
+        git = find_git()
+        if not git:
+            raise ValueError(GIT_MISSING)
         remote = self.runner.run([git, "remote", "get-url", "origin"], path, timeout=30)
         if remote.exit_code:
             raise ValueError("This project has no GitHub remote yet. Use Publish to GitHub first.")

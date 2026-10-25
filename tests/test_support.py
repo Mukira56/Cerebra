@@ -45,7 +45,8 @@ def client(tmp_path):
 def ask(client, text, conversation=None):
     conversation = conversation or client.post("/api/chats", json={"profile": "codex"}).json()["id"]
     assert client.post(f"/api/chats/{conversation}/messages", json={"text": text}).status_code == 202
-    for _ in range(200):
+    deadline = time.monotonic() + 60  # automatic actions create projects in Git; slow on a loaded machine
+    while time.monotonic() < deadline:
         state = client.get(f"/api/chats/{conversation}").json()
         if not state["busy"]:
             return conversation, state

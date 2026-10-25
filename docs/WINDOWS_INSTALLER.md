@@ -2,7 +2,7 @@
 
 Windows 10/11 x64. This personal build includes its own Python 3.13 runtime and application dependencies. It does not require a separate Python, npm, or PowerShell setup command. Git is required for project work; Codex and Claude Code must be installed and signed in separately for live agents. No provider credentials or project data are included in the installer.
 
-Run Cerebra-Setup-0.15.0-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\Cerebra. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
+Run Cerebra-Setup-0.15.1-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\Cerebra. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
 
 Your project data stays outside the program directory. If this account already has Cerebra at %USERPROFILE%\AI-Development-HQ\data, setup selects that existing data location without copying, moving or deleting it. Keep that folder: registered repositories and Git worktrees can contain absolute paths. On a new account, data defaults to %LOCALAPPDATA%\Cerebra\data.
 
@@ -25,4 +25,18 @@ The desktop window requires Microsoft Edge WebView2 Runtime, which is already in
 
 ## Git is installed first
 
-Cerebra needs Git. Setup checks for it before installing Cerebra. If it's missing, Setup explains why and offers to install it with Windows' own installer tool (winget); Windows asks for your permission in that window. If winget isn't available, Setup opens the official Git download page. You can also choose to install Cerebra without Git and add it later.
+Cerebra needs Git. Setup checks for it before installing Cerebra. It looks on PATH, in Git for Windows' recorded install folder (registry) and in its standard folders, and only counts a Git that answers `git --version`.
+
+If Git is missing, Setup explains why and offers to install it:
+- **Yes** installs Git for Windows for your account with Windows Package Manager (`winget install --id Git.Git --exact --source winget --scope user`) in a visible window. This needs an internet connection and accepts the Git package licence (GPL v2) and the winget source agreement. Windows may ask for permission.
+- Afterwards Setup checks that Git runs. If it doesn't (no internet, permission refused, download failed, cancelled), Setup says so and lets you install Cerebra now or try again. Success is never reported without that check.
+- If winget isn't available, Setup opens the official Git download page; press Install again once Git is installed.
+- **No** installs Cerebra without Git. **Cancel** stops.
+
+Cerebra itself opens without Git: the Required tools page shows Git as missing with an Install button, and project actions explain that Git is needed instead of failing. Git installed while Cerebra is running is found without restarting, because Cerebra re-reads the saved PATH and Git's standard folders.
+
+Quiet installs (`--quiet`, used by in-app updates and tests) never install system software. Add `--install-git` to allow a quiet install to install Git first (silently, with the same verification).
+
+`Cerebra-Setup-….exe --check-git` prints the Git and winget that Setup would use, as JSON (exit code 3 when Git is missing). Use it to diagnose a laptop where Git isn't found.
+
+Not yet verified on a clean Windows installation without Git, without winget or without internet. Those paths are covered by code review and by tests that hide Git from Cerebra, not by a real fresh machine.

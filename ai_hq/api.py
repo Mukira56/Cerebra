@@ -38,6 +38,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             for key, value in validated.model_dump(exclude_none=True).items():
                 setattr(settings, key, value)
         apply_stored_policies(session, settings)
+    from .toolpath import refresh_path
+    refresh_path()  # Git or CLIs installed after the launcher started are still found
     from .supervisor import Supervisor
     supervisor = Supervisor(db, settings)
     from .chat import ChatService
@@ -223,6 +225,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def register(payload: ProjectCreate):
         from .gitops import GitManager
         git = GitManager(settings.data_dir)
+        git.require()
         if payload.create_new:
             project_path = settings.data_dir / "projects" / uid()
             project_path.mkdir(parents=True)
@@ -689,9 +692,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     # ---- Business Studio -----------------------------------------------------------------------
     from . import business
     from .processes import ProcessRunner
+    from .toolpath import GIT_MISSING, find_git
 
     def register_job_folder(name, path, test_commands, initialize=True):
         """Make the new job folder a Git repository holding the brief, then register it as a project."""
+        if not find_git(): raise ValueError(GIT_MISSING)
         runner, hooks = ProcessRunner(), str(settings.data_dir / "disabled-hooks")
         identity = ["-c", "user.name=Cerebra", "-c", "user.email=local@ai-hq.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + hooks]
         for args in (["git", "init", "--initial-branch=main"], ["git", *identity, "add", "-A"], ["git", *identity, "commit", "-m", "Business Studio brief"]):
@@ -887,6 +892,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     # ---- client delivery workspace: scope, money, customer results, change requests, form check ----
     def commit_folder(path, message):
+        if not find_git(): raise ValueError(GIT_MISSING)
         runner, hooks = ProcessRunner(), str(settings.data_dir / "disabled-hooks")
         identity = ["-c", "user.name=Cerebra", "-c", "user.email=local@ai-hq.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + hooks]
         for args in (["git", *identity, "add", "-A"], ["git", *identity, "commit", "-m", message]):

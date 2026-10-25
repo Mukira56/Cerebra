@@ -27,6 +27,8 @@ def inspect(settings=None):
     check("OS","PASS",f"{platform.system()} {platform.release()} {platform.machine()}")
     check("Python","PASS" if sys.version_info >= (3,13) else "FAIL",platform.python_version())
     runner = ProcessRunner()
+    from .toolpath import refresh_path
+    refresh_path()
     for name in ["git","powershell","node","npm","ollama"]:
         executable=shutil.which(name)
         if not executable:
