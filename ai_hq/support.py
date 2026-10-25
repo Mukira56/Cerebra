@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from sqlalchemy import select
 
 from .models import Approval, Event, Metadata, Project, Task
+from .security import redact
 
 KEY = "support_settings"
-ACTIONS = {"create_project", "create_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job"}
+ACTIONS = {"create_project", "create_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job",
+           "retry_task", "answer_approval", "restore_checkpoint", "run_readiness_check", "set_test_commands", "set_default_models"}
+APPROVAL_KINDS = {"plan", "live_execution", "review_findings", "merge"}
 MAX_ACTIONS = 10
 # Test runners a chat-created project may use. Anything else is set by the user on the Projects page.
 TEST_RUNNERS = [
@@ -30,11 +34,13 @@ BLOCK = re.compile(r"```cerebra-actions\s*(.*?)```", re.S)
 
 def load(session):
     row = session.get(Metadata, KEY)
-    return {"act_automatically": False, **(row.value if row else {})}
+    return {"act_automatically": False, "allow_approvals": False, **(row.value if row else {})}
 
 
-def save(session, act_automatically):
-    value = {"act_automatically": bool(act_automatically)}
+def save(session, act_automatically=None, allow_approvals=None):
+    value = load(session)
+    if act_automatically is not None: value["act_automatically"] = bool(act_automatically)
+    if allow_approvals is not None: value["allow_approvals"] = bool(allow_approvals)
     row = session.get(Metadata, KEY)
     if row:
         row.value = value
@@ -46,6 +52,27 @@ def save(session, act_automatically):
 def _short(text, limit):
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def failure_logs(session, data_dir, limit=5):
+    """Evidence for the most recent failed or stuck tasks: the failing run's log tail and the test output."""
+    from .models import Run
+    rows = session.scalars(select(Task).where(Task.state.in_(["FAILED", "BLOCKED"])).order_by(Task.updated_at.desc()).limit(limit)).all()
+    lines = []
+    for task in rows:
+        runs = session.scalars(select(Run).where(Run.task_id == task.id).order_by(Run.started_at.desc()).limit(3)).all()
+        failed = next((run for run in runs if run.status in {"failed", "interrupted"}), None)
+        log = ""
+        if failed and data_dir:
+            path = Path(data_dir) / "logs" / f"{failed.id}.log"
+            try: log = path.read_text(encoding="utf-8", errors="replace")[-1500:]
+            except OSError: log = failed.error or ""
+        tests = [result for result in (task.test_results or []) if not result.get("passed")][-1:]
+        lines.append(f"### Task {task.id[:8]} ({task.state}, reason: {(task.results or {}).get('blocked_reason') or 'failed'}): {_short(task.description, 140)}\n"
+                     f"Error: {_short((task.results or {}).get('error') or (failed.error if failed else ''), 600) or 'none recorded'}\n"
+                     + (f"Failing run: {failed.agent} {failed.role}. Log tail:\n{redact(log).strip()}\n" if failed else "")
+                     + (f"Failing test {' '.join(map(str, tests[0].get('command', [])))[:120]} (exit {tests[0].get('exit_code')}):\n{redact((tests[0].get('stdout') or '') + (tests[0].get('stderr') or ''))[-1200:].strip()}\n" if tests else ""))
+    return "\n".join(lines) or "No failed or stuck tasks."
 
 
 def brief(session, focus_project=None, message="", limit=14000):
@@ -134,7 +161,7 @@ def validate(item):
         clean["brief"] = str(item.get("brief", "")).strip()[:20000]
         clean["client"] = _short(item.get("client", ""), 120)
         clean["requirements"] = [_short(value, 500) for value in (item.get("requirements") or [])[:30] if isinstance(value, str)]
-        if clean["type"] not in {"website", "listing", "svg", "document"} or len(clean["title"]) < 3 or len(clean["brief"]) < 20:
+        if clean["type"] not in {"website", "service_site", "listing", "svg", "document"} or len(clean["title"]) < 3 or len(clean["brief"]) < 20:
             raise ValueError("a business job needs a title, a type (website, listing, svg or document) and a brief")
     elif kind == "create_task":
         clean["project"] = _short(item.get("project", ""), 120)
@@ -143,10 +170,38 @@ def validate(item):
             raise ValueError("a task needs a project and a clear description")
         clean["requirements"] = [_short(value, 500) for value in (item.get("requirements") or [])[:20] if isinstance(value, str)]
         clean["acceptance_criteria"] = [_short(value, 500) for value in (item.get("acceptance_criteria") or [])[:20] if isinstance(value, str)]
+    elif kind == "run_readiness_check":
+        pass
+    elif kind == "set_test_commands":
+        clean["project"] = _short(item.get("project", ""), 120)
+        commands = item.get("test_commands") or []
+        if not clean["project"] or not commands or not isinstance(commands, list) or any(command not in TEST_RUNNERS for command in commands):
+            raise ValueError("test commands must be standard runners (for example npm test or python -m pytest -q); set others on the Projects page")
+        clean["test_commands"] = commands
+    elif kind == "set_default_models":
+        for role in ("planner", "implementer", "reviewer"):
+            value = str(item.get(role, "")).strip()
+            if value and not re.fullmatch(r"auto|catalog:(codex|claude):[A-Za-z0-9._:/\[\]-]{0,100}|[a-z0-9][a-z0-9-]{0,47}", value):
+                raise ValueError("models must be auto, a catalog model or a saved profile")
+            if value: clean[role] = value
+        if len(clean) == 1:
+            raise ValueError("choose at least one role")
     else:
         clean["task"] = _short(item.get("task", ""), 64)
         if not re.fullmatch(r"[0-9a-f]{6,32}", clean["task"]):
             raise ValueError("refer to a task by its id")
+        if kind == "retry_task":
+            clean["instructions"] = str(item.get("instructions", "")).strip()[:4000]
+            if len(clean["instructions"]) < 10:
+                raise ValueError("a retry needs the diagnosis and what to change")
+        elif kind == "answer_approval":
+            clean["kind"], clean["approve"] = str(item.get("kind", "")), item.get("approve") is True
+            if clean["kind"] not in APPROVAL_KINDS:
+                raise ValueError("approval kind must be plan, live_execution, review_findings or merge")
+        elif kind == "restore_checkpoint":
+            clean["commit"] = str(item.get("commit", ""))
+            if not re.fullmatch(r"[0-9a-f]{40,64}", clean["commit"]):
+                raise ValueError("refer to a checkpoint by its full commit id")
     return clean
 
 
@@ -158,6 +213,18 @@ def describe(action):
         return f"Create a task in {action['project']}: {_short(action['description'], 140)}"
     if kind == "create_business_job":
         return f"Start a Business Studio job ({action['type']}): {action['title']}"
+    if kind == "run_readiness_check":
+        return "Run the readiness check"
+    if kind == "set_test_commands":
+        return f"Set the tests of {action['project']} to {' | '.join(' '.join(c) for c in action['test_commands'])}"
+    if kind == "set_default_models":
+        return "Set the default AI team: " + ", ".join(f"{role} → {value}" for role, value in action.items() if role != "action")
+    if kind == "retry_task":
+        return f"Retry task {action['task']} with this fix: {_short(action['instructions'], 160)}"
+    if kind == "answer_approval":
+        return f"{'Approve' if action['approve'] else 'Reject'} the {action['kind'].replace('_', ' ')} step of task {action['task']}"
+    if kind == "restore_checkpoint":
+        return f"Restore task {action['task']} to checkpoint {action['commit'][:8]}"
     return {"approve_plan": "Approve the plan of", "start_task": "Start", "pause_task": "Pause", "resume_task": "Resume", "cancel_task": "Cancel"}[kind] + f" task {action['task']}"
 
 
@@ -183,8 +250,20 @@ To make Cerebra do something, add ONE fenced block at the end of your answer:
  {"action": "create_task", "project": "Booking site", "description": "Clear, specific outcome", "requirements": ["..."], "acceptance_criteria": ["..."]},
  {"action": "start_task", "task": "<task id prefix>"}]
 ```
+Fixing failed work: the FAILURE LOGS section holds the real error, the failing run's log tail and the failing test
+output of recent failed or stuck tasks. When asked about a failure (or to fix it): name the root cause from that evidence,
+quoting the exact error line; say whether it is a code problem, a test/command problem, a missing tool, an account or usage
+limit, or unclear requirements; then fix it. For code problems use retry_task with precise instructions for the coder
+(what is wrong, which file, what to change, how to verify). For a wrong test command use set_test_commands, then retry_task.
+Account sign-in and usage limits need the user (or wait for usage): say so instead of retrying. Never invent a cause the
+evidence does not show; if it is unclear, say what to check.
+
+More actions: retry_task {"task": id, "instructions": "..."}; answer_approval {"task": id, "kind": "plan|live_execution|review_findings|merge",
+"approve": true|false} (only works if the user allowed the Assistant to answer approvals); restore_checkpoint {"task": id, "commit": full id};
+run_readiness_check {}; set_test_commands {"project": name, "test_commands": [[...]]}; set_default_models {"planner": "auto|catalog:claude:opus|…",
+"implementer": "…", "reviewer": "…"}. You cannot switch Full access, agents on/off, accounts, keys, paid or publishing actions: those are the user's.
 Allowed actions: create_project, create_task, approve_plan, start_task, pause_task, resume_task, cancel_task, and
-create_business_job ({"action": "create_business_job", "title": "...", "type": "website|listing|svg|document", "client": "...",
+create_business_job ({"action": "create_business_job", "title": "...", "type": "service_site|website|listing|svg|document", "client": "...",
 "brief": "the client's request in full", "requirements": ["..."]}) for client deliverables saved in Business Studio.
 If a client says they do not want AI used, do not create a job; tell the user.
 Test commands must be one of: """ + "; ".join(" ".join(command) for command in TEST_RUNNERS) + """.

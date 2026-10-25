@@ -192,6 +192,34 @@ What it does **not** do:
 - It doesn't widen what the agents may touch. Unless you also turned on **Full access**, they still work only in a separate copy of the project, can change only the files the task allows, and can't install software, use the network (Codex), or push to GitHub. Cerebra itself pushes merged work only if you ticked that option.
 - It doesn't keep your laptop awake. Set Windows to not sleep while plugged in, and leave Cerebra running in the tray.
 
+## Delivering a client website (Business Studio)
+
+1. **+ New business job** › *Service business website (quote requests)*. Paste what the client told you.
+2. Fill in the **Scope** with your client: services, service areas, pages, what's included and not, revisions, deadline, price, their phone, and the **form delivery address**. That's where quote requests go; a free Formspree form works: formspree.io › New form › copy its https address.
+3. Press **Approve scope and start**. Only now does the AI team plan and build. The site is checked automatically:
+   - every page works on phones,
+   - no links are broken,
+   - images are described,
+   - the form sends to your address and asks for the right details,
+   - every service and area you agreed appears.
+4. Review the result in **Preview**, then press **Send test enquiry** and check the client's inbox.
+5. Track the job:
+   - **Money:** payments, expenses, your hours.
+   - **Customer results:** each enquiry and whether it became a booked job.
+   - **Change requests:** counted against the revisions you included.
+
+Profit is calculated only from what you enter.
+
+## When something fails: ask the Assistant
+
+Open a failed or paused task and press **Ask the Assistant to fix this**:
+- It reads the real error, the log of the failing run and the failing test output, and explains the cause.
+- Then it retries the task with precise instructions for the coder, or tells you what it needs from you (for example signing in again).
+- You can also just ask in the Assistant: "why did my last task fail? fix it".
+
+The Assistant can create, start, pause, retry and restore tasks, set a project's tests, change the AI team and run the readiness check. Tick **May answer approvals** in the Assistant to let it approve plans, runs and merges too.
+- Full access, agents on/off, accounts, keys and anything that spends money or publishes always stay with you.
+
 ## Is everything working? The readiness check
 
 **Settings › Readiness check › Run readiness check** gives Cerebra a tiny real job: fix a one-line bug in a separate test project. It goes through planning, coding, your tests and the independent review using your own models, and shows a ✓ or ✗ for each stage with its time. It stops before merging, so none of your projects change. It uses a little of your Codex/Claude usage.

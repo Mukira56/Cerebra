@@ -282,6 +282,10 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .factory-floor.factory-offline .person { opacity: .4; }
 .connection-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 330px); gap: 18px; align-items: start; }
 .connection-form { min-width: 0; }
+.delivery { max-width: 980px; margin: 18px auto 0; }
+.inline-form { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+.inline-form input, .inline-form select { width: auto; min-width: 120px; flex: 1 1 140px; }
+.stat-value.small-value { font-size: 18px; }
 .preview-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .preview-tabs .chip.active { border-color: var(--green); color: var(--green); }
 .preview-viewer { border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; background: #fff; min-height: 120px; }

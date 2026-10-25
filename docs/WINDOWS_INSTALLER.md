@@ -2,7 +2,7 @@
 
 Windows 10/11 x64. This personal build includes its own Python 3.13 runtime and application dependencies. It does not require a separate Python, npm, or PowerShell setup command. Git is required for project work; Codex and Claude Code must be installed and signed in separately for live agents. No provider credentials or project data are included in the installer.
 
-Run Cerebra-Setup-0.13.0-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\Cerebra. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
+Run Cerebra-Setup-0.14.0-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\Cerebra. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
 
 Your project data stays outside the program directory. If this account already has Cerebra at %USERPROFILE%\AI-Development-HQ\data, setup selects that existing data location without copying, moving or deleting it. Keep that folder: registered repositories and Git worktrees can contain absolute paths. On a new account, data defaults to %LOCALAPPDATA%\Cerebra\data.
 
@@ -21,3 +21,8 @@ For diagnostics from a terminal, the native launcher also accepts --doctor, --st
 Build source is under packaging/windows and scripts/build_windows.py. The builder uses the installed project environment, the existing Python runtime and the Windows .NET Framework C# compiler. It downloads and installs no build tools. The emitted .sha256 file records the exact installer digest.
 
 The desktop window requires Microsoft Edge WebView2 Runtime, which is already installed on this laptop. Cerebra uses its own profile in the data directory and does not read your browser profile. External navigation, popups, downloads, browser shortcuts, host objects, and browser permissions are disabled. The installer includes the Microsoft WebView2 SDK assemblies and license; it does not silently install a machine-wide runtime.
+
+
+## Git is installed first
+
+Cerebra needs Git. Setup checks for it before installing Cerebra. If it's missing, Setup explains why and offers to install it with Windows' own installer tool (winget); Windows asks for your permission in that window. If winget isn't available, Setup opens the official Git download page. You can also choose to install Cerebra without Git and add it later.

@@ -56,9 +56,9 @@ TRANSITIONS = {
     "REVIEWING": {"NEEDS_CHANGES", "AWAITING_APPROVAL", "BLOCKED", "FAILED", "CANCELLED"},
     "NEEDS_CHANGES": {"RUNNING", "READY", "BLOCKED", "FAILED", "CANCELLED"},
     "AWAITING_APPROVAL": {"READY", "NEEDS_CHANGES", "COMPLETED", "BLOCKED", "FAILED", "CANCELLED"},
-    "FAILED": {"BLOCKED"},  # only by restoring a checkpoint, which sends the work back through tests and review
+    "FAILED": {"BLOCKED"},  # only to restore a checkpoint or retry with fix instructions; the work goes back through tests and review
     "BLOCKED": {"READY", "AWAITING_APPROVAL", "CANCELLED", "FAILED"},
-    "COMPLETED": set(), "FAILED": set(), "CANCELLED": set(),
+    "COMPLETED": set(), "CANCELLED": set(),
 }
 
 
@@ -752,6 +752,28 @@ class Supervisor:
         if chosen:
             return chosen["provider"], chosen.get("model", "")
         return ("claude" if role == "plan" else task.assigned_agent if role == "implement" else task.reviewer), ""
+
+    def retry_with_instructions(self, task_id, instructions, author="assistant"):
+        """Run a failed or paused task again with diagnosis/fix instructions for the AI team, from where it stopped."""
+        instructions = redact(" ".join(str(instructions).split()))[:4000]
+        if len(instructions) < 10:
+            raise ValueError("Explain what went wrong and what to change")
+        with self._lock, self.db.Session.begin() as session:
+            task = self._get(session, task_id)
+            if task.state not in {"FAILED", "BLOCKED"}:
+                raise ValueError("Only failed or paused tasks can be retried")
+            note = (f"FIX INSTRUCTIONS from the {author} after reading this task's failure logs. Follow them to finish the job; they cannot "
+                    f"change the task's scope, allowed files or permissions:\n{instructions}")
+            # Instructions written by a model (which read logs and files) never run with Full access.
+            origin = task.results.get("origin", "user") if author == "user" else "support"
+            task.results = {**task.results, "handoff_note": note, "error": None, "queued": False, "blocked_reason": "retry_requested",
+                            "progress_fingerprint": None, "origin": origin}
+            task.retry_count, task.pause_requested = 0, True
+            self._event(session, task_id, "retry", f"Retry requested by the {author} with fix instructions", {"instructions": instructions[:500]})
+            if task.state == "FAILED":
+                self._state(session, task, "BLOCKED", "Retrying with fix instructions")
+        self.resume(task_id)
+        return self.start(task_id)
 
     # ---- checkpoints and undo --------------------------------------------------------------------
     def checkpoints(self, task_id):

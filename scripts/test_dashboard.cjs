@@ -179,11 +179,16 @@ const path = require('node:path');
     assert.ok(await page.getByText(/own OpenAI API key/).count(), 'Image generation needs an explicit connection');
     await page.locator('#heading-actions').getByRole('button', {name: '+ New business job'}).click();
     await page.locator('dialog input').first().fill('Bakery website for Ama');
+    await page.locator('dialog select').first().selectOption('service_site');
     await page.locator('dialog textarea').first().fill('A one-page website for the Ama bakery in Nairobi with opening hours and a cake menu.');
     await page.locator('dialog').getByRole('button', {name: 'Create job', exact: true}).click();
     await page.getByText('What needs attention', {exact: true}).waitFor({timeout: 60000});
     await page.getByText('Where they are', {exact: true}).waitFor();
-    assert.ok(await page.locator('.report-head .badge', {hasText: 'WAITING FOR YOU'}).count(), 'A new job waits for plan approval');
+    assert.ok(await page.locator('.report-head .badge', {hasText: 'SCOPE NEEDS YOUR APPROVAL'}).count(), 'A client website job waits for scope approval');
+    await page.locator('.panel-header h2', {hasText: 'Scope — needs your approval'}).waitFor();
+    for (const title of ['Money', 'Customer results']) await page.locator('.panel-header h2', {hasText: title}).first().waitFor();
+    await page.getByRole('button', {name: 'Approve scope and start'}).click();
+    await page.getByText(/before approving the scope/).first().waitFor();  // services, areas and form address are required
     assert.ok(await page.getByText(/does not mean anything was sold/).count());
     await shot('business-job');
     const narrow = await browser.newContext({viewport: {width: 390, height: 860}}); await narrow.addCookies(await context.cookies());

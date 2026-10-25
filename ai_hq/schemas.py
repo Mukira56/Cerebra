@@ -130,14 +130,15 @@ class RoutingUpdate(StrictModel):
     model: str = Field(default="", max_length=100)
 
 class SupportSettings(StrictModel):
-    act_automatically: bool
+    act_automatically: bool | None = None
+    allow_approvals: bool | None = None
 
 class ActionDecision(StrictModel):
     run: bool
 
 class BusinessJobCreate(StrictModel):
     title: str = Field(min_length=3, max_length=120)
-    kind: str = Field(pattern="^(website|listing|svg|document)$")
+    kind: str = Field(pattern="^(website|service_site|listing|svg|document)$")
     brief: str = Field(min_length=20, max_length=20000)
     client: str = Field(default="", max_length=120)
     requirements: list[str] = Field(default_factory=list, max_length=30)
@@ -145,7 +146,9 @@ class BusinessJobCreate(StrictModel):
     no_ai_requested: bool = False
 
 class BusinessSettingsUpdate(StrictModel):
-    output_root: str = Field(min_length=3, max_length=1024)
+    output_root: str | None = Field(default=None, min_length=3, max_length=1024)
+    hourly_rate: float | None = None
+    currency: str | None = Field(default=None, max_length=3)
 
 class BusinessExport(StrictModel):
     zip: bool = False

@@ -23,7 +23,8 @@ class _Html(HTMLParser):
     def __init__(self):
         super().__init__()
         self.tags, self.title, self.meta, self.stylesheets = set(), "", [], []
-        self._in_title = False
+        self.links, self.images, self.forms = [], [], []
+        self._in_title = self._in_form = False
 
     def handle_starttag(self, tag, attrs):
         self.tags.add(tag)
@@ -32,9 +33,17 @@ class _Html(HTMLParser):
         if tag == "meta": self.meta.append(values)
         if tag == "link" and "stylesheet" in (values.get("rel") or "").split():
             self.stylesheets.append(values.get("href") or "")
+        if tag == "a" and values.get("href") is not None: self.links.append(values.get("href") or "")
+        if tag == "img": self.images.append(values)
+        if tag == "form": self.forms.append({"attrs": values, "fields": [], "submit": False}); self._in_form = True
+        if self._in_form and tag in {"input", "select", "textarea", "button"}:
+            kind = (values.get("type") or ("submit" if tag == "button" else "text")).lower()
+            if kind == "submit": self.forms[-1]["submit"] = True
+            elif values.get("name"): self.forms[-1]["fields"].append({"name": values["name"].lower(), "type": kind, "required": "required" in values})
 
     def handle_endtag(self, tag):
         self._in_title = False
+        if tag == "form": self._in_form = False
 
     def handle_data(self, data):
         if self._in_title:
@@ -97,6 +106,59 @@ def check_listing(path, problems, rules):
         problems.append(f"{path.name}: a tag is longer than {rules.get('tag_length_max', 20)} characters")
 
 
+FIELD_GROUPS = {"name": ("name",), "phone or email": ("phone", "tel", "email"), "service": ("service",), "address or ZIP code": ("zip", "postal", "address", "area")}
+
+
+def check_site(root, brief, problems):
+    """A small business website: pages link to each other, images are described, the quote form really posts."""
+    pages = [name for name in brief.get("required_files", []) if name.lower().endswith((".html", ".htm")) and (root / name).is_file()]
+    site = brief.get("site", {})
+    for name in pages:
+        path = root / name
+        parser = _Html(); parser.feed(path.read_text(encoding="utf-8", errors="replace"))
+        for href in parser.links:
+            target = href.split("#")[0].split("?")[0].strip()
+            if not target or href.startswith(("#", "tel:", "mailto:")):
+                continue
+            if target.startswith("http://"):
+                problems.append(f"{name}: link {href} is not secure (use https://)")
+            elif target.startswith("https://"):
+                continue
+            elif ":" in target or target.startswith(("/", "\\")):
+                problems.append(f"{name}: link {href} must be a page inside the website")
+            elif not (path.parent / target).resolve().is_file() or root not in (path.parent / target).resolve().parents:
+                problems.append(f"{name}: broken link to {href}")
+        for image in parser.images:
+            if "alt" not in image:
+                problems.append(f"{name}: an image ({image.get('src', '?')}) has no alt text for screen readers")
+        quote = site.get("quote_page", "quote.html")
+        if name != quote and pages and quote in pages and not any(link.split("#")[0] == quote for link in parser.links):
+            problems.append(f"{name}: has no link to the quote request page ({quote})")
+        if name == quote:
+            forms = [form for form in parser.forms if (form["attrs"].get("method") or "get").lower() == "post"]
+            if not forms:
+                problems.append(f"{name}: needs a quote form that sends with method=\"post\"")
+                continue
+            form = forms[0]
+            action = (form["attrs"].get("action") or "").strip()
+            endpoint = (site.get("form_endpoint") or "").strip()
+            if endpoint and action != endpoint:
+                problems.append(f"{name}: the form must send to the agreed address {endpoint} (it sends to {action or 'nowhere'})")
+            elif not action.startswith("https://") or re.search(r"your[-_ ]?form|example\.|placeholder", action, re.I):
+                problems.append(f"{name}: the form has no real https:// delivery address, so enquiries would be lost")
+            names = [field["name"] for field in form["fields"]]
+            for label, keys in FIELD_GROUPS.items():
+                if not any(any(key in field for key in keys) for field in names):
+                    problems.append(f"{name}: the quote form needs a {label} field")
+            if not any(field["required"] and any(key in field["name"] for key in ("phone", "tel", "email")) for field in form["fields"]):
+                problems.append(f"{name}: a phone or email field must be required, so you can reply")
+            if not form["submit"]:
+                problems.append(f"{name}: the quote form needs a submit button")
+    text = " ".join((root / name).read_text(encoding="utf-8", errors="replace").lower() for name in pages)
+    if site.get("phone") and re.sub(r"\D", "", site["phone"]) not in re.sub(r"\D", "", text):
+        problems.append(f"The website never shows the business phone number {site['phone']}")
+
+
 def main(root="."):
     root = Path(root).resolve()
     problems, checked = [], []
@@ -132,6 +194,8 @@ def main(root="."):
     for phrase in brief.get("must_mention", []):
         if phrase.lower() not in text:
             problems.append(f"The deliverables never mention “{phrase}”, which the brief requires")
+    if brief.get("site"):
+        check_site(root, brief, problems)
     for line in problems:
         print("FAIL", line)
     print(f"{len(checked)} file(s) checked, {len(problems)} problem(s)")

@@ -8,7 +8,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Uninstall Cerebra")]
-[assembly: AssemblyVersion("0.13.0.0")]
+[assembly: AssemblyVersion("0.14.0.0")]
 
 internal static class Uninstall {
     [STAThread] private static int Main(string[] args) {

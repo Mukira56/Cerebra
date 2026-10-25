@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Cerebra Setup")]
-[assembly: AssemblyVersion("0.13.0.0")]
+[assembly: AssemblyVersion("0.14.0.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
@@ -17,6 +17,24 @@ internal sealed class InstallOptions {
     internal bool Quiet, Desktop=true, Shortcuts=true, TestRegistration;
     internal string Registration { get { return Shared.RegistryPath + (TestRegistration ? ".InstallerTest" : ""); } }
 }
+internal static class Prerequisites {
+    // Git for Windows' standard locations, plus anything on PATH (a fresh install isn't on this process's PATH yet).
+    internal static string FindGit() {
+        var candidates=new List<string>();
+        foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) if(folder.Trim().Length>0) candidates.Add(Path.Combine(folder.Trim(),"git.exe"));
+        foreach(var root in new[]{Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),Environment.GetEnvironmentVariable("ProgramW6432")??"",Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs")})
+            if(root.Length>0) candidates.Add(Path.Combine(root,"Git","cmd","git.exe"));
+        foreach(var candidate in candidates) { try { if(File.Exists(candidate)) return candidate; } catch(ArgumentException) {} }
+        return null;
+    }
+    internal static string FindWinget() {
+        string apps=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Microsoft","WindowsApps","winget.exe");
+        if(File.Exists(apps)) return apps;
+        foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) { try { string path=Path.Combine(folder.Trim(),"winget.exe"); if(folder.Trim().Length>0 && File.Exists(path)) return path; } catch(ArgumentException) {} }
+        return null;
+    }
+}
+
 internal static class Setup {
     [STAThread] private static int Main(string[] args) {
         Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
@@ -32,7 +50,10 @@ internal static class Setup {
                 else if(args[i]=="--test-registration") options.TestRegistration=true;
                 else throw new ArgumentException("Unknown setup argument: " + args[i]);
             }
-            if(options.Quiet) { Install(options,delegate(int value){}); Console.WriteLine("Cerebra installed: " + options.Target); }
+            if(options.Quiet) {
+                Install(options,delegate(int value){}); Console.WriteLine("Cerebra installed: " + options.Target);
+                if(Prerequisites.FindGit()==null) Console.WriteLine("Note: Git is not installed. Cerebra needs it; install it from Cerebra's Required tools page or git-scm.com.");
+            }
             else Application.Run(new SetupForm(options));
             return 0;
         } catch(Exception error) {
@@ -120,16 +141,42 @@ internal sealed class SetupForm:Form {
         Controls.Add(new Label{Text="Version "+Shared.Version+"  |  Windows 10/11 x64  |  Installs for your account",Location=new Point(30,76),AutoSize=true,ForeColor=Color.DimGray});
         Controls.Add(new Label{Text="Program location",Location=new Point(30,121),AutoSize=true});target.SetBounds(30,146,555,29);target.Text=options.Target;Controls.Add(target);
         Controls.Add(new Label{Text="Project data and history (kept during uninstall)",Location=new Point(30,192),AutoSize=true});data.SetBounds(30,217,555,29);data.Text=options.Data;Controls.Add(data);
-        Controls.Add(new Label{Text="Existing data stays in its current folder. No projects or credentials are bundled.\nGit and the coding CLIs are separate prerequisites; Python is included.",Location=new Point(30,265),Size=new Size(555,47),ForeColor=Color.DimGray});
+        Controls.Add(new Label{Text="Existing data stays in its current folder. Python is included.\nCerebra needs Git: Setup checks for it and can install it for you first.",Location=new Point(30,265),Size=new Size(555,47),ForeColor=Color.DimGray});
         desktop.Text="Create a desktop shortcut";desktop.Checked=true;desktop.SetBounds(30,323,330,26);Controls.Add(desktop);
         launch.Text="Open Cerebra after installation";launch.Checked=!File.Exists(Path.Combine(options.Data,"server.json"));launch.SetBounds(30,350,330,26);Controls.Add(launch);
         state.SetBounds(30,389,555,24);state.Text="Close a running Cerebra or AI HQ before launching the installed version.";Controls.Add(state);
         progress.SetBounds(30,421,390,23);Controls.Add(progress);install.SetBounds(450,416,135,34);install.Text="Install";install.Click+=Install;Controls.Add(install);
         FormClosing+=delegate(object sender,FormClosingEventArgs args) {if(!install.Enabled)args.Cancel=true;};
     }
+    private void Unlock() { install.Enabled=true;target.Enabled=true;data.Enabled=true;desktop.Enabled=true;launch.Enabled=true; }
+    // Git first: Cerebra keeps every task in Git, so offer to install it (with Windows' own installer) before installing Cerebra.
+    private async Task<bool> EnsureGit() {
+        if(Prerequisites.FindGit()!=null) return true;
+        var answer=MessageBox.Show("Cerebra needs Git, and it isn't installed on this computer yet.\n\n"+
+            "Git is free. It keeps every version of your projects safe, and Cerebra uses it for every task so your work can always be checked and undone.\n\n"+
+            "Install Git now? Windows will ask for your permission.\n\n"+
+            "Yes: install Git, then Cerebra.\nNo: install Cerebra only (it will remind you to add Git).\nCancel: stop for now.",
+            "Cerebra needs Git",MessageBoxButtons.YesNoCancel,MessageBoxIcon.Information);
+        if(answer==DialogResult.No) return true;
+        if(answer!=DialogResult.Yes) return false;
+        string winget=Prerequisites.FindWinget();
+        if(winget==null) {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://git-scm.com/download/win"){UseShellExecute=true});
+            MessageBox.Show("Windows' installer tool (winget) isn't available, so the official Git download page opened in your browser.\n\nInstall Git from there (the default options are fine), then press Install here again.","Install Git",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            return false;
+        }
+        state.Text="Installing Git… a window shows its progress. Approve Windows' permission request.";
+        int code=await Task.Run(()=>{
+            var info=new System.Diagnostics.ProcessStartInfo(winget,"install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements"){UseShellExecute=true};
+            using(var process=System.Diagnostics.Process.Start(info)) { process.WaitForExit(); return process.ExitCode; }
+        });
+        if(Prerequisites.FindGit()!=null) { state.Text="Git is installed. Installing Cerebra…"; return true; }
+        return MessageBox.Show("Git didn't finish installing (code "+code+").\n\nYou can install Cerebra now and add Git later from its Required tools page, or press Cancel and try again.","Git was not installed",MessageBoxButtons.OKCancel,MessageBoxIcon.Warning)==DialogResult.OK;
+    }
     private async void Install(object sender,EventArgs args) {
         install.Enabled=false;target.Enabled=false;data.Enabled=false;desktop.Enabled=false;launch.Enabled=false;
         options.Target=target.Text;options.Data=data.Text;options.Desktop=desktop.Checked;
+        if(!await EnsureGit()) { state.Text="Setup paused. Press Install when you're ready."; Unlock(); return; }
         try {
             await Task.Run(()=>Setup.Install(options,p=>BeginInvoke((Action)(()=>{progress.Value=p;state.Text="Installing bundled application files...";}))));
             state.Text="Installed. Your project data was preserved.";install.Text="Finish";install.Enabled=true;install.Click-=Install;

@@ -600,6 +600,40 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             project = find_project(action["project"])
             task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None, origin="support")
             return f"Created task {task.id[:8]} in {project.name}. Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
+        if kind == "retry_task":
+            task = find_task(action["task"])
+            result = supervisor.retry_with_instructions(task.id, action["instructions"])
+            return f"Task {task.id[:8]} is retrying with the fix instructions" + (" (it waits for your OK to run)." if result.state == "AWAITING_APPROVAL" else ".")
+        if kind == "answer_approval":
+            from . import support as support_module
+            with db.Session() as session: allowed = support_module.load(session)["allow_approvals"]
+            if not allowed: raise ValueError("Your settings don't let the Assistant answer approvals. Answer it yourself, or allow it in the Assistant's settings.")
+            task = find_task(action["task"])
+            with db.Session() as session:
+                approval = session.scalars(select(Approval).where(Approval.task_id == task.id, Approval.kind == action["kind"], Approval.status.in_(["pending", "PENDING"]))).first()
+                approval_id = approval.id if approval else None
+            if approval_id is None: raise ValueError(f"Task {task.id[:8]} has no pending {action['kind'].replace('_', ' ')} step")
+            with db.Session.begin() as session:
+                session.add(Event(task_id=task.id, kind="approval", message=f"The Assistant {'approved' if action['approve'] else 'rejected'} the {action['kind'].replace('_', ' ')} step (allowed in settings)"))
+            result = supervisor.resolve_approval(approval_id, action["approve"])
+            if action["kind"] == "live_execution" and action["approve"]: supervisor.start(task.id)
+            return f"{'Approved' if action['approve'] else 'Rejected'}: task {task.id[:8]} is now {result.state.replace('_', ' ').lower()}."
+        if kind == "restore_checkpoint":
+            task = find_task(action["task"])
+            supervisor.restore_checkpoint(task.id, action["commit"])
+            return f"Task {task.id[:8]} restored to {action['commit'][:8]}. Resume and start it to test and review that version."
+        if kind == "run_readiness_check":
+            readiness_start()
+            return "Readiness check started (Settings › Readiness check shows each stage)."
+        if kind == "set_test_commands":
+            project = find_project(action["project"])
+            update_project(project.id, {"test_commands": action["test_commands"]})
+            return f"Tests of {project.name} set to {' | '.join(' '.join(command) for command in action['test_commands'])}."
+        if kind == "set_default_models":
+            from .profiles import set_default_roles
+            with db.Session.begin() as session:
+                roles = set_default_roles(session, {role: value for role, value in action.items() if role != "action"})
+            return "Default AI team: " + ", ".join(f"{role} {value}" for role, value in roles.items()) + "."
         if kind == "create_business_job":
             job_id = create_business_job(BusinessJobCreate(title=action["title"], kind=action["type"], brief=action["brief"], client=action["client"], requirements=action["requirements"]), origin="support")["id"]
             return f"Started the Business Studio job {action['title']} (id {job_id[:8]}). Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
@@ -628,8 +662,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def support_update(payload: SupportSettings):
         from . import support
         with db.Session.begin() as session:
-            session.add(Event(kind="settings_changed", message="Support chat may now act on its own" if payload.act_automatically else "Support chat now asks before acting"))
-            return support.save(session, payload.act_automatically)
+            if payload.act_automatically is not None:
+                session.add(Event(kind="settings_changed", message="The Assistant may now act on its own" if payload.act_automatically else "The Assistant now asks before acting"))
+            if payload.allow_approvals is not None:
+                session.add(Event(kind="policy", message="The Assistant may now answer approvals, including merges" if payload.allow_approvals else "Only you answer approvals"))
+            return support.save(session, payload.act_automatically, payload.allow_approvals)
 
     @app.delete("/api/chats/{conversation_id}")
     def chat_delete(conversation_id: str):
@@ -774,6 +811,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         "google_permissions": "https://myaccount.google.com/connections",
         "ntfy_app": "https://ntfy.sh/", "ntfy_docs": "https://docs.ntfy.sh/subscribe/phone/", "telegram_botfather": "https://t.me/BotFather",
         "fiverr_sell": "https://www.fiverr.com/start_selling",
+        "formspree": "https://formspree.io/",
         "fiverr_ai": "https://help.fiverr.com/hc/en-us/articles/37333301560593-Using-AI-on-Fiverr-Guidelines-for-freelancers-and-clients",
     }
 
@@ -814,7 +852,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.put("/api/business/settings")
     def business_settings(payload: BusinessSettingsUpdate):
-        with db.Session.begin() as session: return business.save(session, payload.output_root)
+        with db.Session.begin() as session: return business.save(session, payload.output_root, payload.hourly_rate, payload.currency)
 
     @app.post("/api/business/jobs", status_code=201)
     def business_create(payload: BusinessJobCreate): return create_business_job(payload)
@@ -832,6 +870,85 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     PREVIEW_TYPES = {".html": "text/html", ".htm": "text/html", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
                      ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".md": "text/plain", ".txt": "text/plain", ".json": "text/plain"}
+
+    # ---- client delivery workspace: scope, money, customer results, change requests, form check ----
+    def commit_folder(path, message):
+        runner, hooks = ProcessRunner(), str(settings.data_dir / "disabled-hooks")
+        identity = ["-c", "user.name=Cerebra", "-c", "user.email=local@ai-hq.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + hooks]
+        for args in (["git", *identity, "add", "-A"], ["git", *identity, "commit", "-m", message]):
+            result = runner.run(args, path, timeout=60)
+            if result.exit_code != 0 and "nothing to commit" not in (result.stdout + result.stderr):
+                raise ValueError("Could not save the job folder: " + redact(result.stderr)[:300])
+
+    @app.get("/api/business/jobs/{job_id}/delivery")
+    def business_delivery(job_id: str):
+        with db.Session() as session: return business_or_404(business.delivery, session, job_id)
+
+    @app.put("/api/business/jobs/{job_id}/scope")
+    def business_scope(job_id: str, payload: dict):
+        with db.Session.begin() as session: return business_or_404(business.update_scope, session, job_id, payload)
+
+    @app.post("/api/business/jobs/{job_id}/scope/approve")
+    def business_scope_approve(job_id: str):
+        task_id = business_or_404(business.approve_scope, db.Session, supervisor, commit_folder, job_id)
+        with db.Session.begin() as session:
+            session.add(Event(task_id=task_id, kind="business", message="Scope approved; the AI team can now plan the work"))
+        return business_job(job_id)
+
+    @app.post("/api/business/jobs/{job_id}/ledger", status_code=201)
+    def business_ledger(job_id: str, payload: dict):
+        with db.Session.begin() as session: return business_or_404(business.add_ledger, session, job_id, payload)
+
+    @app.post("/api/business/jobs/{job_id}/enquiries", status_code=201)
+    def business_enquiry(job_id: str, payload: dict):
+        with db.Session.begin() as session: return business_or_404(business.add_enquiry, session, job_id, payload)
+
+    @app.patch("/api/business/jobs/{job_id}/enquiries/{entry_id}")
+    def business_enquiry_update(job_id: str, entry_id: str, payload: dict):
+        with db.Session.begin() as session: return business_or_404(business.update_enquiry, session, job_id, entry_id, payload)
+
+    @app.delete("/api/business/jobs/{job_id}/ledger/{entry_id}")
+    def business_ledger_delete(job_id: str, entry_id: str):
+        with db.Session.begin() as session: business_or_404(business.remove_entry, session, job_id, "ledger", entry_id)
+        return {"deleted": entry_id}
+
+    @app.delete("/api/business/jobs/{job_id}/enquiries/{entry_id}")
+    def business_enquiry_delete(job_id: str, entry_id: str):
+        with db.Session.begin() as session: business_or_404(business.remove_entry, session, job_id, "enquiries", entry_id)
+        return {"deleted": entry_id}
+
+    @app.post("/api/business/jobs/{job_id}/changes", status_code=201)
+    def business_change(job_id: str, payload: dict):
+        return business_or_404(business.request_change, db.Session, supervisor, job_id, payload.get("request", ""))
+
+    @app.post("/api/business/jobs/{job_id}/test-enquiry")
+    def business_test_enquiry(job_id: str, payload: dict):
+        """Send ONE clearly labelled test enquiry through the job's real form address, on the user's click."""
+        if payload.get("confirmed") is not True: raise ValueError("Confirm that a test enquiry may be sent to the client's form address")
+        with db.Session() as session:
+            delivery_info = business_or_404(business.delivery, session, job_id)
+        endpoint = delivery_info["scope"].get("form_endpoint")
+        if not endpoint or not delivery_info["scope_approved_at"]: raise ValueError("Approve a scope with a form delivery address first")
+        fields = {"name": "Cerebra test enquiry", "email": "test@example.com", "phone": "0000000000", "service": (delivery_info["scope"].get("services") or ["Test"])[0],
+                  "zip": "00000", "message": "TEST from Cerebra: checking that quote requests arrive. Please ignore."}
+        import httpx
+        try:
+            response = httpx.post(endpoint, data=fields, headers={"Accept": "application/json"}, timeout=30, follow_redirects=False)
+            ok, detail = response.status_code < 400, f"HTTP {response.status_code}"
+        except httpx.HTTPError:
+            ok, detail = False, "could not reach the form address"
+        entry = {"at": now(), "sent": ok, "detail": detail, "received": None}
+        with db.Session.begin() as session: business.record_check(session, job_id, entry)
+        return {**entry, "message": "Test enquiry sent. Check the client's inbox, then mark it received." if ok else f"The form address did not accept the test ({detail})."}
+
+    @app.post("/api/business/jobs/{job_id}/test-enquiry/received")
+    def business_test_received(job_id: str, payload: dict):
+        with db.Session.begin() as session:
+            job, row = business_or_404(business.record, session, job_id)
+            checks = [dict(item) for item in (row.delivery_checks or [])]
+            if not checks or not checks[-1].get("sent"): raise ValueError("Send a test enquiry first")
+            checks[-1]["received"] = bool(payload.get("received")); row.delivery_checks = checks
+            return checks[-1]
 
     @app.get("/api/business/jobs/{job_id}/preview/{path:path}")
     def business_preview(job_id: str, path: str):

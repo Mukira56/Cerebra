@@ -153,6 +153,18 @@ class BusinessJob(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class BusinessRecord(Base):
+    """A client job's delivery records: agreed scope, money in and out, customer results and change requests.
+    Every figure is entered by the user (or by a confirmed check); nothing is estimated."""
+    __tablename__ = "business_records"
+    job_id: Mapped[str] = mapped_column(ForeignKey("business_jobs.id"), primary_key=True)
+    scope: Mapped[dict] = mapped_column(JSON, default=dict)
+    scope_approved_at: Mapped[str] = mapped_column(String, default="")
+    ledger: Mapped[list] = mapped_column(JSON, default=list)
+    enquiries: Mapped[list] = mapped_column(JSON, default=list)
+    revisions: Mapped[list] = mapped_column(JSON, default=list)
+    delivery_checks: Mapped[list] = mapped_column(JSON, default=list)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

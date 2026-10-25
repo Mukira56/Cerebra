@@ -240,6 +240,7 @@
       if (ACTIVE.includes(task.state) && !task.pause_requested) actions.append(button("Pause", () => taskAction(taskId, "pause")));
       if (task.pause_requested || task.state === "BLOCKED") actions.append(button("Resume", () => taskAction(taskId, "resume")));
       if (!["CANCELLED", "COMPLETED", "FAILED"].includes(task.state)) actions.append(button("Cancel", () => taskAction(taskId, "cancel"), "button danger"));
+      if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button primary"));
       actions.append(button("Plain report", () => { closeDialog(); location.hash = `report/${taskId}`; }, "button ghost"));
       root.append(actions);
       const tabs = el("div", "tabs"), pane = el("div");
@@ -411,6 +412,12 @@
     }
     return node;
   }
+  async function askAssistantToFix(task) {
+    const conversation = await act(null, () => mutate("/api/chats", {profile: chatDefault(), project_id: task.project_id || null, title: `Fix: ${task.description.slice(0, 50)}`}));
+    if (!conversation) return;
+    const sent = await act("The Assistant is reading the logs…", () => mutate(`/api/chats/${encodeURIComponent(conversation.id)}/messages`, {text: `Task ${task.id.slice(0, 8)} (“${task.description.slice(0, 120)}”) is ${task.state.toLowerCase()}. Read its failure logs, find the root cause from the evidence, and fix it: give the coder precise instructions with retry_task, or tell me what I need to do if it needs me (for example signing in).`}));
+    if (sent) { closeDialog(); chatId = conversation.id; cache.chats = null; location.hash = "chat"; render(); }
+  }
   async function newChat(projectId = "", profile = chatDefault()) {
     const conversation = await act(null, () => mutate("/api/chats", {profile, project_id: projectId || null}));
     if (conversation) { chatId = conversation.id; cache.chats = null; if (page === "chat") render(); else location.hash = "chat"; }
@@ -432,7 +439,16 @@
       const previous = main.querySelector(".messages"), wasAtBottom = !previous || previous.scrollHeight - previous.scrollTop - previous.clientHeight < 40, draft = main.querySelector("textarea")?.value || "";
       const auto = check("Let support act for me"); auto.control.checked = state.settings?.act_automatically === true; auto.wrap.title = "When ticked, projects and tasks that support proposes are created and started right away. Approval steps still ask you unless Away mode is on.";
       auto.control.addEventListener("change", async () => { if (!await act(auto.control.checked ? "Support will act on its own." : "Support will ask before acting.", () => mutate("/api/support", {act_automatically: auto.control.checked}, "PUT"))) auto.control.checked = !auto.control.checked; });
-      append(header, el("strong", "", conversation.title), badge(profileLabel(conversation.profile), "blue"), conversation.project_id ? badge(projectFor(conversation.project_id)?.name || "project", "purple") : badge("all projects", "muted"), badge("read-only", "green"), el("span", "", ""), auto.wrap, button("→ Make it a task", () => taskForm(conversation.project_id || "", [...state.messages].reverse().find(message => message.role === "user")?.content || ""), "button small primary"), button("Delete", async () => { if (await act("Chat deleted.", () => api(`/api/chats/${encodeURIComponent(chatId)}`, {method: "DELETE"}))) { chatId = ""; loadList(); } }, "button small ghost"));
+      const approvals = check("May answer approvals"); approvals.control.checked = state.settings?.allow_approvals === true;
+      approvals.wrap.title = "Lets the Assistant approve or reject plans, runs, review findings and merges for you. Full access, accounts, keys, paid and publishing actions always stay with you.";
+      approvals.control.addEventListener("change", async () => {
+        if (approvals.control.checked) { approvals.control.checked = false; showDialog("Let the Assistant answer approvals?", append(el("div"),
+          el("p", "", "The Assistant will be able to approve plans, agent runs, review findings and merges into your projects, the same steps you approve now. It acts from what it reads in your projects and logs, so a mistake or a hidden instruction in a file could approve the wrong thing."),
+          el("p", "", "It still cannot turn on Full access, switch agents on or off, change accounts or keys, spend money or publish anything."),
+          actionsRow(button("Cancel", closeDialog, "button ghost"), button("Allow", async () => { if (await act("The Assistant may now answer approvals.", () => mutate("/api/support", {allow_approvals: true}, "PUT"))) { approvals.control.checked = true; } closeDialog(); }, "button danger")))); return; }
+        if (!await act("Only you answer approvals now.", () => mutate("/api/support", {allow_approvals: false}, "PUT"))) approvals.control.checked = true;
+      });
+      append(header, el("strong", "", conversation.title), badge(profileLabel(conversation.profile), "blue"), conversation.project_id ? badge(projectFor(conversation.project_id)?.name || "project", "purple") : badge("all projects", "muted"), badge("read-only", "green"), el("span", "", ""), auto.wrap, approvals.wrap, button("→ Make it a task", () => taskForm(conversation.project_id || "", [...state.messages].reverse().find(message => message.role === "user")?.content || ""), "button small primary"), button("Delete", async () => { if (await act("Chat deleted.", () => api(`/api/chats/${encodeURIComponent(chatId)}`, {method: "DELETE"}))) { chatId = ""; loadList(); } }, "button small ghost"));
       if (!agentsOn()) messages.append(hint("AI agents are switched off, so messages will fail. Turn them on in Settings › Agent permissions.", true));
       if (!state.messages.length) {
         const ideas = el("div", "prompt-chips"), named = projectFor(conversation.project_id)?.name || array(data.projects)[0]?.name || "my project";
@@ -602,8 +618,8 @@
   }
 
   // ---------- business studio ----------
-  const STAGE_STYLE = {intake: "muted", planning: "blue", creating: "blue", checking: "blue", waiting: "amber", ready: "green", completed: "green", failed: "red", cancelled: "muted"};
-  const KIND_HELP = {website: "Static website: index.html, styles.css, README.md", listing: "Listing copy: title, description and tags (listing.md)", svg: "Original vector design (design.svg) + README", document: "A written document (deliverable.md)"};
+  const STAGE_STYLE = {scope: "amber", intake: "muted", planning: "blue", creating: "blue", checking: "blue", waiting: "amber", ready: "green", completed: "green", failed: "red", cancelled: "muted"};
+  const KIND_HELP = {service_site: "Service business website with a working quote form (client delivery)", website: "Static website: index.html, styles.css, README.md", listing: "Listing copy: title, description and tags (listing.md)", svg: "Original vector design (design.svg) + README", document: "A written document (deliverable.md)"};
   function businessForm(prefill = {}) {
     const form = el("form"), title = input("e.g. Bakery website for Ama", prefill.title || ""), kind = select(Object.entries(KIND_HELP).map(([key, label]) => [key, label]), prefill.kind || "website");
     const client = input("Client name (optional)", prefill.client || ""), brief = textarea("Paste the client's brief or describe your product idea in full.", prefill.brief || ""), requirements = textarea("Optional. One requirement per line.");
@@ -629,8 +645,9 @@
       const rows = state.jobs.map(job => { const row = el("a", "row"); row.href = `#job/${job.id}`; row.dataset.jobId = job.id; append(row, append(el("div"), el("strong", "", job.title), el("div", "row-meta", `${job.kind_label}${job.client ? ` · ${job.client}` : ""} · ${relative(job.created_at)}`)), badge(job.stage_words, STAGE_STYLE[job.stage])); return row; });
       list.replaceChildren(panel("Jobs", rows.length ? append(el("div", "row-list"), rows) : body(empty("No business jobs yet", "Paste a client brief or describe a product, and Cerebra makes original, reviewed files for you.", button("+ New business job", () => businessForm(), "button primary"), "$")), null, rows.length));
       const folder = el("form"), root_ = input("", state.settings.output_root), save = submitButton("Save");
-      append(folder, field("Save jobs in", root_, "Each job gets its own folder here. Existing files are never overwritten."), actionsRow(save));
-      wireForm(folder, save, async () => { await mutate("/api/business/settings", {output_root: root_.value.trim()}, "PUT"); toast("Output folder saved."); });
+      const rate = input("25", state.settings.hourly_rate ?? 25, "number"), currency = input("USD", state.settings.currency || "USD"); rate.min = 0; rate.step = "0.5";
+      append(folder, field("Save jobs in", root_, "Each job gets its own folder here. Existing files are never overwritten."), append(el("div", "form-grid"), field("Your hourly rate", rate, "Used to value your time in each job's profit."), field("Currency", currency, "3 letters, e.g. USD")), actionsRow(save));
+      wireForm(folder, save, async () => { await mutate("/api/business/settings", {output_root: root_.value.trim(), hourly_rate: Number(rate.value), currency: currency.value.trim().toUpperCase()}, "PUT"); toast("Business settings saved."); });
       const markets = append(el("div"), ...state.marketplaces.map(item => append(el("div", "action-card"), append(el("div", "row-meta"), badge(item.state, item.state === "manual" ? "blue" : "muted"), el("strong", "", item.name)), el("p", "", item.detail))));
       side.replaceChildren(panel("Where results are saved", body(folder)), panel("Marketplaces", body(append(el("div"), markets, link("Set up business connections →", "connections")))), panel("Images", body(hint(state.capabilities.image_generation.detail)))) ;
     })();
@@ -654,8 +671,87 @@
     job.previews.forEach((item, index) => { const tab = button(item.path, () => show(item, tab), "chip"); tabs.append(tab); if (index === 0) setTimeout(() => show(item, tab), 0); });
     return append(el("section", "report-section"), el("h2", "", "Preview"), el("p", "row-meta", "Shown safely inside Cerebra: scripts and outside links in generated files are blocked."), tabs, viewer);
   }
+  // ---------- client delivery workspace ----------
+  function deliveryWorkspace(id) {
+    const holder = el("div", "delivery"), token = renderToken;
+    const jobPath = suffix => `/api/business/jobs/${encodeURIComponent(id)}${suffix}`;
+    const money = value => `${Number(value || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    async function load() {
+      let info; try { info = await api(jobPath("/delivery")); } catch (issue) { holder.replaceChildren(hint(issue.message, true)); return; }
+      if (token !== renderToken) return;
+      const currency = info.scope.currency || data?.business_currency || "";
+      const parts = [];
+      // Scope: agreed before any AI work.
+      if (info.scoped) {
+        const scope = info.scope, approved = !!info.scope_approved_at, form = el("form");
+        if (approved) {
+          parts.push(panel("Agreed scope", body(append(el("div", "row-meta"), badge("approved", "green"), el("span", "", `on ${date(info.scope_approved_at)}`)),
+            kv([["Client", scope.client], ["Pages", scope.pages.join(", ")], ["Services", scope.services.join(", ")], ["Service areas", scope.service_areas.join(", ")], ["Features", scope.features.join(", ")],
+              ["Not included", scope.exclusions.join(", ")], ["Revisions included", scope.revisions_included], ["Deadline", scope.deadline || "—"], ["Price", `${currency} ${money(scope.price)}`], ["Form delivery address", scope.form_endpoint], ["Business phone", scope.phone || "—"]]))));
+        } else {
+          const lines = values => array(values).join("\n"), split = value => value.split("\n").map(item => item.trim()).filter(Boolean);
+          const controls = {client: input("Client or business name", scope.client), services: textarea("One per line, e.g. Deep cleaning", lines(scope.services)), service_areas: textarea("One per line, e.g. Austin, TX", lines(scope.service_areas)),
+            pages: textarea("", lines(scope.pages)), features: textarea("", lines(scope.features)), exclusions: textarea("", lines(scope.exclusions)), revisions_included: input("2", scope.revisions_included, "number"),
+            deadline: input("e.g. 2026-11-15", scope.deadline), price: input("750", scope.price || "", "number"), currency: input("USD", scope.currency), form_endpoint: input("https://formspree.io/f/…", scope.form_endpoint), phone: input("Business phone shown on the site", scope.phone)};
+          append(form, hint("Agree this with your client before any AI work starts. Cerebra checks the finished site against it: every service and area must appear and the form must send to this address."),
+            append(el("div", "form-grid"), field("Client", controls.client), field("Price", controls.price), field("Currency", controls.currency), field("Deadline", controls.deadline), field("Revisions included", controls.revisions_included), field("Business phone", controls.phone)),
+            field("Services", controls.services), field("Service areas", controls.service_areas), field("Pages", controls.pages), field("Features", controls.features), field("Not included", controls.exclusions),
+            field("Form delivery address", controls.form_endpoint, "Where quote requests are sent, e.g. a free Formspree form (formspree.io › New form › copy its https address). Without it enquiries would be lost."));
+          const save = submitButton("Save scope"), approve = button("Approve scope and start", async () => {
+            approve.disabled = true;
+            try { await mutate(jobPath("/scope"), payload(), "PUT"); if (await act("Scope approved. The AI team is planning.", () => mutate(jobPath("/scope/approve")))) { await refresh(true); render(); return; } } catch (issue) { toast(issue.message, true); }
+            approve.disabled = false;
+          }, "button primary");
+          const payload = () => ({client: controls.client.value, services: split(controls.services.value), service_areas: split(controls.service_areas.value), pages: split(controls.pages.value), features: split(controls.features.value),
+            exclusions: split(controls.exclusions.value), revisions_included: Number(controls.revisions_included.value || 0), deadline: controls.deadline.value, price: Number(controls.price.value || 0), currency: controls.currency.value.toUpperCase(), form_endpoint: controls.form_endpoint.value.trim(), phone: controls.phone.value});
+          form.append(actionsRow(save, approve));
+          wireForm(form, save, async () => { await mutate(jobPath("/scope"), payload(), "PUT"); toast("Scope saved."); });
+          parts.push(panel("Scope — needs your approval", body(form), button("Open Formspree ↗", () => openLink("formspree"), "button small ghost")));
+        }
+        // Form delivery check.
+        if (approved) {
+          const last = array(info.delivery_checks).slice(-1)[0], node = el("div");
+          append(node, el("p", "", "Send one clearly marked test enquiry through the real form address, then check that it reached the client's inbox."),
+            last ? append(el("div", "row-meta"), badge(last.sent ? (last.received === true ? "received" : last.received === false ? "not received" : "sent") : "failed", last.received === true ? "green" : last.sent ? "amber" : "red"), el("span", "", `${date(last.at)} · ${last.detail}`)) : null,
+            actionsRow(confirmButton("Send test enquiry", "Click again to send", async () => { await act(value => value.message, () => mutate(jobPath("/test-enquiry"), {confirmed: true})); load(); }, "button"),
+              last?.sent ? button("It arrived ✓", async () => { await act("Recorded: the enquiry arrived.", () => mutate(jobPath("/test-enquiry/received"), {received: true})); load(); }, "button small") : null,
+              last?.sent ? button("It didn't arrive", async () => { await act("Recorded: not received.", () => mutate(jobPath("/test-enquiry/received"), {received: false})); load(); }, "button small ghost") : null));
+          parts.push(panel("Does the form deliver?", body(node)));
+        }
+      }
+      // Money: collected, expenses, time.
+      const m = info.money, ledgerForm = el("form", "inline-form"), kind = select([["payment", "Payment received"], ["expense", "Expense"], ["time", "My work time (hours)"], ["support", "Support time (hours)"]]);
+      const amount = input("Amount or hours", "", "number"), note = input("Note (optional)"), when = input("", new Date().toISOString().slice(0, 10), "date"); amount.step = "0.01"; amount.min = 0;
+      const addLedger = submitButton("Add"); append(ledgerForm, kind, amount, when, note, addLedger);
+      wireForm(ledgerForm, addLedger, async () => { const hours = ["time", "support"].includes(kind.value); await mutate(jobPath("/ledger"), {kind: kind.value, [hours ? "hours" : "amount"]: Number(amount.value), date: when.value, note: note.value}); load(); });
+      const ledgerRows = m.entries.slice().reverse().map(item => [item.date, nice(item.kind), item.hours ? `${item.hours} h` : `${currency} ${money(item.amount)}`, item.note || "—", button("✕", async () => { await act(null, () => api(jobPath(`/ledger/${item.id}`), {method: "DELETE"})); load(); }, "button small ghost")]);
+      parts.push(panel("Money", body(append(el("div", "grid stats"), ...[["Collected", `${currency} ${money(m.collected)}`], ["Expenses", `${currency} ${money(m.expenses)}`], ["Your time", `${m.hours} h × ${money(m.hourly_rate)} = ${money(m.time_cost)}`], ["Profit before tax", `${currency} ${money(m.profit_before_tax)}`]]
+        .map(([label, value]) => append(el("div", "stat"), el("div", "stat-label", label), el("div", "stat-value small-value", value)))), hint(m.note), ledgerForm, ledgerRows.length ? table(["Date", "Type", "Amount", "Note", ""], ledgerRows) : el("p", "row-meta", "No entries yet."))));
+      // Customer results: enquiries → booked jobs.
+      const o = info.outcomes, enquiryForm = el("form", "inline-form"), source = input("Source, e.g. website form"), status = select([["new", "New"], ["quoted", "Quoted"], ["booked", "Booked"], ["lost", "Lost"]]);
+      const value = input("Booked value", "", "number"), confirmed = check("Confirmed by the client"), enquiryDate = input("", new Date().toISOString().slice(0, 10), "date"), addEnquiry = submitButton("Add enquiry");
+      append(enquiryForm, enquiryDate, source, status, value, confirmed.wrap, addEnquiry);
+      wireForm(enquiryForm, addEnquiry, async () => { await mutate(jobPath("/enquiries"), {date: enquiryDate.value, source: source.value || "website form", status: status.value, value: Number(value.value || 0), confirmed: confirmed.control.checked}); load(); });
+      const enquiryRows = o.entries.slice().reverse().map(item => { const change = select([["new", "New"], ["quoted", "Quoted"], ["booked", "Booked"], ["lost", "Lost"]], item.status); change.addEventListener("change", async () => { await act("Updated.", () => mutate(jobPath(`/enquiries/${item.id}`), {status: change.value}, "PATCH")); load(); });
+        return [item.date, item.source, change, item.value ? `${currency} ${money(item.value)}` : "—", item.confirmed ? badge("client confirmed", "green") : badge("your entry", "muted"), button("✕", async () => { await act(null, () => api(jobPath(`/enquiries/${item.id}`), {method: "DELETE"})); load(); }, "button small ghost")]; });
+      parts.push(panel("Customer results", body(append(el("div", "grid stats"), ...[["Enquiries", o.enquiries], ["Booked jobs", o.booked], ["Booked value", `${currency} ${money(o.booked_value)}`], ["Client-confirmed value", `${currency} ${money(o.confirmed_booked_value)}`]]
+        .map(([label, value]) => append(el("div", "stat"), el("div", "stat-label", label), el("div", "stat-value small-value", value)))), hint(o.note), enquiryForm, enquiryRows.length ? table(["Date", "Source", "Status", "Value", "Source of figure", ""], enquiryRows) : el("p", "row-meta", "No enquiries recorded yet."))));
+      // Change requests against the revisions included.
+      const changeForm = el("form"), request = textarea("What did the client ask to change?"), sendChange = submitButton("Create change task");
+      const used = info.revisions.length, included = info.revisions_included;
+      append(changeForm, request, actionsRow(sendChange));
+      wireForm(changeForm, sendChange, async () => { const result = await mutate(jobPath("/changes"), {request: request.value}); toast(result.extra ? "Change task created. This is beyond the included revisions: consider charging for it." : "Change task created."); load(); });
+      parts.push(panel(`Change requests (${used} of ${included} included)`, body(used > included ? hint(`${used - included} change(s) beyond the agreed revisions.`, true) : null,
+        info.revisions.length ? list(info.revisions.map(item => `${date(item.at)} · ${item.request.slice(0, 100)} · task ${item.task_id.slice(0, 8)} (${nice(item.state)})${item.extra ? " · extra" : ""}`)) : null, changeForm)));
+      holder.replaceChildren(...parts);
+    }
+    load();
+    return holder;
+  }
+
   function jobView() {
-    const root = el("div"), token = renderToken, id = param;
+    const root = el("div"), report = el("div"), token = renderToken, id = param;
+    root.append(report, deliveryWorkspace(id));
     async function load() {
       let job; try { job = await api(`/api/business/jobs/${encodeURIComponent(id)}`); } catch (issue) { root.replaceChildren(body(empty("Job not found", issue.message))); return; }
       if (token !== renderToken) return;
@@ -668,7 +764,7 @@
         ["ready", "completed"].includes(job.stage) ? run("Export", "export", {zip: false}) : null, ["ready", "completed"].includes(job.stage) ? run("Export ZIP", "export", {zip: true}) : null,
         job.task_id ? button("Technical details", () => taskDetail(job.task_id), "button ghost") : null,
         !["completed", "cancelled", "failed"].includes(job.stage) ? run("Cancel job", "cancel") : null);
-      root.replaceChildren(append(el("div", "report"),
+      report.replaceChildren(append(el("div", "report"),
         append(el("div", "report-head"), badge(job.stage_words, STAGE_STYLE[job.stage]), el("span", "row-meta", `${job.kind_label}${job.client ? ` for ${job.client}` : ""}`)), actions,
         section("What you asked for", el("div", "asked", job.asked)),
         section("What passed", job.passed.length ? list(job.passed) : el("p", "", "Nothing has passed yet.")),
@@ -677,7 +773,7 @@
         section("Where they are", kv([["Job folder", job.where], ["Exported package", job.export_folder || "not exported yet"], ["ZIP", job.zip || "—"]])),
         section("Next step", el("p", "", job.next_step)), previewSection(job), hint(job.note)));
       const operations = await api(`/api/business/jobs/${encodeURIComponent(id)}/operations`);
-      if (token === renderToken && page === "job" && operations.length) root.append(panel("External actions — recorded results", body(list(operations.map(item => `${nice(item.action)}: ${item.status}. ${item.result.message || "Check the provider dashboard before retrying an uncertain action."}${item.result.listing_id ? ` Listing ID: ${item.result.listing_id}` : ""}${item.result.product_id ? ` Product ID: ${item.result.product_id}` : ""}${item.result.image_id ? ` Image ID: ${item.result.image_id}` : ""}${item.result.path ? ` File: ${item.result.path}` : ""}`)))));
+      if (token === renderToken && page === "job" && operations.length) report.append(panel("External actions — recorded results", body(list(operations.map(item => `${nice(item.action)}: ${item.status}. ${item.result.message || "Check the provider dashboard before retrying an uncertain action."}${item.result.listing_id ? ` Listing ID: ${item.result.listing_id}` : ""}${item.result.product_id ? ` Product ID: ${item.result.product_id}` : ""}${item.result.image_id ? ` Image ID: ${item.result.image_id}` : ""}${item.result.path ? ` File: ${item.result.path}` : ""}`)))));
       if (!["completed", "cancelled", "failed"].includes(job.stage) && token === renderToken) setTimeout(() => { if (token === renderToken && page === "job") load(); }, 4000);
     }
     load();
