@@ -35,7 +35,7 @@ def snapshot(db, task_id=None):
         if missing:
             tasks.update({row.id: row for row in session.scalars(select(Task).where(Task.id.in_(missing)))})
         event_query = select(Event).order_by(Event.created_at.desc()).limit(60)
-        approval_query = select(Approval).where(Approval.status == "PENDING").limit(200)
+        approval_query = select(Approval).where(Approval.status.in_(["pending", "PENDING"])).limit(200)
         if task_id:
             event_query = event_query.where(Event.task_id == task_id)
             approval_query = approval_query.where(Approval.task_id == task_id)
@@ -61,7 +61,16 @@ def snapshot(db, task_id=None):
             "mode": row.mode, "assigned_agent": row.assigned_agent, "reviewer": row.reviewer,
             "retry_count": row.retry_count, "updated_at": row.updated_at,
             "tests_passed": sum(result.get("passed") is True for result in row.test_results),
-            "test_commands": len(row.test_results)} for row in tasks.values()]
+            "test_commands": len(row.test_results),
+            # The latest attempt's test results, measured by the supervisor (never estimated).
+            "last_tests": [{"command": " ".join(map(str, result.get("command", [])))[:120], "passed": result.get("passed") is True,
+                            "exit_code": result.get("exit_code"), "timed_out": result.get("timed_out", False),
+                            "duration_seconds": result.get("duration_seconds"),
+                            "output": redact((result.get("stderr") or result.get("stdout") or "")[-400:])}
+                           for result in row.test_results if result.get("attempt") == (row.test_results[-1].get("attempt") if row.test_results else None)][-5:],
+            "findings": len(row.review_findings or []),
+            "error": redact(str((row.results or {}).get("error") or ""))[:600],
+            "pause_requested": bool(row.pause_requested)} for row in tasks.values()]
     metrics = {}
     for source in ("live", "mock"):
         metrics[source] = {}

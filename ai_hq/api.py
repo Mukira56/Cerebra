@@ -19,7 +19,8 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision)
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision,
+                      BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen)
 from .security import redact
 from . import __version__
 
@@ -86,7 +87,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         if request.url.path.startswith("/api/") and request.url.path != "/api/session":
             token = request.cookies.get("aihq_session", "")
             entry = sessions.get(token)
-            if not entry or time.monotonic() - entry[1] > 12*3600:
+            if entry and time.monotonic() - entry[1] > 12*3600:
+                sessions.pop(token, None)
+                entry = None
+            if not entry:
                 return JSONResponse({"detail":"Open the launch URL to establish a local session"}, status_code=401)
             if request.method not in {"GET", "HEAD"} and not secrets.compare_digest(request.headers.get("x-csrf-token", ""), entry[0]):
                 return JSONResponse({"detail":"Missing or invalid CSRF token"}, status_code=403)
@@ -104,7 +108,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 body.extend(chunk)
             request._body = bytes(body)
         response = await call_next(request)
-        response.headers.update({"X-Content-Type-Options":"nosniff", "Referrer-Policy":"no-referrer", "X-Frame-Options":"DENY", "Cache-Control":"no-store", "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
+        response.headers.update({"X-Content-Type-Options":"nosniff", "Referrer-Policy":"no-referrer", "X-Frame-Options":"DENY", "Cache-Control":"no-store",
+            "Cross-Origin-Opener-Policy":"same-origin", "Cross-Origin-Resource-Policy":"same-origin",
+            "Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), clipboard-read=()", "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
         return response
 
     @app.exception_handler(ValueError)
@@ -136,6 +142,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 failed_sessions.append(current)
                 raise HTTPException(401, "Invalid or already consumed launch key; restart using start.ps1 if your session was lost")
             bootstrap_used = True
+            for stale in [key for key, entry in sessions.items() if current - entry[1] > 43200]:
+                sessions.pop(stale, None)
             session_key, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             sessions[session_key] = (csrf, current)
         response = JSONResponse({"csrf_token":csrf})
@@ -542,8 +550,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             return f"Created the project {project['name']} (id {project['id'][:8]})." + ("" if action["test_commands"] else " Add its test commands on the Projects page before tasks can run.")
         if kind == "create_task":
             project = find_project(action["project"])
-            task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None)
+            task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None, origin="support")
             return f"Created task {task.id[:8]} in {project.name}. Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
+        if kind == "create_business_job":
+            job_id = create_business_job(BusinessJobCreate(title=action["title"], kind=action["type"], brief=action["brief"], client=action["client"], requirements=action["requirements"]), origin="support")["id"]
+            return f"Started the Business Studio job {action['title']} (id {job_id[:8]}). Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
         task = find_task(action["task"])
         method = {"approve_plan": supervisor.approve_plan, "start_task": supervisor.start, "pause_task": supervisor.pause, "resume_task": supervisor.resume, "cancel_task": supervisor.cancel}[kind]
         result = method(task.id)
@@ -576,6 +587,70 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def chat_delete(conversation_id: str):
         chat_or_404(chats.delete, conversation_id)
         return {"deleted": conversation_id}
+
+    # ---- Business Studio -----------------------------------------------------------------------
+    from . import business
+    from .processes import ProcessRunner
+
+    def register_job_folder(name, path, test_commands, initialize=True):
+        """Make the new job folder a Git repository holding the brief, then register it as a project."""
+        runner, hooks = ProcessRunner(), str(settings.data_dir / "disabled-hooks")
+        identity = ["-c", "user.name=Cerebra", "-c", "user.email=local@ai-hq.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + hooks]
+        for args in (["git", "init", "--initial-branch=main"], ["git", *identity, "add", "-A"], ["git", *identity, "commit", "-m", "Business Studio brief"]):
+            result = runner.run(args, path, timeout=60)
+            if result.exit_code != 0: raise ValueError("Could not prepare the job folder: " + redact(result.stderr)[:300])
+        return register(ProjectCreate(name=name[:120], path=path, authorize=True, test_commands=test_commands))
+
+    def create_business_job(payload, origin="user"):
+        with db.Session() as session:
+            from .models import BusinessJob
+            recent = session.scalars(select(BusinessJob).where(BusinessJob.title == " ".join(payload.title.split())[:120], BusinessJob.status == "active")).all()
+            if any(job.brief == payload.brief.strip()[:20000] for job in recent):
+                raise ValueError("This job already exists. Open it from the list instead of creating it twice.")
+        job_id = business.create(db.Session, settings, register_job_folder, supervisor, payload.title, payload.kind, payload.brief, payload.client,
+                                 payload.requirements, payload.sources, payload.no_ai_requested, origin)
+        with db.Session.begin() as session:
+            session.add(Event(kind="business", message=f"Business Studio job created: {payload.title}"[:300]))
+        return business_job(job_id)
+
+    def business_or_404(call, *args):
+        try: return call(*args)
+        except LookupError as exc: raise HTTPException(404, str(exc))
+
+    @app.get("/api/business")
+    def business_overview():
+        with db.Session() as session:
+            return {"settings": business.load(session), "jobs": business.jobs(session),
+                    "kinds": {key: value["label"] for key, value in business.KINDS.items()},
+                    "capabilities": {"image_generation": {"available": False, "detail": "No image-generation service is connected. Cerebra makes original vector (SVG) designs; raster images are unavailable."}},
+                    "marketplaces": [
+                        {"id": "fiverr", "name": "Fiverr", "state": "manual", "detail": "Fiverr has no seller API. Paste each order's brief here or into Support; deliver the exported files yourself, and follow Fiverr's AI guidelines (respect clients who ask for no AI)."},
+                        {"id": "etsy", "name": "Etsy", "state": "not connected", "detail": "Not built yet. A future version can prepare draft listings through Etsy's official API after you register an app and sign in. Listing copy and SVG designs you can export now."},
+                        {"id": "printify", "name": "Printify", "state": "not connected", "detail": "Not built yet. It needs a Printify API token and a confirmed manual order-approval setting, so nothing goes to production or costs money without you."}]}
+
+    @app.put("/api/business/settings")
+    def business_settings(payload: BusinessSettingsUpdate):
+        with db.Session.begin() as session: return business.save(session, payload.output_root)
+
+    @app.post("/api/business/jobs", status_code=201)
+    def business_create(payload: BusinessJobCreate): return create_business_job(payload)
+
+    @app.get("/api/business/jobs/{job_id}")
+    def business_job(job_id: str):
+        with db.Session() as session: return business_or_404(business.results, session, job_id)
+
+    @app.post("/api/business/jobs/{job_id}/export")
+    def business_export(job_id: str, payload: BusinessExport):
+        result = business_or_404(business.export, db.Session, job_id, payload.zip)
+        with db.Session.begin() as session:
+            session.add(Event(kind="business", message=f"Business Studio job exported: {result['title']}"[:300]))
+        return result
+
+    @app.post("/api/business/jobs/{job_id}/open")
+    def business_open(job_id: str, payload: BusinessOpen): return business_or_404(business.open_location, db.Session, job_id, payload.what)
+
+    @app.post("/api/business/jobs/{job_id}/cancel")
+    def business_cancel(job_id: str): return business_or_404(business.cancel, db.Session, supervisor, job_id)
 
     # ---- plain-language reports and system view ------------------------------------------
     @app.get("/api/reports/{task_id}")

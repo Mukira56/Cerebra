@@ -290,3 +290,6 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
   .messages { min-height: 360px; }
 }
 @media (prefers-reduced-motion: reduce) { .diagram .edge.active, .typing span { animation: none; } }
+.report-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.report-section ul { font-size: 16px; }
+.report .asked { white-space: pre-wrap; }

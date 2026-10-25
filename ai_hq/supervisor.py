@@ -6,6 +6,7 @@ import hashlib
 from fnmatch import fnmatchcase
 from pathlib import Path, PureWindowsPath
 import threading
+import time
 
 from sqlalchemy import select
 
@@ -96,7 +97,7 @@ class Supervisor:
 
     def propose(self, project_id, objective, assigned_agent=None, dependencies=None,
                 allowed_paths=None, requirements=None, acceptance_criteria=None,
-                implementer=None, reviewer=None, planner=None):
+                implementer=None, reviewer=None, planner=None, origin="user"):
         """Propose a task. Roles name model profiles or "auto"; `assigned_agent` is the older name for implementer."""
         from .profiles import AUTO, default_roles, get_profile
         from . import routing
@@ -146,7 +147,7 @@ class Supervisor:
                 mode="live", allowed_paths=self._allowed(allowed_paths or ["."]),
                 requirements=_clean(requirements or [objective]),
                 acceptance_criteria=_clean(acceptance_criteria or ["Configured verification commands pass", "Independent review has no unresolved defects", "Human approves integration"]),
-                max_retries=-1 if self.settings.max_retries < 0 else min(100, self.settings.max_retries), results={"queued": False, "models": chosen, "routing": routing_record})
+                max_retries=-1 if self.settings.max_retries < 0 else min(100, self.settings.max_retries), results={"queued": False, "models": chosen, "routing": routing_record, "origin": origin})
             session.add(task)
             session.flush()
             self._state(session, task, "PLANNING", "Deterministic supervisor is preparing an execution plan")
@@ -718,6 +719,9 @@ class Supervisor:
 
     def _agent(self, task, role, workdir):
         self._refresh_registry()
+        # Full access is for work the user asked for directly. A task whose text came from a model (which may
+        # have read a planted instruction in some file) runs project-only, so it cannot reach the rest of the laptop.
+        self.registry.full_access = self.settings.full_access and (task.results or {}).get("origin", "user") == "user"
         name, model = self._role_model(task, role)
         description = task.description
         if role == "plan":
@@ -781,8 +785,9 @@ class Supervisor:
                 break
             if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
                 raise ValueError("Registered test commands must be nonempty argument lists")
+            started = time.monotonic()
             process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout or None, cancel_event=self._cancels[task_id])
-            result = {"command": _clean(command), "exit_code": process.exit_code, "stdout": redact(process.stdout),
+            result = {"command": _clean(command), "exit_code": process.exit_code, "duration_seconds": round(time.monotonic() - started, 2), "stdout": redact(process.stdout),
                 "stderr": redact(process.stderr), "timed_out": process.timed_out, "cancelled": process.cancelled,
                 "output_truncated": process.output_truncated,
                 "passed": process.exit_code == 0 and not process.timed_out and not process.cancelled and not process.output_truncated,

@@ -26,6 +26,26 @@ Plan approval, task start, agent execution, and integration are deliberate opera
 
 Integration requires the recorded approval and fresh repository checks. The system never pushes, force-pushes, deploys, or publishes on its own. **Push** and **Publish to GitHub** run only when you press them, using your own `gh`/Git credentials. The system never reads browser credentials or purchases services. Existing projects remain untouched until explicitly registered and authorized.
 
+## Business Studio and hardening (0.8.0)
+
+**Business Studio jobs** are new Git projects under the user's chosen output root. The root must be an absolute, dedicated folder: not a drive root, and not the profile itself.
+- The brief file `cerebra-brief.json` and copied sources are committed first. They lie outside the task's allowed paths, so the creator cannot change the rules it is checked against.
+- The job's test command is fixed: Cerebra's own runtime runs `business_check.py`, which uses only the standard library. SVGs with scripts, event handlers or external links fail.
+- Source files must be existing regular files (not links) of up to 20 MB each. They are copied, never moved.
+- Export writes into a new folder, and ZIPs are created with mode `x`, so nothing is overwritten.
+- Open folder/result is confined to the job folder.
+- Duplicate jobs (same title and brief while active) are refused.
+- Briefs are treated as untrusted text in the task objective.
+- Support's `create_business_job` action creates `origin="support"` tasks.
+
+**Hardening:**
+- Tasks created from model text (Support actions, including business jobs) never run with Full access, even when it is on.
+- The task origin is recorded at creation, so there is no window in which it is unset.
+- Expired sessions are pruned.
+- Responses add `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a restrictive `Permissions-Policy`.
+
+**Not provided:** no system is invulnerable. The remaining risks are documented above: residual outside-repository reads, Full access by design, and the user's own test commands. This review was done by Claude, not an external penetration test.
+
 ## Support chat actions (0.7.0)
 
 Each support message includes a bounded brief of the stored records (`support.brief`: projects, tasks, states, errors, test output, pending gates), labelled as data, not instructions.

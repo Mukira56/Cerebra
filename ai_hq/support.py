@@ -18,7 +18,7 @@ from sqlalchemy import select
 from .models import Approval, Event, Metadata, Project, Task
 
 KEY = "support_settings"
-ACTIONS = {"create_project", "create_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task"}
+ACTIONS = {"create_project", "create_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job"}
 MAX_ACTIONS = 10
 # Test runners a chat-created project may use. Anything else is set by the user on the Projects page.
 TEST_RUNNERS = [
@@ -128,6 +128,14 @@ def validate(item):
         if not isinstance(commands, list) or any(command not in TEST_RUNNERS for command in commands):
             raise ValueError("test commands must be standard runners (for example npm test or python -m pytest -q); set others on the Projects page")
         clean["test_commands"] = commands
+    elif kind == "create_business_job":
+        clean["title"] = _short(item.get("title", ""), 120)
+        clean["type"] = str(item.get("type", ""))
+        clean["brief"] = str(item.get("brief", "")).strip()[:20000]
+        clean["client"] = _short(item.get("client", ""), 120)
+        clean["requirements"] = [_short(value, 500) for value in (item.get("requirements") or [])[:30] if isinstance(value, str)]
+        if clean["type"] not in {"website", "listing", "svg", "document"} or len(clean["title"]) < 3 or len(clean["brief"]) < 20:
+            raise ValueError("a business job needs a title, a type (website, listing, svg or document) and a brief")
     elif kind == "create_task":
         clean["project"] = _short(item.get("project", ""), 120)
         clean["description"] = str(item.get("description", "")).strip()[:4000]
@@ -148,6 +156,8 @@ def describe(action):
         return f"Create the project “{action['name']}”" + (f" (tests: {' | '.join(' '.join(c) for c in action['test_commands'])})" if action["test_commands"] else " (no tests yet)")
     if kind == "create_task":
         return f"Create a task in {action['project']}: {_short(action['description'], 140)}"
+    if kind == "create_business_job":
+        return f"Start a Business Studio job ({action['type']}): {action['title']}"
     return {"approve_plan": "Approve the plan of", "start_task": "Start", "pause_task": "Pause", "resume_task": "Resume", "cancel_task": "Cancel"}[kind] + f" task {action['task']}"
 
 
@@ -173,7 +183,10 @@ To make Cerebra do something, add ONE fenced block at the end of your answer:
  {"action": "create_task", "project": "Booking site", "description": "Clear, specific outcome", "requirements": ["..."], "acceptance_criteria": ["..."]},
  {"action": "start_task", "task": "<task id prefix>"}]
 ```
-Allowed actions: create_project, create_task, approve_plan, start_task, pause_task, resume_task, cancel_task.
+Allowed actions: create_project, create_task, approve_plan, start_task, pause_task, resume_task, cancel_task, and
+create_business_job ({"action": "create_business_job", "title": "...", "type": "website|listing|svg|document", "client": "...",
+"brief": "the client's request in full", "requirements": ["..."]}) for client deliverables saved in Business Studio.
+If a client says they do not want AI used, do not create a job; tell the user.
 Test commands must be one of: """ + "; ".join(" ".join(command) for command in TEST_RUNNERS) + """.
 Split big goals into several focused tasks, each with requirements and acceptance criteria. A task in a project you
 create in the same block can refer to the project by name. Only propose actions the user asked for or agreed to.

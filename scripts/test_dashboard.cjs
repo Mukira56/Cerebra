@@ -85,6 +85,27 @@ const path = require('node:path');
     assert.ok(await page.getByRole('button', {name: 'Send', exact: true}).isVisible());
     await shot('chat');
 
+    // Business Studio: empty state, a job created through the form, and its plain results page.
+    await page.locator('[data-page="business"]').click();
+    await page.getByText('No business jobs yet', {exact: true}).waitFor();
+    await page.getByText('Marketplaces', {exact: true}).waitFor();
+    assert.ok(await page.getByText(/raster images are unavailable/).count(), 'Image generation is shown as unavailable');
+    await page.locator('#heading-actions').getByRole('button', {name: '+ New business job'}).click();
+    await page.locator('dialog input').first().fill('Bakery website for Ama');
+    await page.locator('dialog textarea').first().fill('A one-page website for the Ama bakery in Nairobi with opening hours and a cake menu.');
+    await page.locator('dialog').getByRole('button', {name: 'Create job', exact: true}).click();
+    await page.getByText('What needs attention', {exact: true}).waitFor({timeout: 60000});
+    await page.getByText('Where they are', {exact: true}).waitFor();
+    assert.ok(await page.locator('.report-head .badge', {hasText: 'WAITING FOR YOU'}).count(), 'A new job waits for plan approval');
+    assert.ok(await page.getByText(/does not mean anything was sold/).count());
+    await shot('business-job');
+    const narrow = await browser.newContext({viewport: {width: 390, height: 860}}); await narrow.addCookies(await context.cookies());
+    const small = await narrow.newPage(); small.on('pageerror', error => errors.push('narrow: ' + error.message));
+    await small.goto(process.env.AIHQ_URL.split('#')[0] + '#business'); await small.locator('.row', {hasText: 'Bakery website'}).waitFor();
+    assert.ok(await small.evaluate(() => document.documentElement.scrollWidth <= 400), 'Business Studio fits a narrow window');
+    if (shots) await small.screenshot({path: path.join(shots, 'business-narrow.png')});
+    await narrow.close();
+
     for (const name of ['approvals', 'activity', 'toolchain', 'github', 'settings', 'overview']) {
       await page.locator(`[data-page="${name}"]`).first().click();
       await page.waitForTimeout(700);
@@ -136,6 +157,6 @@ const path = require('node:path');
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({pages: 13, errors: errors.length, mobile_width_ok: true}));
+    console.log(JSON.stringify({pages: 15, errors: errors.length, mobile_width_ok: true}));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

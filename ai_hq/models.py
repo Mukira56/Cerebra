@@ -136,6 +136,23 @@ class ChatMessage(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     finished_at: Mapped[str] = mapped_column(String, default="")
 
+class BusinessJob(Base):
+    """A Business Studio job: the user's brief, its output folder, and the Cerebra project/task doing the work."""
+    __tablename__ = "business_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    title: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)
+    client: Mapped[str] = mapped_column(String, default="")
+    brief: Mapped[str] = mapped_column(Text, default="")
+    requirements: Mapped[list] = mapped_column(JSON, default=list)
+    output_dir: Mapped[str] = mapped_column(String)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="active")  # active | completed (exported) | cancelled
+    export: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

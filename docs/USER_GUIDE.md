@@ -62,6 +62,38 @@ Everything stays on this computer, in the data folder shown in **Settings › Wh
 
 Open **Reports** from the sidebar, or press **Plain report** in any task. Each report opens on its own page that you can simply read through.
 
+## Business Studio
+
+**Business Studio** turns a client brief, or your own product idea, into original files saved on your laptop.
+
+1. Press **+ New business job**. Give it a title, pick what to make, and paste the brief. Optionally add requirements and the full paths of your own reference files (they are copied, never changed).
+   - What it can make: a website package (index.html, styles.css, README), listing copy (title, description, tags), an original SVG design, or a written document.
+2. Approve its plan. Away mode can do this for you.
+3. Cerebra's AI team works on it:
+   - a planner plans,
+   - a creator makes the files,
+   - Cerebra checks the files with fixed rules: required files exist; the SVG is valid and self-contained; the web page has a title and meta tags; listing titles and tags are within limits,
+   - a second AI from the other company reviews the work.
+4. Approve the result. Only then are the files merged into the job folder.
+5. Press **Export** or **Export ZIP**. Cerebra writes the deliverables plus a README, a manifest (with a checksum for every file) and the review findings into an `export` folder.
+   - Existing files are never overwritten; each export gets a new folder.
+   - **Open folder** and **Open result** show them in Explorer.
+
+Jobs are saved in `Documents\Cerebra Business` (change it on the Business Studio page), one folder per job. Each job's page explains in plain words what you asked for, what passed, what needs attention, which files were made, where they are, and the next step. **Technical details** shows the full task record.
+
+The stages mean:
+- **Exported**: a reviewed package exists on your laptop. Nothing has been sold, published or delivered.
+- **Failed**: the checks or the review did not pass.
+- If a client asks for no AI, tick the box. Cerebra refuses the job.
+
+Images: Cerebra has no image-generation service connected, so it makes vector (SVG) designs only. Raster images are shown as unavailable.
+
+Marketplaces:
+- **Fiverr** has no seller API. Paste each order's brief into Business Studio or Support, and deliver the exported files yourself.
+- **Etsy** and **Printify** are not connected yet (see the cards on the page).
+
+Support can start a business job for you too. Ask it, for example: "Make listing copy for my sunrise print."
+
 ## Support
 
 **Support** is your support engineer. Every message includes the live record of all your projects and tasks: states, errors, test output and what's waiting for you. So you can ask:

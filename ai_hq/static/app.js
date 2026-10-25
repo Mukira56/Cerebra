@@ -5,6 +5,8 @@
   const pages = {
     overview: ["WORKSPACE", "Overview", "Everything happening in your development HQ, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
+    business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
+    job: ["WORK", "Business result", ""],
     tasks: ["WORK", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
     projects: ["WORK", "Projects", "Repositories Cerebra is allowed to work in."],
     approvals: ["WORK", "Approvals", "Nothing important happens without your yes."],
@@ -87,10 +89,12 @@
     const [eyebrow, title, subtitle] = pages[page];
     $("#page-eyebrow").textContent = eyebrow; $("#page-title").textContent = title; $("#page-subtitle").textContent = subtitle;
     $("#breadcrumb-title").textContent = param ? `${page}/${param.slice(0, 8)}` : page;
-    document.querySelectorAll("[data-page]").forEach(node => node.classList.toggle("active", node.dataset.page === page || (page === "report" && node.dataset.page === "reports")));
+    document.querySelectorAll("[data-page]").forEach(node => node.classList.toggle("active", node.dataset.page === page || (page === "report" && node.dataset.page === "reports") || (page === "job" && node.dataset.page === "business")));
     const actions = $("#heading-actions"); actions.replaceChildren();
     if (["overview", "tasks"].includes(page)) actions.append(button("+ New task", () => taskForm(), "button primary"));
     if (page === "projects") actions.append(button("+ Add project", () => projectForm(), "button primary"));
+    if (page === "business") actions.append(button("+ New business job", () => businessForm(), "button primary"));
+    if (page === "job") actions.append(button("← Business Studio", () => { location.hash = "business"; }, "button ghost"));
     if (page === "models") actions.append(button("↻ Re-check tools", () => act("Agent tools re-checked.", async () => { cache.providers = await mutate("/api/providers/refresh", {}, "POST", 120000); await refresh(true); }), "button ghost"));
     if (page === "report") actions.append(button("← All reports", () => { location.hash = "reports"; }, "button ghost"), button("Technical details", () => taskDetail(param), "button ghost"));
   }
@@ -107,7 +111,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, business: businessView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -553,6 +557,68 @@
     load(); return root;
   }
 
+  // ---------- business studio ----------
+  const STAGE_STYLE = {intake: "muted", planning: "blue", creating: "blue", checking: "blue", waiting: "amber", ready: "green", completed: "green", failed: "red", cancelled: "muted"};
+  const KIND_HELP = {website: "Static website: index.html, styles.css, README.md", listing: "Listing copy: title, description and tags (listing.md)", svg: "Original vector design (design.svg) + README", document: "A written document (deliverable.md)"};
+  function businessForm(prefill = {}) {
+    const form = el("form"), title = input("e.g. Bakery website for Ama", prefill.title || ""), kind = select(Object.entries(KIND_HELP).map(([key, label]) => [key, label]), prefill.kind || "website");
+    const client = input("Client name (optional)", prefill.client || ""), brief = textarea("Paste the client's brief or describe your product idea in full.", prefill.brief || ""), requirements = textarea("Optional. One requirement per line.");
+    const sources = textarea("Optional. Full paths of your own files to give the AI as reference, one per line (they are copied, never changed).");
+    const noAi = check("The client asked for no AI to be used"); brief.required = true; title.required = true;
+    append(form, field("Job title", title), field("What to make", kind), field("Client", client), field("Brief", brief), field("Requirements", requirements), field("Your source files", sources), noAi.wrap,
+      hint("Cerebra plans it, creates it, checks the files and has a second AI review it. Nothing is merged into the job folder until you approve, and nothing is sent to anyone."),
+      !agentsOn() ? hint("AI agents are switched off. The job is saved, but it only runs after you switch agents on in Settings.", true) : null);
+    const submit = submitButton("Create job"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
+    wireForm(form, submit, async () => {
+      const lines = value => value.split("\n").map(item => item.trim()).filter(Boolean);
+      const job = await mutate("/api/business/jobs", {title: title.value.trim(), kind: kind.value, client: client.value.trim(), brief: brief.value.trim(), requirements: lines(requirements.value), sources: lines(sources.value), no_ai_requested: noAi.control.checked}, "POST", 120000);
+      closeDialog(); await refresh(true); toast("Job created. Approve its plan to start."); location.hash = `job/${job.id}`;
+    });
+    showDialog("New business job", form);
+  }
+  function businessView() {
+    const root = el("div"), list = el("div"), side = el("div"), token = renderToken;
+    root.append(append(el("div", "grid two"), list, side));
+    (async () => {
+      let state; try { state = await api("/api/business"); } catch (issue) { list.replaceChildren(body(empty("Business Studio unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const rows = state.jobs.map(job => { const row = el("a", "row"); row.href = `#job/${job.id}`; append(row, append(el("div"), el("strong", "", job.title), el("div", "row-meta", `${job.kind_label}${job.client ? ` · ${job.client}` : ""} · ${relative(job.created_at)}`)), badge(job.stage_words, STAGE_STYLE[job.stage])); return row; });
+      list.replaceChildren(panel("Jobs", rows.length ? append(el("div", "row-list"), rows) : body(empty("No business jobs yet", "Paste a client brief or describe a product, and Cerebra makes original, reviewed files for you.", button("+ New business job", () => businessForm(), "button primary"), "$")), null, rows.length));
+      const folder = el("form"), root_ = input("", state.settings.output_root), save = submitButton("Save");
+      append(folder, field("Save jobs in", root_, "Each job gets its own folder here. Existing files are never overwritten."), actionsRow(save));
+      wireForm(folder, save, async () => { await mutate("/api/business/settings", {output_root: root_.value.trim()}, "PUT"); toast("Output folder saved."); });
+      const markets = append(el("div"), ...state.marketplaces.map(item => append(el("div", "action-card"), append(el("div", "row-meta"), badge(item.state, item.state === "manual" ? "blue" : "muted"), el("strong", "", item.name)), el("p", "", item.detail))));
+      side.replaceChildren(panel("Where results are saved", body(folder)), panel("Marketplaces", body(markets)), panel("Images", body(hint(state.capabilities.image_generation.detail)))) ;
+    })();
+    return root;
+  }
+  function jobView() {
+    const root = el("div"), token = renderToken, id = param;
+    async function load() {
+      let job; try { job = await api(`/api/business/jobs/${encodeURIComponent(id)}`); } catch (issue) { root.replaceChildren(body(empty("Job not found", issue.message))); return; }
+      if (token !== renderToken) return;
+      $("#page-title").textContent = job.title;
+      const section = (heading, ...nodes) => append(el("section", "report-section"), el("h2", "", heading), ...nodes);
+      const actions = el("div", "actions");
+      const run = (label, path, payload = {}) => button(label, async event => { event.currentTarget.disabled = true; await act(result => result.opened ? "Opened." : "Done.", () => mutate(`/api/business/jobs/${encodeURIComponent(id)}/${path}`, payload, "POST", 120000)); load(); }, "button");
+      append(actions, run("Open folder", "open", {what: "folder"}), job.files.some(file => file.exists) ? run("Open result", "open", {what: "result"}) : null,
+        ["ready", "completed"].includes(job.stage) ? run("Export", "export", {zip: false}) : null, ["ready", "completed"].includes(job.stage) ? run("Export ZIP", "export", {zip: true}) : null,
+        job.task_id ? button("Technical details", () => taskDetail(job.task_id), "button ghost") : null,
+        !["completed", "cancelled", "failed"].includes(job.stage) ? run("Cancel job", "cancel") : null);
+      root.replaceChildren(append(el("div", "report"),
+        append(el("div", "report-head"), badge(job.stage_words, STAGE_STYLE[job.stage]), el("span", "row-meta", `${job.kind_label}${job.client ? ` for ${job.client}` : ""}`)), actions,
+        section("What you asked for", el("div", "asked", job.asked)),
+        section("What passed", job.passed.length ? list(job.passed) : el("p", "", "Nothing has passed yet.")),
+        section("What needs attention", job.attention.length ? list(job.attention) : el("p", "", "Nothing. ✓")),
+        section("Files made", list(job.files.map(file => `${file.path}: ${file.exists ? `${file.bytes} bytes` : "not made yet"}`))),
+        section("Where they are", kv([["Job folder", job.where], ["Exported package", job.export_folder || "not exported yet"], ["ZIP", job.zip || "—"]])),
+        section("Next step", el("p", "", job.next_step)), hint(job.note)));
+      if (!["completed", "cancelled", "failed"].includes(job.stage) && token === renderToken) setTimeout(() => { if (token === renderToken && page === "job") load(); }, 4000);
+    }
+    load();
+    return root;
+  }
+
   // ---------- full access ----------
   const fullOn = () => data?.settings?.full_access === true;
   function fullAccessForm() {
@@ -657,7 +723,7 @@
     } catch (issue) { const status = $("#connection-status"); status.className = "pill bad"; status.replaceChildren(el("span", "dot"), document.createTextNode("Disconnected")); notice(`Local connection unavailable. ${issue.message}`, true); }
     finally { fetching = false; }
   }
-  function route() { const [name, ...rest] = location.hash.slice(1).split("/"); page = Object.hasOwn(pages, name) ? name : "overview"; param = rest.join("/"); if (page === "report" && !param) page = "reports"; render(); }
+  function route() { const [name, ...rest] = location.hash.slice(1).split("/"); page = Object.hasOwn(pages, name) ? name : "overview"; param = rest.join("/"); if (page === "job" && !param) page = "business"; if (page === "report" && !param) page = "reports"; render(); }
   window.addEventListener("hashchange", route);
   async function boot() {
     try {

@@ -135,6 +135,24 @@ class SupportSettings(StrictModel):
 class ActionDecision(StrictModel):
     run: bool
 
+class BusinessJobCreate(StrictModel):
+    title: str = Field(min_length=3, max_length=120)
+    kind: str = Field(pattern="^(website|listing|svg|document)$")
+    brief: str = Field(min_length=20, max_length=20000)
+    client: str = Field(default="", max_length=120)
+    requirements: list[str] = Field(default_factory=list, max_length=30)
+    sources: list[str] = Field(default_factory=list, max_length=20)
+    no_ai_requested: bool = False
+
+class BusinessSettingsUpdate(StrictModel):
+    output_root: str = Field(min_length=3, max_length=1024)
+
+class BusinessExport(StrictModel):
+    zip: bool = False
+
+class BusinessOpen(StrictModel):
+    what: str = Field(default="folder", pattern="^(folder|result)$")
+
 class ChatCreate(StrictModel):
     profile: str = Field(default="codex", max_length=120)
     project_id: str | None = Field(default=None, max_length=64)
