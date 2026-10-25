@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import evidence
 from .integrations import PROVIDERS
 
 NAMES = {name: provider["label"] for name, provider in PROVIDERS.items()}
@@ -73,6 +74,13 @@ def build(task, project, data_dir):
     first, timeline = steps[0], sorted(steps[1:], key=lambda item: item["when"] or "")
     steps[:] = [first, *timeline]
     tests = task.get("test_results", [])
+    baseline = task.get("results", {}).get("baseline")
+    if baseline:
+        broken = [item for item in baseline["commands"] if not item["passed"]]
+        names = f" Failing: {', '.join(baseline['failing'][:5])}{'…' if len(baseline['failing']) > 5 else ''}." if baseline["failing"] else ""
+        step("🩺", "Checked before changing anything", (f"Cerebra ran the tests on the untouched code first: {len(broken)} of {_plural(len(baseline['commands']), 'test check')} failed.{names}"
+                                                       if broken else "Cerebra ran the tests on the untouched code first: they all passed."), baseline.get("recorded_at"), None)
+    proof = evidence.compare(baseline, tests)
     if tests:
         passed = sum(1 for result in tests if result.get("passed"))
         good = passed == len(tests)
@@ -116,4 +124,4 @@ def build(task, project, data_dir):
                  "Wait a little. This page updates by itself.")
     return {"task_id": task.get("id"), "project": project.get("name"), "emoji": emoji, "headline": headline, "meaning": meaning,
             "asked": task.get("description", ""), "helpers": helpers, "steps": steps, "changed_files": changed,
-            "saved": saved, "next": next_step, "state": state, "updated_at": task.get("updated_at")}
+            "saved": saved, "next": next_step, "state": state, "updated_at": task.get("updated_at"), "evidence": proof}

@@ -280,7 +280,7 @@ def test_active_cancellation_propagates_to_adapter(hq):
     task_id = ready(hq)
     worker = threading.Thread(target=supervisor.tick)
     worker.start()
-    assert supervisor.registry.started.wait(10)
+    assert supervisor.registry.started.wait(60)  # the baseline test run comes first
     supervisor.cancel(task_id)
     worker.join(10)
     assert not worker.is_alive()

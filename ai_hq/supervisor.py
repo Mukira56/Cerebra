@@ -10,6 +10,7 @@ import time
 
 from sqlalchemy import select
 
+from . import evidence
 from .agents import AgentRegistry, AgentRequest
 from .processes import ProcessRunner
 from .gitops import GitManager
@@ -584,6 +585,10 @@ class Supervisor:
                 stored.results = {**stored.results, "base_branch": worktree["base_branch"]}
                 session.add(Worktree(task_id=task_id, path=stored.worktree_path, branch=stored.branch, base_commit=stored.base_commit))
             task = self.get(task_id)
+        if "baseline" not in task.results and self.git.inspect_repository(task.worktree_path).get("head") == task.base_commit:
+            if not self._baseline(task_id, project.test_commands, task.worktree_path):
+                return
+            task = self.get(task_id)
         if not task.results.get("architecture"):
             if not self._plan_architecture(task, project):
                 return
@@ -991,20 +996,47 @@ class Supervisor:
                 run.status, run.error, run.finished_at = "failed", redact(str(exc)), now()
             raise
 
+    def _run_test(self, task_id, command, workdir):
+        if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
+            raise ValueError("Registered test commands must be nonempty argument lists")
+        started = time.monotonic()
+        process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout or None, cancel_event=self._cancels[task_id])
+        return {"command": _clean(command), "exit_code": process.exit_code, "duration_seconds": round(time.monotonic() - started, 2), "stdout": redact(process.stdout),
+            "stderr": redact(process.stderr), "timed_out": process.timed_out, "cancelled": process.cancelled,
+            "output_truncated": process.output_truncated,
+            "passed": process.exit_code == 0 and not process.timed_out and not process.cancelled and not process.output_truncated,
+            "attempt": self.get(task_id).retry_count}
+
+    def _baseline(self, task_id, commands, workdir):
+        """Run the tests once on the untouched code, so the report can show what was broken before the change."""
+        with self._lock, self.db.Session.begin() as session:
+            self._event(session, task_id, "baseline", "Running the tests on the untouched code to record what fails before any change")
+        results = []
+        for command in commands:
+            if self._interrupted(task_id):
+                return False
+            results.append(self._run_test(task_id, command, workdir))
+        if self._interrupted(task_id):
+            return False
+        if self.git.inspect_repository(workdir).get("dirty"):
+            self._fail(task_id, "Running the tests on the untouched code changed or created files that Git tracks. "
+                       "Add those files to .gitignore (or fix the tests) so changes can be checked reliably.", blocked=True)
+            return False
+        summary = evidence.summarize(results)
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            stored.results = {**stored.results, "baseline": {**summary, "commit": stored.base_commit, "recorded_at": now()}}
+            failing = sum(1 for item in summary["commands"] if not item["passed"])
+            self._event(session, task_id, "baseline", f"Before the change: {failing} of {len(results)} test command(s) failed" if failing else
+                        "Before the change: all tests passed", {"failing": summary["failing"][:20]})
+        return True
+
     def _tests(self, task_id, commands, workdir):
         results = []
         for command in commands:
             if self._interrupted(task_id):
                 break
-            if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
-                raise ValueError("Registered test commands must be nonempty argument lists")
-            started = time.monotonic()
-            process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout or None, cancel_event=self._cancels[task_id])
-            result = {"command": _clean(command), "exit_code": process.exit_code, "duration_seconds": round(time.monotonic() - started, 2), "stdout": redact(process.stdout),
-                "stderr": redact(process.stderr), "timed_out": process.timed_out, "cancelled": process.cancelled,
-                "output_truncated": process.output_truncated,
-                "passed": process.exit_code == 0 and not process.timed_out and not process.cancelled and not process.output_truncated,
-                "attempt": self.get(task_id).retry_count}
+            result = self._run_test(task_id, command, workdir)
             results.append(result)
             log_dir = self.settings.data_dir / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -1012,7 +1044,7 @@ class Supervisor:
             with self.db.Session.begin() as session:
                 task = self._get(session, task_id)
                 task.test_results = task.test_results + [result]
-                self._event(session, task_id, "test", "Verification passed" if result["passed"] else "Verification failed", {"command": command, "exit_code": process.exit_code})
+                self._event(session, task_id, "test", "Verification passed" if result["passed"] else "Verification failed", {"command": command, "exit_code": result["exit_code"]})
         return results
 
     def _record_review(self, task, result, tests):

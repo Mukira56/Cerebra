@@ -534,6 +534,21 @@
     tasks.forEach(task => { const row = el("div", "row"), info = el("div", "row-main"); row.addEventListener("click", () => { location.hash = `report/${task.id}`; }); append(info, el("strong", "", task.description), el("div", "row-meta", `${projectFor(task.project_id)?.name || ""} · ${relative(task.updated_at)}`)); append(row, info, badge(task.state), el("span", "chev", "›")); list.append(row); });
     return append(el("div"), hint("Each report explains a task in short, simple sentences, so anyone can follow what the AI team did."), panel("All reports", list, null, tasks.length));
   }
+  // Before/after test evidence: what failed on the untouched code and what passes after the change.
+  function proofSection(proof) {
+    if (!proof || !proof.available) return proof ? append(el("div", "proof muted"), el("h2", "", "Before and after"), el("p", "", proof.text)) : null;
+    const tone = {fixed: "good", still_passing: "neutral", still_failing: "bad", broke: "bad", not_yet: "neutral"}[proof.verdict] || "neutral";
+    const column = (title, run) => {
+      const box = append(el("div", "proof-col"), el("strong", "", title));
+      if (!run) { box.append(el("p", "row-meta", "Not tested yet.")); return box; }
+      run.commands.forEach(item => box.append(append(el("div", `proof-run ${item.passed ? "pass" : "fail"}`), el("span", "", item.passed ? "✓ passed" : item.timed_out ? "⏱ timed out" : "✗ failed"), el("code", "", array(item.command).join(" ")))));
+      if (run.failing.length) box.append(el("p", "row-meta", `Failing: ${run.failing.slice(0, 8).join(", ")}${run.failing.length > 8 ? ` and ${run.failing.length - 8} more` : ""}`));
+      return box;
+    };
+    return append(el("section", `proof ${tone}`), el("h2", "", "Before and after"), el("p", "proof-verdict", proof.text),
+      append(el("div", "proof-grid"), column("Before the change", proof.before), column("After the change", proof.after)),
+      proof.newly_failing.length ? el("p", "row-meta", `Newly failing: ${proof.newly_failing.join(", ")}`) : null);
+  }
   function reportView() {
     const holder = el("div", "report"), token = renderToken; holder.append(el("div", "loading", "loading report…"));
     async function load() {
@@ -544,7 +559,7 @@
       const helpers = el("ul", "helpers"); report.helpers.forEach(item => helpers.append(el("li", "", item)));
       const story = el("ol", "story"); report.steps.forEach(step => { const item = el("li", step.good === true ? "good" : step.good === false ? "bad" : ""), text = el("div"); append(text, el("strong", "", step.title), el("p", "", step.text), step.when ? el("time", "", date(step.when)) : null); append(item, el("span", "icon", step.icon), text); story.append(item); });
       const saved = el("div", "saved"); report.saved.forEach(item => saved.append(append(el("div"), el("strong", "", item.what), el("p", "", item.explain), el("code", "", item.where))));
-      append(holder.replaceChildren() || holder, hero, el("h2", "", "What you asked for"), el("div", "asked", report.asked), el("h2", "", "Who helped"), helpers, el("h2", "", "What happened, step by step"), story,
+      append(holder.replaceChildren() || holder, hero, el("h2", "", "What you asked for"), el("div", "asked", report.asked), proofSection(report.evidence), el("h2", "", "Who helped"), helpers, el("h2", "", "What happened, step by step"), story,
         report.changed_files.length ? [el("h2", "", "Files that changed"), list(report.changed_files)] : null,
         el("h2", "", "Where everything is saved"), saved, el("h2", "", "What happens next"), el("div", "next", report.next));
       if (!["COMPLETED", "FAILED", "CANCELLED"].includes(report.state)) pageTimer = setTimeout(() => { if (token === renderToken) load(); }, 4000);

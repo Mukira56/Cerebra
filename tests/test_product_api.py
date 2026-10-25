@@ -75,12 +75,17 @@ def test_real_workflow_with_chosen_models_and_plain_report(client, tmp_path):
     client.post(f"/api/tasks/{identifier}/start", json={})
     client.app.state.supervisor.run_until_idle()
     detail = client.get(f"/api/tasks/{identifier}").json()
-    assert detail["state"] == "AWAITING_APPROVAL" and not any(run["simulated"] for run in detail["runs"])
+    assert detail["state"] == "AWAITING_APPROVAL", detail["results"].get("error")
+    assert not any(run["simulated"] for run in detail["runs"])
     assert ("codex", "gpt-test") in {(name, getattr(request, "model", None)) for name, request in client.app.state.supervisor.registry.requests}
     report = client.get(f"/api/reports/{identifier}").json()
     assert report["headline"] == "Finished and waiting for you"
     assert any("tests ran" in step["title"] for step in report["steps"])
     assert any(item["where"].endswith("hq.sqlite3") for item in report["saved"])
+    proof = report["evidence"]  # the broken add() was recorded before the change, and passes after it
+    assert proof["verdict"] == "fixed" and proof["before"]["failing"] == ["test_calculator.py::test_add"] and proof["after"]["passed"]
+    assert proof["fixed"] == ["test_calculator.py::test_add"] and detail["results"]["baseline"]["commit"] == detail["base_commit"]
+    assert len(detail["test_results"]) == 1  # the baseline is evidence, not a verification attempt
     merge = next(row for row in detail["approvals"] if row["kind"] == "merge" and row["status"] == "pending")
     client.post(f"/api/approvals/{merge['id']}", json={"approve": True})
     assert "return a + b" in (repo / "calculator.py").read_text()
