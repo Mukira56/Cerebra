@@ -247,6 +247,7 @@
         "Overview": () => append(el("div", "section"), routingCard(task), kv([["Project", projectFor(task.project_id)?.name], ["Planner", models.planner], ["Coder", models.implementer], ["Reviewer", models.reviewer], ["Files allowed", array(task.allowed_paths).join(", ")], ["Repairs", `${task.retry_count || 0} / ${task.max_retries < 0 ? "no limit" : task.max_retries ?? 3}`], ["Created", date(task.created_at)], ["Task ID", task.id]]), el("h3", "", "Plan"), plan(task.plan), array(task.requirements).length ? [el("h3", "", "Requirements"), list(task.requirements)] : null, task.results?.architecture?.output ? [el("h3", "", "AI architecture advisory"), code(task.results.architecture.output)] : null),
         "Results": () => { const node = append(el("div", "section"), el("h3", "", "Tests")); if (!array(task.test_results).length) node.append(el("p", "", "No tests have run yet.")); array(task.test_results).forEach(result => append(node, append(el("div", "row-meta"), badge(result.passed ? "passed" : "failed", result.passed ? "green" : "red"), el("code", "", array(result.command).join(" "))), code((result.stdout || "") + (result.stderr ? `\n${result.stderr}` : "")))); node.append(el("h3", "", "Review findings")); if (!array(task.review_findings).length) node.append(el("p", "", array(task.reviews).length ? "The reviewer found no problems." : "No review yet.")); array(task.review_findings).forEach(finding => append(node, append(el("div", "row-meta"), badge(finding.severity, ["critical", "high"].includes(finding.severity) ? "red" : "amber"), el("code", "", `${finding.path || ""}${finding.line ? `:${finding.line}` : ""}`), finding.validated ? badge("verified", "green") : badge("unverified", "muted")), el("p", "", finding.message))); return node; },
         "Changes": () => append(el("div", "section"), kv([["Branch", task.branch], ["Base commit", task.base_commit], ["Working copy", task.worktree_path]]), code(task.diff || task.results?.diff || "No changes yet.")),
+        "History": () => checkpointsView(task),
         "Runs & logs": () => { const node = el("div", "section"); if (!array(task.runs).length) node.append(el("p", "", "No AI runs yet.")); array(task.runs).forEach(run => append(node, append(el("div", "row-meta"), el("strong", "", `${nice(run.agent)} · ${run.role}`), badge(run.status, run.status === "succeeded" ? "green" : run.status === "running" ? "blue" : "red"), el("span", "", date(run.started_at))), run.error ? code(run.error) : null, run.output ? code(run.output.slice(-6000)) : null)); node.append(el("h3", "", "Event history")); node.append(activityList([...array(task.events)].reverse(), 200)); return node; }
       };
       function choose(label) { detailTab = label; tabs.querySelectorAll("button").forEach(item => item.classList.toggle("active", item.textContent === label)); pane.replaceChildren(views[label]()); }
@@ -262,6 +263,39 @@
       el("p", "", `Task looks ${assessment.level || "normal"}${assessment.kind === "writing" ? " and writing-heavy" : ""}: ${array(assessment.signals).join(", ")}.`),
       list(array(routing.automatic).map(role => `${{planner: "Planner", implementer: "Coder", reviewer: "Reviewer"}[role]}: ${chosen[role]?.label || "?"} (${chosen[role]?.why || ""})`)),
       routing.reason ? el("p", "row-meta", `Supervisor model: ${routing.reason}`) : null);
+    return node;
+  }
+  // Two-click confirmation for actions that change files.
+  function confirmButton(label, confirmLabel, action, className = "button small") {
+    let armed = false; const node = button(label, async () => {
+      if (!armed) { armed = true; node.textContent = confirmLabel; node.classList.add("danger"); setTimeout(() => { if (armed) { armed = false; node.textContent = label; node.classList.remove("danger"); } }, 5000); return; }
+      node.disabled = true; await action(); }, className);
+    return node;
+  }
+  function checkpointsView(task) {
+    const node = el("div", "section");
+    node.append(el("p", "row-meta", "Loading saved stages…"));
+    (async () => {
+      let data; try { data = await api(`/api/tasks/${encodeURIComponent(task.id)}/checkpoints`); } catch (issue) { node.replaceChildren(hint(issue.message, true)); return; }
+      node.replaceChildren(el("p", "", "Every coding attempt is saved as a checkpoint in the task's own working copy. Restoring one sends it back through your tests and the independent review before anything can be merged."));
+      if (!data.checkpoints.length) node.append(el("p", "row-meta", "No checkpoints yet: the coder hasn't saved any work."));
+      const canRestore = ["BLOCKED", "FAILED", "AWAITING_APPROVAL"].includes(task.state);
+      data.checkpoints.slice().reverse().forEach((item, index) => {
+        const card = el("div", "action-card"), top = el("div", "row-meta");
+        append(top, el("code", "", item.commit.slice(0, 8)), el("strong", "", item.message), el("span", "", date(item.at)),
+          item.commit === data.merged ? badge("merged into project", "green") : null, item.commit === data.current ? badge("current", "blue") : null);
+        card.append(top, el("p", "row-meta", `${item.files.length} file(s): ${item.files.slice(0, 6).join(", ")}${item.files.length > 6 ? "…" : ""}`));
+        if (canRestore && item.commit !== data.current) card.append(confirmButton("Restore this checkpoint", "Click again to restore", async () => {
+          if (await act("Checkpoint restored. Resume, then Start, to test and review it.", () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/checkpoints/restore`, {commit: item.commit}))) { await refresh(true); taskDetail(task.id); }
+        }));
+        node.append(card);
+      });
+      if (data.undone) node.append(hint(`This task's changes were undone in your project on ${date(data.undone.at)} (commit ${data.undone.commit.slice(0, 8)}).`));
+      else if (task.state === "COMPLETED" && data.merged) node.append(append(el("div", "action-card"), el("strong", "", "Undo this task in your project"),
+        el("p", "", "Adds one new commit to your project that reverses this task's changes. Your history is kept. If later work changed the same lines, Cerebra stops and changes nothing."),
+        confirmButton("Undo merge", "Click again to undo", async () => { if (await act("Undone: a revert commit was added to your project.", () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/undo`))) { await refresh(true); taskDetail(task.id); } }, "button small danger")));
+      if (!canRestore && task.state !== "COMPLETED") node.append(hint("Pause the task to restore an earlier checkpoint."));
+    })();
     return node;
   }
   function list(values) { const node = el("ul"); array(values).forEach(value => node.append(el("li", "", typeof value === "string" ? value : json(value)))); return node; }
@@ -602,6 +636,24 @@
     })();
     return root;
   }
+  function previewSection(job) {
+    if (!array(job.previews).length) return null;
+    const viewer = el("div", "preview-viewer"), tabs = el("div", "preview-tabs");
+    const base = `/api/business/jobs/${encodeURIComponent(job.id)}/preview/`;
+    async function show(item, tab) {
+      tabs.querySelectorAll("button").forEach(node => node.classList.toggle("active", node === tab));
+      const url = base + item.path.split("/").map(encodeURIComponent).join("/");
+      if (["html", "htm", "svg", "png", "jpg", "jpeg", "gif", "webp"].includes(item.kind)) {
+        const frame = el("iframe", "preview-frame"); frame.setAttribute("sandbox", "allow-same-origin"); frame.setAttribute("referrerpolicy", "no-referrer"); frame.title = `Preview of ${item.path}`; frame.src = url;
+        viewer.replaceChildren(frame);
+      } else {
+        try { const response = await fetch(url, {credentials: "same-origin"}); const text = await response.text(); viewer.replaceChildren(item.kind === "md" ? append(el("div", "preview-doc"), markdown(text)) : code(text)); }
+        catch (issue) { viewer.replaceChildren(hint(issue.message, true)); }
+      }
+    }
+    job.previews.forEach((item, index) => { const tab = button(item.path, () => show(item, tab), "chip"); tabs.append(tab); if (index === 0) setTimeout(() => show(item, tab), 0); });
+    return append(el("section", "report-section"), el("h2", "", "Preview"), el("p", "row-meta", "Shown safely inside Cerebra: scripts and outside links in generated files are blocked."), tabs, viewer);
+  }
   function jobView() {
     const root = el("div"), token = renderToken, id = param;
     async function load() {
@@ -623,7 +675,7 @@
         section("What needs attention", job.attention.length ? list(job.attention) : el("p", "", "Nothing. ✓")),
         section("Files made", list(job.files.map(file => `${file.path}: ${file.exists ? `${file.bytes} bytes` : "not made yet"}`))),
         section("Where they are", kv([["Job folder", job.where], ["Exported package", job.export_folder || "not exported yet"], ["ZIP", job.zip || "—"]])),
-        section("Next step", el("p", "", job.next_step)), hint(job.note)));
+        section("Next step", el("p", "", job.next_step)), previewSection(job), hint(job.note)));
       const operations = await api(`/api/business/jobs/${encodeURIComponent(id)}/operations`);
       if (token === renderToken && page === "job" && operations.length) root.append(panel("External actions — recorded results", body(list(operations.map(item => `${nice(item.action)}: ${item.status}. ${item.result.message || "Check the provider dashboard before retrying an uncertain action."}${item.result.listing_id ? ` Listing ID: ${item.result.listing_id}` : ""}${item.result.product_id ? ` Product ID: ${item.result.product_id}` : ""}${item.result.image_id ? ` Image ID: ${item.result.image_id}` : ""}${item.result.path ? ` File: ${item.result.path}` : ""}`)))));
       if (!["completed", "cancelled", "failed"].includes(job.stage) && token === renderToken) setTimeout(() => { if (token === renderToken && page === "job") load(); }, 4000);
@@ -723,6 +775,28 @@
     return root;
   }
 
+  // ---------- readiness check ----------
+  function readinessPanel() {
+    const node = el("div"), stages = el("div"), token = renderToken;
+    const run = button("Run readiness check", async () => { run.disabled = true; if (await act("Readiness check started.", () => mutate("/api/readiness", {}, "POST", 120000))) poll(); else run.disabled = false; }, "button primary");
+    append(node, el("p", "", "Runs one small, real task in a separate test project: planning, coding, your tests and an independent review, with your own models. It stops before merging, so none of your projects change. It uses a little of your Codex/Claude usage."), actionsRow(run), stages);
+    const ICON = {passed: "✓", failed: "✗", running: "…", waiting: "·"};
+    async function poll() {
+      let state; try { state = await api("/api/readiness"); } catch { return; }
+      if (token !== renderToken) return;
+      if (state.status === "never") { stages.replaceChildren(el("p", "row-meta", "Not run yet.")); run.disabled = !agentsOn(); return; }
+      const rows = state.stages.map(stage => append(el("div", `readiness-stage ${stage.state}`), el("span", "readiness-icon", ICON[stage.state] || "·"), el("strong", "", stage.label),
+        el("span", "row-meta", [stage.model, stage.seconds ? `${Math.round(stage.seconds)} s` : ""].filter(Boolean).join(" · ")), stage.detail ? el("p", "row-meta", stage.detail) : null));
+      const headline = {passed: ["green", "Ready: every stage worked end to end."], failed: ["red", "Not ready: a stage failed (details below)."], running: ["blue", "Running…"], "waiting for usage": ["amber", "Paused: no AI model has usage left right now."]}[state.status] || ["muted", state.status];
+      stages.replaceChildren(append(el("div", "row-meta"), badge(state.status, headline[0]), el("span", "", headline[1]), state.task_id ? button("Open task", () => taskDetail(state.task_id), "button small ghost") : null), ...rows, state.error ? hint(state.error, true) : null);
+      run.disabled = state.status === "running" || !agentsOn();
+      if (["running", "waiting for usage"].includes(state.status) && token === renderToken) setTimeout(poll, 3000);
+    }
+    run.disabled = !agentsOn(); poll();
+    if (!agentsOn()) node.append(hint("Switch AI agents on above first.", true));
+    return node;
+  }
+
   // ---------- updates ----------
   function updatesPanel() {
     const node = el("div"), state = el("div"), notes = el("div"), log = el("div");
@@ -818,6 +892,7 @@
       wireForm(permissions, on, async () => { if (!usage.control.checked || !reads.control.checked) throw new Error("Tick both boxes to switch agents on."); await mutate("/api/permissions", {enabled: true, acknowledge_provider_usage: true, acknowledge_residual_read_risk: true}); await refresh(true); toast("AI agents switched on."); });
     }
     root.append(panel("Agent permissions", body(permissions)));
+    root.append(panel("Readiness check", body(readinessPanel())));
     root.append(panel("Full access — let agents control this laptop", body(fullAccessForm())));
     root.append(panel("Away mode — work while I'm away", body(awayForm())));
 

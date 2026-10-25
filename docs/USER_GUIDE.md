@@ -192,6 +192,23 @@ What it does **not** do:
 - It doesn't widen what the agents may touch. Unless you also turned on **Full access**, they still work only in a separate copy of the project, can change only the files the task allows, and can't install software, use the network (Codex), or push to GitHub. Cerebra itself pushes merged work only if you ticked that option.
 - It doesn't keep your laptop awake. Set Windows to not sleep while plugged in, and leave Cerebra running in the tray.
 
+## Is everything working? The readiness check
+
+**Settings › Readiness check › Run readiness check** gives Cerebra a tiny real job: fix a one-line bug in a separate test project. It goes through planning, coding, your tests and the independent review using your own models, and shows a ✓ or ✗ for each stage with its time. It stops before merging, so none of your projects change. It uses a little of your Codex/Claude usage.
+
+## Going back: checkpoint history and undo
+
+Open a task and choose the **History** tab:
+- Every coding attempt is a saved checkpoint.
+- **Restore** puts the task's working copy back to an earlier checkpoint (pause the task first). Then press Resume and Start: the work is tested and reviewed again before anything can be merged.
+- **Undo merge** (on a finished task) adds one new commit to your project that reverses the task's changes. Your history is kept. If later work changed the same lines, Cerebra stops and changes nothing.
+
+Both ask for a second click to confirm.
+
+## Previewing finished work
+
+A Business Studio job's page has a **Preview** section. Click a file to see the website, design, image or document right inside Cerebra. Generated pages are shown safely: their scripts and outside links are blocked.
+
 ## Updating Cerebra
 
 Open **Settings › Updates** and press **Check for updates**.

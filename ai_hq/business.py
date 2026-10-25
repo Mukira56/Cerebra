@@ -310,6 +310,16 @@ def results(session, job_id):
                  "failed": "Read the problem above, then create the job again with a clearer brief.", "cancelled": "Nothing; this job was cancelled."}[info["stage"]]
     if task and task.state == "READY" and not pending: next_step = "Open Technical details and press Start to begin the approved job."
     if task and task.state == "PAUSED": next_step = "Open Technical details and press Resume when you are ready."
-    return {**info, "asked": job.brief, "passed": passed, "attention": attention, "files": files, "where": job.output_dir,
+    previews = []
+    roots = [Path(job.export["folder"])] if (job.export or {}).get("folder") and Path(job.export["folder"]).is_dir() else []
+    for base in roots + [folder]:
+        for path in sorted(base.rglob("*")):
+            relative = path.relative_to(folder)
+            if path.is_file() and not any(part.startswith(".") for part in relative.parts) and path.name != "cerebra-brief.json" \
+                    and relative.parts[0] not in {"sources"} and path.suffix.lower() in {".html", ".htm", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".md", ".css", ".txt"}:
+                previews.append({"path": relative.as_posix(), "kind": path.suffix.lower().lstrip(".")})
+        if previews:
+            break
+    return {**info, "asked": job.brief, "passed": passed, "previews": previews[:40], "attention": attention, "files": files, "where": job.output_dir,
             "export_folder": (job.export or {}).get("folder", ""), "zip": (job.export or {}).get("zip", ""), "next_step": next_step,
             "reviewed": reviewed, "note": "Exported means a reviewed package is saved on this laptop. It does not mean anything was sold, published or delivered."}

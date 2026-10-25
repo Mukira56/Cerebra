@@ -56,6 +56,7 @@ TRANSITIONS = {
     "REVIEWING": {"NEEDS_CHANGES", "AWAITING_APPROVAL", "BLOCKED", "FAILED", "CANCELLED"},
     "NEEDS_CHANGES": {"RUNNING", "READY", "BLOCKED", "FAILED", "CANCELLED"},
     "AWAITING_APPROVAL": {"READY", "NEEDS_CHANGES", "COMPLETED", "BLOCKED", "FAILED", "CANCELLED"},
+    "FAILED": {"BLOCKED"},  # only by restoring a checkpoint, which sends the work back through tests and review
     "BLOCKED": {"READY", "AWAITING_APPROVAL", "CANCELLED", "FAILED"},
     "COMPLETED": set(), "FAILED": set(), "CANCELLED": set(),
 }
@@ -751,6 +752,53 @@ class Supervisor:
         if chosen:
             return chosen["provider"], chosen.get("model", "")
         return ("claude" if role == "plan" else task.assigned_agent if role == "implement" else task.reviewer), ""
+
+    # ---- checkpoints and undo --------------------------------------------------------------------
+    def checkpoints(self, task_id):
+        task = self.get(task_id)
+        if not task.worktree_path or not Path(task.worktree_path).is_dir() or not task.base_commit:
+            return {"checkpoints": [], "current": None, "merged": None, "undone": (task.results or {}).get("undone")}
+        items = self.git.checkpoints(task.worktree_path, task.base_commit)
+        head = self.git.inspect_repository(task.worktree_path)["head"]
+        return {"checkpoints": items, "current": head, "candidate": (task.results or {}).get("candidate_commit"),
+                "merged": ((task.results or {}).get("integration") or {}).get("commit"), "undone": (task.results or {}).get("undone"), "state": task.state}
+
+    def restore_checkpoint(self, task_id, commit):
+        """Put a task's working copy back to an earlier checkpoint; the work must pass tests and review again."""
+        with self._lock, self.db.Session.begin() as session:
+            task = self._get(session, task_id)
+            if task.state not in {"BLOCKED", "FAILED", "AWAITING_APPROVAL"} or task.results.get("integration_in_progress"):
+                raise ValueError("Pause the task first. Finished (merged) work is undone with Undo merge instead.")
+            if commit not in [item["commit"] for item in self.git.checkpoints(task.worktree_path, task.base_commit)]:
+                raise ValueError("That checkpoint does not belong to this task")
+            self.git.restore(task.worktree_path, commit)
+            for approval in session.scalars(select(Approval).where(Approval.task_id == task_id)).all():
+                if approval.status.lower() == "pending":
+                    approval.status, approval.resolved_at = "cancelled", now()
+            snapshot = self.git.candidate_snapshot(task.worktree_path, task.base_commit)
+            task.pause_requested = True
+            task.results = {**task.results, "queued": False, "candidate_commit": commit, "progress_fingerprint": None, "resume_stage": "review",
+                            "blocked_reason": "restored_checkpoint", "diff": redact(snapshot.get("diff", "")), "error": None}
+            self._state(session, task, "BLOCKED", f"Restored checkpoint {commit[:8]}; press Resume, then Start, to test and review it again")
+            return task
+
+    def undo_integration(self, task_id):
+        """Revert a merged task in the user's project with one new commit."""
+        with self._lock, self.db.Session() as session:
+            task = self._get(session, task_id)
+            project = session.get(Project, task.project_id)
+            integration, candidate = (task.results or {}).get("integration"), (task.results or {}).get("candidate_commit")
+            if task.state != "COMPLETED" or not integration or not candidate:
+                raise ValueError("Only finished, merged tasks can be undone")
+            if (task.results or {}).get("undone"):
+                raise ValueError("This task was already undone")
+            repo, base, title = project.path, task.base_commit, " ".join(task.description.split())[:60]
+        result = self.git.revert_range(repo, base, candidate, f"Undo Cerebra task {task_id[:8]}: {title}")
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            stored.results = {**stored.results, "undone": {"commit": result["commit"], "at": now()}}
+            self._event(session, task_id, "undo", f"Undid this task's changes in the project with commit {result['commit'][:8]}", {"commit": result["commit"]})
+        return self.get(task_id)
 
     def _resume_candidate(self, task_id):
         """The saved candidate commit if this run resumes straight at review, else None (run the coder)."""

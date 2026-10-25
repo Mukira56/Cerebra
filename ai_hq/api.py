@@ -125,6 +125,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         response.headers.update({"X-Content-Type-Options":"nosniff", "Referrer-Policy":"no-referrer", "X-Frame-Options":"DENY", "Cache-Control":"no-store",
             "Cross-Origin-Opener-Policy":"same-origin", "Cross-Origin-Resource-Policy":"same-origin",
             "Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), clipboard-read=()", "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
+        if request.url.path.startswith("/api/business/jobs/") and "/preview/" in request.url.path and response.status_code == 200:
+            # Previews of generated files: shown only inside Cerebra's own window, with scripts, forms and
+            # outside connections all blocked, so a generated page can display but never act. Same origin is kept
+            # (safe without scripts) so the page's own stylesheet and images load with the session.
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = ("sandbox allow-same-origin; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                                                           "font-src 'self' data:; media-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
         return response
 
     @app.exception_handler(ValueError)
@@ -247,6 +254,33 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         values = payload.model_dump()
         values["objective"] = values.pop("description")
         return supervisor.propose(**values)
+
+    @app.get("/api/tasks/{task_id}/checkpoints")
+    def task_checkpoints(task_id: str):
+        with db.Session() as session: task_or_404(session, task_id)
+        return supervisor.checkpoints(task_id)
+
+    @app.post("/api/tasks/{task_id}/checkpoints/restore")
+    def task_restore(task_id: str, payload: dict):
+        commit = str(payload.get("commit", ""))
+        with db.Session() as session: task_or_404(session, task_id)
+        return supervisor.restore_checkpoint(task_id, commit)
+
+    @app.post("/api/tasks/{task_id}/undo")
+    def task_undo(task_id: str):
+        with db.Session() as session: task_or_404(session, task_id)
+        return supervisor.undo_integration(task_id)
+
+    @app.post("/api/readiness")
+    def readiness_start():
+        from . import readiness
+        def register_folder(name, path, test_commands): return register_job_folder(name, path, test_commands)
+        return readiness.start(db, settings, supervisor, register_folder)
+
+    @app.get("/api/readiness")
+    def readiness_status():
+        from . import readiness
+        return readiness.status(db, supervisor)
 
     @app.get("/api/tasks/{task_id}")
     def detail(task_id: str):
@@ -795,6 +829,26 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session.begin() as session:
             session.add(Event(kind="business", message=f"Business Studio job exported: {result['title']}"[:300]))
         return result
+
+    PREVIEW_TYPES = {".html": "text/html", ".htm": "text/html", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".md": "text/plain", ".txt": "text/plain", ".json": "text/plain"}
+
+    @app.get("/api/business/jobs/{job_id}/preview/{path:path}")
+    def business_preview(job_id: str, path: str):
+        """A file from a job's folder (or its latest export), confined to that folder, for the built-in preview."""
+        from .models import BusinessJob
+        with db.Session() as session:
+            job = session.get(BusinessJob, job_id)
+            if job is None: raise HTTPException(404, "Business job not found")
+            folder = Path(job.output_dir)
+        relative = Path(path)
+        if relative.is_absolute() or ".." in relative.parts or any(part.startswith(".") for part in relative.parts) or relative.name == "cerebra-brief.json":
+            raise HTTPException(404, "File not found")
+        try: target = business._within(folder / relative, folder)
+        except ValueError: raise HTTPException(404, "File not found")
+        kind = PREVIEW_TYPES.get(target.suffix.lower())
+        if kind is None or not target.is_file() or target.stat().st_size > 20 * 1024 * 1024: raise HTTPException(404, "File not found")
+        return FileResponse(target, media_type=kind + ("; charset=utf-8" if kind.startswith("text/") else ""))
 
     @app.post("/api/business/jobs/{job_id}/open")
     def business_open(job_id: str, payload: BusinessOpen): return business_or_404(business.open_location, db.Session, job_id, payload.what)

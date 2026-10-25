@@ -282,6 +282,15 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .factory-floor.factory-offline .person { opacity: .4; }
 .connection-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 330px); gap: 18px; align-items: start; }
 .connection-form { min-width: 0; }
+.preview-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.preview-tabs .chip.active { border-color: var(--green); color: var(--green); }
+.preview-viewer { border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; background: #fff; min-height: 120px; }
+.preview-frame { width: 100%; height: 560px; border: 0; display: block; background: #fff; }
+.preview-viewer .code-block, .preview-doc { margin: 0; background: var(--panel); color: var(--text); padding: 14px; max-height: 560px; overflow: auto; }
+.readiness-stage { display: grid; grid-template-columns: 22px 160px 1fr; gap: 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+.readiness-stage p { grid-column: 2 / -1; margin: 0; }
+.readiness-icon { font-weight: 700; text-align: center; }
+.readiness-stage.passed .readiness-icon { color: var(--green); } .readiness-stage.failed .readiness-icon { color: var(--red); } .readiness-stage.running .readiness-icon { color: var(--cyan); }
 .guide-notes { background: var(--bg-2); border: 1px solid var(--line-2); border-left: 3px solid var(--cyan); border-radius: 10px; padding: 12px 14px; font-size: 13px; color: var(--soft); display: flex; flex-direction: column; gap: 6px; }
 .guide-notes ul, .guide-notes ol { margin: 0 0 4px; padding-left: 18px; }
 .guide-notes li { margin: 2px 0; }

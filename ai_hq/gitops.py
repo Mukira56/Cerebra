@@ -40,7 +40,7 @@ class GitManager:
 
     def _git(self, repo, *args, check=True, timeout=60):
         filters = []
-        if any(argument in {"add", "commit", "merge", "worktree", "checkout", "diff", "status"} for argument in args):
+        if any(argument in {"add", "commit", "merge", "worktree", "checkout", "diff", "status", "reset", "revert", "show"} for argument in args):
             # Configured clean/smudge/process filters are arbitrary executables too.
             configured = self._git(repo, "config", "--name-only", "--get-regexp", r"^filter\..*\.(clean|smudge|process|required)$", check=False)
             for key in configured.stdout.splitlines():
@@ -273,3 +273,46 @@ class GitManager:
                     "changed_paths": changes}
 
     merge = integrate
+
+    def checkpoints(self, workdir, base, head="HEAD"):
+        """Commits a task made on its branch after `base`, oldest first, with the files each changed."""
+        root = self._root(workdir)
+        if not re.fullmatch(r"[0-9a-f]{7,64}", base or ""):
+            raise GitError("Unknown task base commit")
+        lines = self._git(root, "log", "--reverse", "--format=%H%x1f%s%x1f%cI", f"{base}..{head}").stdout.splitlines()
+        result = []
+        for line in lines:
+            commit, subject, at = (line.split("\x1f") + ["", ""])[:3]
+            files = [name for name in self._git(root, "show", "--no-renames", "--name-only", "--format=", commit).stdout.splitlines() if name]
+            result.append({"commit": commit, "message": subject, "at": at, "files": files})
+        return result
+
+    def restore(self, workdir, commit):
+        """Move a task's working copy back to one of its own checkpoints (uncommitted work there is discarded)."""
+        root = self._root(workdir)
+        if not re.fullmatch(r"[0-9a-f]{40,64}", commit or ""):
+            raise GitError("Choose a checkpoint")
+        with self._lock(root):
+            self._git(root, "reset", "--hard", commit)
+            self._git(root, "clean", "-fd")
+            return {"commit": self._git(root, "rev-parse", "HEAD").stdout.strip()}
+
+    def revert_range(self, repo, base, candidate, message):
+        """Undo an integrated task in the user's repository with ONE new commit (history is not rewritten)."""
+        root = self._root(repo)
+        for value in (base, candidate):
+            if not re.fullmatch(r"[0-9a-f]{40,64}", value or ""):
+                raise GitError("Unknown task commits")
+        with self._lock(root):
+            if self._git(root, "status", "--porcelain=v1", "--untracked-files=all").stdout:
+                raise GitError("Undo refused: the repository has changes that are not committed. Commit or stash them first.")
+            if self._git(root, "merge-base", "--is-ancestor", candidate, "HEAD", check=False).exit_code != 0:
+                raise GitError("Undo refused: this task's work is not part of the current branch")
+            result = self._git(root, "revert", "--no-commit", "--no-edit", f"{base}..{candidate}", check=False)
+            if result.exit_code != 0:
+                self._git(root, "revert", "--abort", check=False)
+                raise GitError("Undo stopped: later changes touch the same lines, so it can't be undone automatically. Nothing was changed.")
+            if not self._git(root, "status", "--porcelain=v1").stdout:
+                raise GitError("Nothing to undo: these changes are no longer in the project")
+            self._git(root, "-c", "user.name=Cerebra", "-c", "user.email=ai-hq@localhost", "commit", "--no-verify", "-m", message)
+            return {"commit": self._git(root, "rev-parse", "HEAD").stdout.strip()}
