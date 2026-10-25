@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from . import __version__
@@ -42,12 +43,28 @@ def installed_root():
 
 
 HELPER = r"""# Cerebra update helper: stop Cerebra, install the verified update silently, reopen Cerebra.
+# Shows a small window with the real step being done (Cerebra itself is closed during these steps).
 $ErrorActionPreference = 'Stop'
 $plan = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'update-plan.json') | ConvertFrom-Json
 $log = Join-Path $PSScriptRoot 'update.log'
 function Write-Log($message) { Add-Content -LiteralPath $log -Value ("{0} {1}" -f (Get-Date -Format s), $message) -Encoding UTF8 }
 $root = $plan.root.TrimEnd('\')
+$window = $null; $failed = $false
+if (-not $plan.quiet_ui) {
+    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+    $window = New-Object System.Windows.Forms.Form
+    $window.Text = "Updating Cerebra to $($plan.to)"; $window.Width = 460; $window.Height = 170; $window.StartPosition = 'CenterScreen'
+    $window.FormBorderStyle = 'FixedDialog'; $window.MaximizeBox = $false; $window.MinimizeBox = $false; $window.TopMost = $true
+    $label = New-Object System.Windows.Forms.Label; $label.SetBounds(20, 18, 410, 40); $label.Font = New-Object System.Drawing.Font('Segoe UI', 10)
+    $bar = New-Object System.Windows.Forms.ProgressBar; $bar.SetBounds(20, 66, 405, 24); $bar.Maximum = 100
+    $window.Controls.Add($label); $window.Controls.Add($bar); $window.Show()
+}
+function Step($percent, $text) {
+    Write-Log "$percent% $text"
+    if ($window) { $label.Text = $text; $bar.Value = $percent; [System.Windows.Forms.Application]::DoEvents() }
+}
 try {
+    Step 5 "Step 1 of 4: closing Cerebra (running tasks are paused)…"
     Start-Sleep -Seconds 3
     Write-Log "Updating Cerebra $($plan.from) -> $($plan.to)"
     $env:AIHQ_DATA_DIR = $plan.data; Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
@@ -55,16 +72,21 @@ try {
     try { & (Join-Path $root 'runtime\python.exe') -X utf8 -m ai_hq.manage stop --port $plan.port 2>&1 | ForEach-Object { Write-Log "$_" } } finally { Pop-Location }
     Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
+    Step 25 "Step 2 of 4: checking the downloaded installer…"
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $plan.installer).Hash -ne $plan.sha256.ToUpper()) { throw 'The downloaded installer changed after it was verified; update cancelled.' }
+    Step 40 "Step 3 of 4: installing Cerebra $($plan.to)… (about a minute)"
     $arguments = "--quiet --dir `"$root`" --data `"$($plan.data)`" --port $($plan.port)"
     if (-not $plan.desktop_shortcut) { $arguments += ' --no-desktop' }
     if ($plan.test_registration) { $arguments += ' --test-registration' }
-    $setup = Start-Process -FilePath $plan.installer -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
+    $setup = Start-Process -FilePath $plan.installer -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    while (-not $setup.HasExited) { if ($window) { [System.Windows.Forms.Application]::DoEvents() }; Start-Sleep -Milliseconds 200 }
     if ($setup.ExitCode -ne 0) { throw "The installer reported exit code $($setup.ExitCode); the previous version is kept." }
     Write-Log "Installed $($plan.to)"
-} catch { Write-Log "Update failed: $_" }
+    Step 90 "Step 4 of 4: opening Cerebra $($plan.to)…"
+} catch { $failed = $true; Write-Log "Update failed: $_"; if ($window) { $label.Text = "The update didn't finish: $_  Cerebra will reopen as before."; [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Seconds 4 } }
 finally {
     if ($plan.relaunch -ne $false) { Start-Process -FilePath (Join-Path $root 'AIHQ.exe'); Write-Log 'Cerebra reopened' } else { Write-Log 'Done' }
+    if ($window) { if (-not $failed) { Step 100 "Done." }; Start-Sleep -Milliseconds 800; $window.Close() }
 }
 """
 
@@ -74,7 +96,10 @@ class Updater:
         self.settings = settings
         self.runner = runner or ProcessRunner()
         self.spawn = spawn or self._spawn_detached
+        self.stream = self._stream
         self.folder = settings.data_dir / "updates"
+        self._lock = threading.Lock()
+        self._progress = {"phase": "idle", "percent": 0, "bytes": 0, "total": 0, "message": "", "error": ""}
 
     def _gh(self):
         gh = shutil.which("gh")
@@ -110,6 +135,75 @@ class Updater:
                 "published_at": release.get("publishedAt"), "installer": installer, "message": message,
                 "downloaded": self._pending(tag) is not None}
 
+    # ---- download with real progress ------------------------------------------------------------
+    def progress(self):
+        with self._lock:
+            return dict(self._progress)
+
+    def _set(self, **values):
+        with self._lock:
+            self._progress.update(values)
+            total, done = self._progress.get("total") or 0, self._progress.get("bytes") or 0
+            if self._progress["phase"] == "downloading" and total:
+                self._progress["percent"] = min(99, int(done * 100 / total))
+
+    def start_download(self, tag):
+        """Download in the background; progress() reports real bytes received out of the installer's size."""
+        if not TAG.match(tag or ""):
+            raise ValueError("Choose a release version to download")
+        if version_tuple(tag) <= version_tuple(__version__):
+            raise ValueError("That version is not newer than the one you have")
+        with self._lock:
+            if self._progress.get("phase") in {"starting", "downloading", "verifying"}:
+                raise ValueError("A download is already in progress")
+            self._progress = {"phase": "starting", "tag": tag, "bytes": 0, "total": 0, "percent": 0, "message": "Starting the download…", "error": ""}
+        def work():
+            try:
+                result = self.download(tag)
+                self._set(phase="ready", percent=100, message=result["message"])
+            except Exception as exc:  # shown in the progress bar, never raised into the server
+                self._set(phase="failed", error=redact(str(exc))[:400], message="The download didn't finish.")
+        threading.Thread(target=work, name="cerebra-update-download", daemon=True).start()
+        return self.progress()
+
+    def _stream(self, api_url, path, on_bytes, expected_size=0):
+        """Stream one release file, reporting bytes as they arrive.
+
+        GitHub answers a release-asset request with a short-lived download link. The user's own GitHub CLI
+        sign-in is used only for that first request; the token stays in memory for that call and is never
+        stored, logged or put in an error message. The file itself streams from the temporary link."""
+        import httpx
+        from .processes import scrub_environment
+        token = subprocess.run([self._gh(), "auth", "token"], capture_output=True, text=True, timeout=30, env=scrub_environment(),
+                               stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
+        if not token:
+            raise ValueError("Sign in to GitHub on the GitHub page first")
+        # Resume a partial download (slow or dropped connections) instead of starting over.
+        received = path.stat().st_size if path.exists() and expected_size and path.stat().st_size < expected_size else 0
+        try:
+            with httpx.Client(timeout=httpx.Timeout(60, read=180), follow_redirects=False) as client:
+                answer = client.get(api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/octet-stream"})
+                if answer.status_code in {301, 302, 303, 307, 308}:
+                    request = ("GET", answer.headers["location"], {})
+                elif answer.status_code == 200:
+                    path.write_bytes(answer.content); on_bytes(len(answer.content)); return len(answer.content)
+                else:
+                    raise ValueError(f"GitHub answered {answer.status_code}; check that you are signed in and can see the Cerebra repository")
+                with client.stream(request[0], request[1], headers={"Range": f"bytes={received}-"} if received else {}) as response:
+                    if response.status_code == 200:
+                        received = 0  # the server sent the whole file again
+                    elif response.status_code != 206:
+                        raise ValueError(f"The download link answered {response.status_code}")
+                    on_bytes(received)
+                    with path.open("ab" if received else "wb") as handle:
+                        for chunk in response.iter_bytes(65536):
+                            handle.write(chunk); received += len(chunk); on_bytes(received)
+        except httpx.HTTPError:
+            raise ValueError("The connection to GitHub dropped. Check your internet and try again.") from None
+        finally:
+            token = None
+        return received
+
     def download(self, tag):
         if not TAG.match(tag or ""):
             raise ValueError("Choose a release version to download")
@@ -117,11 +211,24 @@ class Updater:
             raise ValueError("That version is not newer than the one you have")
         target = self.folder / tag
         target.mkdir(parents=True, exist_ok=True)
-        if self._run(["release", "download", tag, "--repo", REPOSITORY, "--pattern", "Cerebra-Setup-*-Windows-x64.exe*", "--dir", str(target), "--clobber"], timeout=900) is None:
+        output = self._run(["release", "view", tag, "--repo", REPOSITORY, "--json", "assets"], timeout=60)
+        if output is None:
             raise ValueError(f"Release {tag} was not found")
-        installer = next((path for path in target.iterdir() if INSTALLER.match(path.name) and path.name[14:].startswith(tag[1:] + "-")), None)
-        if installer is None or not installer.with_name(installer.name + ".sha256").is_file():
+        assets = {asset.get("name", ""): asset for asset in json.loads(output).get("assets", [])}
+        name = next((item for item in assets if INSTALLER.match(item) and item[14:].startswith(tag[1:] + "-")), None)
+        if name is None or f"{name}.sha256" not in assets:
             raise ValueError("The release is missing its installer or checksum file")
+        installer = target / name
+        self._set(phase="downloading", total=int(assets[name].get("size") or 0), bytes=0, message=f"Downloading Cerebra {tag[1:]}…")
+        installer.with_name(name + ".sha256").unlink(missing_ok=True)
+        self.stream(assets[f"{name}.sha256"]["apiUrl"], installer.with_name(name + ".sha256"), lambda _: None)
+        size = int(assets[name].get("size") or 0)
+        if installer.exists() and installer.stat().st_size > size:
+            installer.unlink()
+        self.stream(assets[name]["apiUrl"], installer, lambda done: self._set(bytes=done), size)
+        if size and installer.stat().st_size != size:
+            raise ValueError("The download stopped early. Press Download again to continue from where it stopped.")
+        self._set(phase="verifying", percent=99, message="Checking the download against its published checksum…")
         expected = installer.with_name(installer.name + ".sha256").read_text(encoding="utf-8").split()[0].lower()
         actual = hashlib.sha256(installer.read_bytes()).hexdigest()
         if not re.fullmatch(r"[0-9a-f]{64}", expected) or actual != expected:

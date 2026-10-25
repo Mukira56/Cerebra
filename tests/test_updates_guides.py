@@ -25,7 +25,8 @@ class FakeGh:
         args = [str(arg) for arg in args]; self.calls.append(args)
         name = f"Cerebra-Setup-{self.tag[1:]}-Windows-x64.exe"
         if args[1:3] == ["release", "view"]:
-            assets = [{"name": name}, {"name": name + ".sha256"}] if self.assets else []
+            assets = [{"name": name, "size": len(INSTALLER), "apiUrl": "https://api.github.com/assets/1"},
+                      {"name": name + ".sha256", "size": 90, "apiUrl": "https://api.github.com/assets/2"}] if self.assets else []
             return SimpleNamespace(exit_code=0, stdout=json.dumps({"tagName": self.tag, "name": f"Cerebra {self.tag}", "body": "## New\n- Faster", "publishedAt": "2026-10-25T10:00:00Z", "assets": assets}), stderr="")
         if args[1:3] == ["release", "download"]:
             target = Path(args[args.index("--dir") + 1])
@@ -43,18 +44,43 @@ def client(tmp_path, monkeypatch):
     spawned = []
     app.state.updater.runner = FakeGh()
     app.state.updater.spawn = spawned.append
+    def stream(url, path, on_bytes, expected_size=0):
+        """Stands in for GitHub: writes the release file in chunks and reports progress, like the real stream."""
+        fake = app.state.updater.runner
+        name = f"Cerebra-Setup-{fake.tag[1:]}-Windows-x64.exe"
+        content = INSTALLER if url.endswith("/1") else f"{hashlib.sha256(b'something else' if fake.corrupt else INSTALLER).hexdigest()}  {name}\n".encode()
+        with path.open("wb") as handle:
+            for index in range(0, len(content), 7):
+                handle.write(content[index:index + 7]); on_bytes(index + len(content[index:index + 7]))
+        return len(content)
+    app.state.updater.stream = stream
     app.state.spawned = spawned
     with TestClient(app) as client:
         client.headers["X-CSRF-Token"] = client.post("/api/session", json={"key": KEY}).json()["csrf_token"]
         yield client
 
 
+def download(client, tag="v99.0.0"):
+    """Start the background download and wait for it to finish, as the Settings page does."""
+    import time
+    started = client.post("/api/updates/download", json={"tag": tag})
+    if started.status_code != 200:
+        return started.json()
+    for _ in range(200):
+        progress = client.get("/api/updates/progress").json()
+        if progress["phase"] in {"ready", "failed"}:
+            return progress
+        time.sleep(0.02)
+    raise AssertionError("download did not finish")
+
+
 def test_check_download_verify_and_install_plan(client, tmp_path, monkeypatch):
     info = client.get("/api/updates").json()
     assert info["available"] and info["latest"] == "99.0.0" and "Faster" in info["notes"] and not info["downloaded"]
     assert client.post("/api/updates/install").status_code == 400  # nothing downloaded yet
-    result = client.post("/api/updates/download", json={"tag": "v99.0.0"}).json()
-    assert result["downloaded"] and result["sha256"] == hashlib.sha256(INSTALLER).hexdigest()
+    result = download(client)
+    assert result["phase"] == "ready" and result["percent"] == 100 and result["total"] == len(INSTALLER) and result["bytes"] == len(INSTALLER)
+    assert client.get("/api/overview").json()["update_progress"]["phase"] == "ready"  # shown in the top bar on every page
     assert client.get("/api/updates").json()["downloaded"]
     # Running from source: installing is refused (use git pull).
     assert "git pull" in client.post("/api/updates/install").json()["detail"]
@@ -65,15 +91,15 @@ def test_check_download_verify_and_install_plan(client, tmp_path, monkeypatch):
     assert started["restarting"] and client.app.state.spawned
     folder = tmp_path / "data" / "updates"
     plan = json.loads((folder / "update-plan.json").read_text(encoding="utf-8"))
-    assert plan["to"] == "99.0.0" and plan["root"] == str(root) and plan["sha256"] == result["sha256"] and plan["data"] == str(tmp_path / "data")
+    assert plan["to"] == "99.0.0" and plan["root"] == str(root) and plan["sha256"] == hashlib.sha256(INSTALLER).hexdigest() and plan["data"] == str(tmp_path / "data")
     script = (folder / "apply-update.ps1").read_text(encoding="utf-8-sig")
-    assert "manage stop" in script and "Get-FileHash" in script and "--quiet" in script and "AIHQ.exe" in script
+    assert "Step 3 of 4" in script and "ProgressBar" in script and "manage stop" in script and "Get-FileHash" in script and "--quiet" in script and "AIHQ.exe" in script
 
 
 def test_tampered_or_old_releases_are_refused(client):
     client.app.state.updater.runner = FakeGh(corrupt=True)
-    response = client.post("/api/updates/download", json={"tag": "v99.0.0"})
-    assert response.status_code == 400 and "does not match" in response.json()["detail"]
+    response = download(client)
+    assert response["phase"] == "failed" and "does not match" in response["error"]
     assert not list((client.app.state.settings.data_dir / "updates" / "v99.0.0").glob("*.exe"))  # deleted
     assert client.post("/api/updates/download", json={"tag": "v0.0.1"}).status_code == 400
     assert client.post("/api/updates/download", json={"tag": "latest; rm"}).status_code == 422

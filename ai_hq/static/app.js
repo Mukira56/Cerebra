@@ -3,7 +3,7 @@
 (() => {
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
-    overview: ["WORKSPACE", "Overview", "Everything happening in your development HQ, at a glance."],
+    overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
     connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
@@ -105,7 +105,19 @@
     const count = pendingApprovals().length; $("#approval-count").textContent = count; $("#approval-count").classList.toggle("hidden", !count);
     const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "away mode" : "agents on") : "agents off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
     $("#version-label").textContent = `Cerebra v${data.version || ""}`;
+    const update = data.update_progress || {}, pill = $("#update-status"), active = ["starting", "downloading", "verifying"].includes(update.phase);
+    pill.classList.toggle("hidden", !(active || update.phase === "ready"));
+    pill.className = `pill ${update.phase === "ready" ? "good" : ""}${active || update.phase === "ready" ? "" : " hidden"}`;
+    pill.textContent = update.phase === "ready" ? "Update ready to install" : active ? `Update ${update.percent || 0}%` : "";
+    if (lastUpdatePhase && lastUpdatePhase !== update.phase) {
+      if (update.phase === "ready") toast("The update is downloaded and verified. Install it from Settings › Updates when you're ready.");
+      if (update.phase === "failed") toast(`The update download didn't finish: ${update.error}`, true);
+    }
+    lastUpdatePhase = update.phase;
+    const permission = $("#footer-permission");
+    if (permission) permission.textContent = awayOn() ? `Away mode answers approvals until ${date(data.autopilot.until)}` : data.assistant?.allow_approvals ? "You or the Assistant approve each step" : "You approve every step";
   }
+  let lastUpdatePhase = "";
 
   function render() {
     clearInterval(pageTimer); pageTimer = 0; renderToken++;
@@ -347,6 +359,31 @@
     });
     return grid;
   }
+  const TEST_PRESETS = [["none", "Not yet: add tests later", null], ["pytest", "Python: pytest", ["python", "-m", "pytest", "-q"]], ["unittest", "Python: unittest", ["python", "-m", "unittest", "-q"]],
+    ["npm", "Node.js: npm test", ["npm", "test"]], ["pnpm", "Node.js: pnpm test", ["pnpm", "test"]], ["yarn", "Node.js: yarn test", ["yarn", "test"]], ["dotnet", ".NET: dotnet test", ["dotnet", "test"]],
+    ["go", "Go: go test ./...", ["go", "test", "./..."]], ["cargo", "Rust: cargo test", ["cargo", "test"]], ["maven", "Java: mvn test", ["mvn", "test"]], ["gradle", "Java/Kotlin: gradle test", ["gradle", "test"]],
+    ["flutter", "Flutter: flutter test", ["flutter", "test"]], ["laravel", "PHP Laravel: php artisan test", ["php", "artisan", "test"]], ["custom", "Something else: type the command", null]];
+  function splitCommand(text) { return (text.match(/"[^"]*"|'[^']*'|\S+/g) || []).map(part => part.replace(/^(["'])(.*)\1$/, "$2")); }
+  function testPicker(initial = []) {
+    const choice = select(TEST_PRESETS.map(([key, label]) => [key, label])), custom = input("e.g. npm run test:ci"), note = el("small", "detect-note", ""), advanced = commandsInput("");
+    const customField = field("Test command", custom, "Type it exactly as you would in a terminal inside the project folder."), more = append(el("details", "advanced-tests"), el("summary", "", "Several commands? (advanced)"), field("One list per command", advanced, TEST_HELP));
+    const node = append(el("div", "test-picker"), field("How is it tested?", choice, "Cerebra runs this after every change to prove the work."), customField, note, more);
+    const sync = () => customField.classList.toggle("hidden", choice.value !== "custom");
+    choice.addEventListener("change", sync);
+    function set(commands, reason = "") {
+      commands = array(commands);
+      if (commands.length > 1) { advanced.value = JSON.stringify(commands); more.open = true; choice.value = "none"; }
+      else if (!commands.length) choice.value = "none";
+      else { const match = TEST_PRESETS.find(([, , command]) => command && JSON.stringify(command) === JSON.stringify(commands[0])); choice.value = match ? match[0] : "custom"; if (!match) custom.value = commands[0].join(" "); }
+      note.textContent = reason; sync();
+    }
+    function value() {
+      if (advanced.value.trim() && advanced.value.trim() !== "[]") return parseCommands(advanced.value);
+      if (choice.value === "custom") { const parts = splitCommand(custom.value.trim()); if (!parts.length) throw new Error("Type the test command, or choose “Not yet”."); return [parts]; }
+      const preset = TEST_PRESETS.find(([key]) => key === choice.value); return preset && preset[2] ? [preset[2]] : [];
+    }
+    set(initial); return {node, set, value};
+  }
   function commandsInput(value) { return textarea('[["python", "-m", "pytest", "-q"]]', value); }
   function parseCommands(text) { let commands; try { commands = JSON.parse(text || "[]"); } catch { throw new Error("Test commands must be JSON, for example [[\"npm\", \"test\"]]"); } if (!Array.isArray(commands) || commands.some(command => !Array.isArray(command) || !command.length || command.some(arg => typeof arg !== "string"))) throw new Error("Use a list of argument lists, each argument a string."); return commands; }
   const TEST_HELP = "How Cerebra checks the work. Examples: [[\"python\",\"-m\",\"pytest\",\"-q\"]] · [[\"npm\",\"test\"]] · [[\"dotnet\",\"test\"]]. These run as your Windows user, so only add projects you trust.";
@@ -356,11 +393,15 @@
     async function loadRepos() { repo.replaceChildren(option("", "Loading your repositories…")); try { cache.repos = cache.repos || await api("/api/github/repositories", {timeout: 60000}); repo.replaceChildren(...cache.repos.map(item => option(item.name, `${item.name} · ${item.visibility?.toLowerCase() || ""}`))); if (!cache.repos.length) repo.replaceChildren(option("", "No repositories found")); } catch (issue) { repo.replaceChildren(option("", issue.message)); } }
     function sync() { pathField.classList.toggle("hidden", kind.value !== "existing"); repoField.classList.toggle("hidden", kind.value !== "github"); if (kind.value === "github" && !repo.options.length) loadRepos(); }
     kind.addEventListener("change", sync); sync();
-    append(form, field("Where is the project?", kind), field("Name", name), pathField, repoField, field("Test commands", tests, TEST_HELP), consent.wrap);
+    const picker = testPicker([]);
+    const browse = button("Browse…", async () => { browse.disabled = true; try { const chosen = await mutate("/api/pick-folder", {}, "POST", 600000); if (chosen.path) { path.value = chosen.path; if (!name.value.trim()) name.value = chosen.path.split(/[\\/]/).filter(Boolean).pop() || ""; detect(); } } catch (issue) { toast(issue.message, true); } finally { browse.disabled = false; } }, "button small");
+    async function detect() { const folder = path.value.trim(); if (!/^[A-Za-z]:[\\/]/.test(folder)) return; try { const found = await api(`/api/projects/detect?path=${encodeURIComponent(folder)}`); picker.set(found.test_commands, found.key === "none" ? found.reason : `Detected: ${found.reason}.`); } catch (issue) { picker.set([], issue.message); } }
+    path.addEventListener("change", detect); pathField.append(browse);
+    append(form, field("Where is the project?", kind), field("Name", name), pathField, repoField, picker.node, consent.wrap);
     const submit = submitButton("Add project"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
     wireForm(form, submit, async () => {
       if (!consent.control.checked) throw new Error("Tick the trust box to continue.");
-      const commands = parseCommands(tests.value);
+      const commands = picker.value();
       const project = kind.value === "github" ? await mutate("/api/github/clone", {repository: repo.value, name: name.value.trim(), authorize: true, test_commands: commands}, "POST", 600000)
         : await mutate("/api/projects", {name: name.value.trim() || "New project", path: kind.value === "new" ? "" : path.value.trim(), create_new: kind.value === "new", authorize: true, test_commands: commands});
       closeDialog(); await refresh(true); toast(`Project “${project.name}” added.`);
@@ -368,9 +409,10 @@
     showDialog("Add a project", form);
   }
   function testsForm(project) {
-    const form = el("form"), tests = commandsInput(JSON.stringify(project.test_commands || [])); append(form, field("Test commands", tests, TEST_HELP));
+    const form = el("form"), picker = testPicker(project.test_commands || []), redetect = button("Detect again", async () => { try { const found = await api(`/api/projects/detect?path=${encodeURIComponent(project.path)}`); picker.set(found.test_commands, found.key === "none" ? found.reason : `Detected: ${found.reason}.`); } catch (issue) { toast(issue.message, true); } }, "button small ghost");
+    append(form, picker.node, redetect);
     const submit = submitButton("Save"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
-    wireForm(form, submit, async () => { await mutate(`/api/projects/${project.id}`, {test_commands: parseCommands(tests.value)}, "PATCH"); closeDialog(); await refresh(true); toast("Test commands saved."); });
+    wireForm(form, submit, async () => { await mutate(`/api/projects/${project.id}`, {test_commands: picker.value()}, "PATCH"); closeDialog(); await refresh(true); toast("Test commands saved."); });
     showDialog(`Tests · ${project.name}`, form);
   }
   function publishForm(project) {
@@ -902,17 +944,30 @@
     async function run() {
       check.disabled = true; check.textContent = "Checking…";
       let info; try { info = await api("/api/updates", {timeout: 90000}); } catch (issue) { state.replaceChildren(hint(issue.message, true), actionsRow(button("Try again", () => run(), "button"))); return; }
-      const actions = el("div", "form-actions"), download = button(`Download ${info.latest || ""}`, async () => {
-        download.disabled = true; download.textContent = "Downloading and verifying…";
-        const result = await act(value => value.message, () => mutate("/api/updates/download", {tag: info.tag}, "POST", 900000));
-        if (result) { download.replaceWith(install); } else { download.disabled = false; download.textContent = `Download ${info.latest}`; }
+      const bar = el("progress", "update-bar"), barText = el("span", "row-meta"), meter = append(el("div", "update-meter hidden"), bar, barText); bar.max = 100; bar.value = 0;
+      const megabytes = value => `${(Number(value || 0) / 1048576).toFixed(1)} MB`;
+      async function watch() {
+        let state_; try { state_ = await api("/api/updates/progress"); } catch { setTimeout(watch, 2000); return; }
+        meter.classList.remove("hidden"); bar.value = state_.percent || 0;
+        barText.textContent = state_.phase === "downloading" ? `${state_.percent || 0}% · ${megabytes(state_.bytes)} of ${megabytes(state_.total)}` : state_.phase === "verifying" ? "99% · checking the checksum…"
+          : state_.phase === "ready" ? "100% · downloaded and verified" : state_.phase === "failed" ? `Failed: ${state_.error}` : state_.message || "Starting…";
+        if (state_.phase === "ready") { download.replaceWith(install); return; }
+        if (state_.phase === "failed") { download.disabled = false; download.textContent = `Try again`; return; }
+        if (page === "settings") setTimeout(watch, 500);
+      }
+      const download = button(`Download ${info.latest || ""}`, async () => {
+        download.disabled = true; download.textContent = "Downloading in the background…";
+        if (await act("Downloading in the background. You can keep working; the top bar shows its progress.", () => mutate("/api/updates/download", {tag: info.tag}))) watch();
+        else { download.disabled = false; download.textContent = `Download ${info.latest}`; }
       }, "button primary");
+      const actions = el("div", "form-actions");
       const install = button("Install and restart", async () => {
         install.disabled = true;
         const result = await act(value => value.message, () => mutate("/api/updates/install", {}, "POST", 60000));
-        if (result) state.replaceChildren(el("div", "notice", result.message)); else install.disabled = false;
+        if (result) state.replaceChildren(el("div", "notice", `${result.message} A small window shows each step while Cerebra is closed.`)); else install.disabled = false;
       }, "button primary");
       if (info.available) actions.append(info.downloaded ? install : download);
+      if (info.available && !info.downloaded && ["starting", "downloading", "verifying"].includes(data.update_progress?.phase)) { download.disabled = true; download.textContent = "Downloading in the background…"; watch(); }
       actions.append(button("Check again", () => run(), "button ghost"));
       state.replaceChildren(append(el("div", "row-meta"), badge(info.available ? "update available" : "up to date", info.available ? "green" : "muted"), el("span", "", info.message)),
         !info.installed && info.available ? hint("You're running Cerebra from source: update it with git pull instead.", true) : null, info.installed || !info.available ? actions : null);

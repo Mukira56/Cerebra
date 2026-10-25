@@ -117,3 +117,13 @@ def test_no_limit_settings(client, tmp_path):
     task = client.post("/api/tasks", json={"project_id": project["id"], "description": "Fix calculator addition"}).json()
     assert task["max_retries"] == -1 and "until the work passes" in json.dumps(task["plan"])
     assert client.patch("/api/settings", json={"max_retries": -2}).status_code == 422
+
+
+def test_a_reply_never_stays_stuck_on_thinking(client):
+    """If an answer can no longer arrive (no answer is running), reading the chat repairs it instead of spinning forever."""
+    from ai_hq.models import ChatMessage, uid
+    conversation = client.post("/api/chats", json={"profile": "codex"}).json()["id"]
+    with client.app.state.db.Session.begin() as session:
+        session.add(ChatMessage(id=uid(), conversation_id=conversation, role="assistant", status="pending", provider="codex"))
+    state = client.get(f"/api/chats/{conversation}").json()
+    assert not state["busy"] and state["messages"][0]["status"] == "failed" and "interrupted" in state["messages"][0]["error"]

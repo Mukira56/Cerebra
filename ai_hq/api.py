@@ -201,11 +201,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             from . import autopilot, routing
             from .catalog import catalog
             away = autopilot.describe(autopilot.load(session))
+            from . import support as support_settings_module
+            assistant_settings = support_settings_module.load(session)
             route_policy = routing.load(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -546,6 +548,17 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             session.add(Event(kind="github", message=f"Pushed {project.name} ({project.default_branch}) to GitHub"))
         return result
 
+    @app.get("/api/projects/detect")
+    def project_detect(path: str):
+        from .detect import detect
+        if len(path) > 1024: raise ValueError("That folder path is too long")
+        return detect(path)
+
+    @app.post("/api/pick-folder")
+    def project_pick_folder():
+        from .detect import pick_folder
+        return {"path": pick_folder()}
+
     @app.patch("/api/projects/{project_id}")
     def update_project(project_id: str, payload: dict):
         commands = ProjectCreate.commands(payload.get("test_commands", []))
@@ -827,11 +840,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/updates/download")
     def updates_download(payload: UpdateDownload):
-        tag = payload.tag
-        result = updater.download(tag)
         with db.Session.begin() as session:
-            session.add(Event(kind="update", message=f"Downloaded and verified Cerebra {tag[1:]}"))
-        return result
+            session.add(Event(kind="update", message=f"Started downloading Cerebra {payload.tag[1:]}"))
+        return updater.start_download(payload.tag)
+
+    @app.get("/api/updates/progress")
+    def updates_progress(): return updater.progress()
 
     @app.post("/api/updates/install")
     def updates_install():

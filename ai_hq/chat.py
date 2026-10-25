@@ -62,8 +62,15 @@ class ChatService:
             actions = {}
             for action in session.scalars(select(ChatAction).where(ChatAction.conversation_id == conversation_id).order_by(ChatAction.created_at)).all():
                 actions.setdefault(action.message_id, []).append(as_dict(action))
-            return {"conversation": as_dict(conversation), "messages": [dict(as_dict(row), actions=actions.get(row.id, [])) for row in rows],
-                    "busy": conversation_id in self._busy, "settings": support.load(session)}
+            busy = conversation_id in self._busy
+            stuck = [row.id for row in rows if row.status == "pending" and not busy]
+        for reply_id in stuck:
+            self._mark_interrupted(reply_id, "This answer was interrupted. Send the message again.")
+        if stuck:
+            return self.messages(conversation_id)
+        with self.db.Session() as session:
+            return {"conversation": as_dict(session.get(ChatConversation, conversation_id)), "messages": [dict(as_dict(row), actions=actions.get(row.id, [])) for row in rows],
+                    "busy": busy, "settings": support.load(session)}
 
     def delete(self, conversation_id):
         with self._lock:
@@ -161,31 +168,64 @@ class ChatService:
 
     def _answer(self, conversation_id, reply_id, profile, prompt, workdir, cancel):
         try:
-            result = self.registry_source().chat(profile["provider"], prompt, workdir, profile["model"], cancel)
-            success, content, error = result.success, result.output, result.error or ""
-        except Exception as exc:  # A failed answer is recorded, never raised into the server.
-            success, content, error = False, "", redact(str(exc))
-        finally:
-            self._cancels.pop(conversation_id, None)
-        actions, problems = [], []
-        if success:
-            content, actions, problems = support.parse(content)
-            if problems:
-                content += "\n\n" + "\n".join(f"_{problem}_" for problem in problems)
-        with self.db.Session.begin() as session:
-            reply = session.get(ChatMessage, reply_id)
-            reply.status = "done" if success else "failed"
-            reply.content, reply.error, reply.finished_at = redact(content), redact(error)[:4000], now()
-            automatic = support.load(session)["act_automatically"]
-            created = []
-            for action in actions:
-                row = ChatAction(id=uid(), message_id=reply_id, conversation_id=conversation_id, payload=action, summary=support.describe(action))
-                session.add(row)
-                created.append(row.id)
-        try:
+            try:
+                result = self.registry_source().chat(profile["provider"], prompt, workdir, profile["model"], cancel)
+                success, content, error = result.success, result.output, result.error or ""
+            except Exception as exc:  # A failed answer is recorded, never raised into the server.
+                success, content, error = False, "", redact(str(exc))
+            finally:
+                self._cancels.pop(conversation_id, None)
+            actions, problems = [], []
+            if success:
+                content, actions, problems = support.parse(content)
+                if problems:
+                    content += "\n\n" + "\n".join(f"_{problem}_" for problem in problems)
+            created, automatic = self._save_reply(conversation_id, reply_id, success, content, error, actions)
             if automatic:
                 for identifier in created:
                     self.run_action(identifier)
+        except Exception as exc:  # never leave a reply stuck on "thinking"
+            self._log_error(exc)
+            self._mark_interrupted(reply_id, "Cerebra couldn't save this answer. Send the message again.")
         finally:
             with self._lock:
                 self._busy.discard(conversation_id)
+
+    def _save_reply(self, conversation_id, reply_id, success, content, error, actions):
+        import time as _time
+        from sqlalchemy.exc import OperationalError
+        for attempt in range(5):
+            try:
+                with self.db.Session.begin() as session:
+                    reply = session.get(ChatMessage, reply_id)
+                    reply.status = "done" if success else "failed"
+                    reply.content, reply.error, reply.finished_at = redact(content), redact(error)[:4000], now()
+                    automatic = support.load(session)["act_automatically"]
+                    created = []
+                    for action in actions:
+                        row = ChatAction(id=uid(), message_id=reply_id, conversation_id=conversation_id, payload=action, summary=support.describe(action))
+                        session.add(row)
+                        created.append(row.id)
+                return created, automatic
+            except OperationalError:  # the database was briefly busy: wait and try again
+                if attempt == 4:
+                    raise
+                _time.sleep(0.5 * (attempt + 1))
+
+    def _mark_interrupted(self, reply_id, reason):
+        try:
+            with self.db.Session.begin() as session:
+                reply = session.get(ChatMessage, reply_id)
+                if reply is not None and reply.status == "pending":
+                    reply.status, reply.error, reply.finished_at = "failed", reason, now()
+        except Exception as exc:
+            self._log_error(exc)
+
+    def _log_error(self, exc):
+        import traceback
+        try:
+            folder = self.settings.data_dir / "logs"; folder.mkdir(parents=True, exist_ok=True)
+            with (folder / "chat-errors.log").open("a", encoding="utf-8") as handle:
+                handle.write(f"{now()} {redact(''.join(traceback.format_exception(exc)))}\n")
+        except OSError:
+            pass

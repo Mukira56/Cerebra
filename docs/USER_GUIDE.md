@@ -18,7 +18,8 @@ The **Overview** page shows a *Get started* checklist:
    - Press **Check sign-in** to confirm. Once you're signed in, the button becomes **Sign out**, which runs the tool's own logout.
 3. **Settings › Agent permissions**: tick both boxes and press **Switch agents on**. This is a one-time permission; every task still asks you before agents run.
 4. **Projects › Add project**: pick an existing folder, a new empty project, or **Clone from GitHub**.
-   - Add the project's **test commands**, for example `[["python","-m","pytest","-q"]]` or `[["npm","test"]]`. Cerebra uses them to prove that the AI's code works.
+   - Press **Browse…** to choose the folder in Windows' own folder picker, or type it.
+   - Cerebra looks at the folder and suggests how it is tested (for example pytest, npm test, dotnet test, go test or cargo test). Check the suggestion under **How is it tested?**, choose another runner, or pick **Something else** and type the command as you would in a terminal. Cerebra runs these tests to prove that the AI's code works. Several commands go under **Several commands? (advanced)**.
 5. **Tasks › New task**: describe what you want.
 
 ## How a task works
@@ -240,8 +241,10 @@ A Business Studio job's page has a **Preview** section. Click a file to see the 
 ## Updating Cerebra
 
 Open **Settings › Updates** and press **Check for updates**.
-- If a newer version is published on your GitHub, press **Download**. Cerebra downloads the installer and checks that it matches its published checksum.
-- Then press **Install and restart**. Cerebra closes, installs the update and opens again by itself in about a minute.
+- If a newer version is published on your GitHub, press **Download**. A progress bar shows 0–100% and how many MB have arrived.
+- The download runs in the background: you can close Settings and keep working. The top bar shows "Update N%", and a message appears when it is ready.
+- If the connection drops, press **Download** again; it continues from where it stopped. When it finishes, Cerebra checks that the installer matches its published checksum.
+- Then press **Install and restart**. Cerebra closes and a small window shows each step of the update (closing, installing, starting) until Cerebra opens again by itself, in about a minute.
 - Running tasks are paused and can be resumed, and your projects, tasks and settings are kept.
 
 Updates use your GitHub sign-in (GitHub page), so the GitHub CLI must be installed and signed in.

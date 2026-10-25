@@ -26,8 +26,11 @@ const path = require('node:path');
     await page.locator('[data-page="projects"]').click();
     await page.locator('#heading-actions').getByRole('button', {name: '+ Add project'}).click();
     await page.locator('dialog select').first().selectOption('new');
-    await page.locator('dialog input[placeholder^="e.g."]').fill('Booking platform');
-    await page.locator('dialog textarea').fill('[["python", "-m", "pytest", "-q"]]');
+    await page.locator('dialog input[placeholder="e.g. Booking platform"]').fill('Booking platform');
+    // Tests are chosen from a plain list (no JSON), with a typed command or advanced lists as options.
+    await page.locator('dialog .test-picker select').selectOption('custom');
+    await page.locator('dialog .test-picker input').fill('python -m pytest -q');
+    assert.ok(await page.locator('dialog button', {hasText: 'Browse…'}).count(), 'The folder can be chosen with the Windows picker');
     await page.locator('dialog input[type=checkbox]').check();
     await page.locator('dialog').getByRole('button', {name: 'Add project', exact: true}).click();
     await page.locator('.card h3', {hasText: 'Booking platform'}).waitFor();
