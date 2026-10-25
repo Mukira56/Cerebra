@@ -11,7 +11,7 @@
     tasks: ["WORK", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
     projects: ["WORK", "Projects", "Repositories Cerebra is allowed to work in."],
     approvals: ["WORK", "Approvals", "Nothing important happens without your yes."],
-    system: ["INSIGHT", "System view", "A live map of the backend: what runs where, right now."],
+    system: ["INSIGHT", "Factory floor", "A live blueprint of your AI development factory. Inspect a building or a person to see its recorded work."],
     reports: ["INSIGHT", "Reports", "What happened in each task, explained in plain words."],
     report: ["INSIGHT", "Task report", ""],
     activity: ["INSIGHT", "Activity log", "Every decision the supervisor recorded."],

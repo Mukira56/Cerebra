@@ -24,7 +24,7 @@ uvicorn.run(app,host="127.0.0.1",port=int(os.environ["CEREBRA_UI_PORT"]),access_
 '''
 
 def main():
-    shots=ROOT/"work/release-090-ui"; shots.mkdir(parents=True,exist_ok=True)
+    shots=ROOT/"work/release-0100-ui"; shots.mkdir(parents=True,exist_ok=True)
     node=Path(os.environ.get("CEREBRA_NODE",str(Path.home()/".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe")))
     playwright=node.parent.parent/"node_modules/playwright-core"
     with tempfile.TemporaryDirectory(prefix="cerebra-ui-") as directory:

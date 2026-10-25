@@ -221,3 +221,11 @@ Open **Business connections** to configure optional services. Blank secret field
 
 External actions are recorded. A repeated successful request returns its existing result; a pending/uncertain request is blocked from automatic retry. Check the provider's dashboard after timeouts rather than generating duplicates. External actions are not delegated to Support/Away mode. These connections require your accounts, permissions and provider access; fixture tests do not establish successful live execution.
 
+# Factory floor (0.10.0)
+
+Open **System view** to see the factory blueprint. Each building represents a real Cerebra sector: intake, research/planning, coding, independent review, local server, coordination, tests, approvals, database, logs, working copy and results. Select a building or person to inspect it and open its task or plain report.
+
+There are 72 illustrated people by default. Choose 24 or 48 for a quieter floor. These people are a visual crew, not separate agent processes. Idle staff may walk inside rooms; active sectors send people along corridors. The separate **recorded AI runs active** badge reports actual provider runs recorded by Cerebra. Model labels come from the task's routing record, not an invented version or claim about an unreported server-side model snapshot. An unassigned model stays unassigned. Non-model buildings show their software or human approval role.
+
+Use **+**, **−** and **Fit factory** to inspect the floor. Scroll inside the drawing to pan when zoomed. Switch model labels on or off. A person holds position when hovered or keyboard-focused. Waiting staff pause, failed sectors show a problem, and disconnected telemetry freezes movement. Reduced-motion and offscreen/hidden views stop walking animation. The design is based on the user's transcript and factory description; no external creator's assets were copied.
+
