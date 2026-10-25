@@ -48,14 +48,25 @@ window.AIHQSystem = (() => {
     function panel(title, body) { const node = el("section", "panel"), header = el("div", "panel-header"); header.append(el("h2", "", title)); append(node, header, body); return node; }
 
     const byId = Object.fromEntries(NODES.map(node => [node.id, node]));
-    const factory = window.CerebraFactory.mount(diagram, {onSelect: id => {selected = id; paint();}});
+    const zoomReadout = el("span", "factory-zoom-readout", "100%");
+    const factory = window.CerebraFactory.mount(diagram, {onSelect: id => {selected = id; paint();}, onZoom: value => { zoomReadout.textContent = `${Math.round(value * 100)}%`; }});
+    // Right-click on the blueprint: inspect, zoom and layout actions (picked up by the app-wide menu).
+    wrap.addEventListener("contextmenu", event => {
+      const building = event.target.closest(".factory-building"), x = event.clientX, y = event.clientY;
+      const id = building ? (NODES.find(item => item.title === building.getAttribute("aria-label"))?.id) : null;
+      event.cerebraMenu = [
+        id ? ["Inspect this building", () => factory.select(id)] : null,
+        ["Zoom in here", () => factory.zoomAt(1.5, x, y)], ["Zoom out", () => factory.zoomAt(1 / 1.5, x, y)], ["Fit factory to window", () => factory.fit()],
+        [modelLabels.checked ? "Hide model labels" : "Show model labels", () => { modelLabels.checked = !modelLabels.checked; factory.labels(modelLabels.checked); }]
+      ].filter(Boolean);
+    });
     const crowd = el("select"); crowd.setAttribute("aria-label", "Visual crew density");
     [24,48,72].forEach(value => {const option=el("option", "", `${value} people`);option.value=value;crowd.append(option);}); crowd.value="72";
     const crewCount=el("span", "badge muted", "72 visual people"), runCount=el("span", "badge blue", "Connecting…");
     crowd.addEventListener("change",()=>{factory.density(crowd.value);crewCount.textContent=`${crowd.value} visual people`;});
     const modelLabels=el("input");modelLabels.type="checkbox";modelLabels.checked=true;modelLabels.addEventListener("change",()=>factory.labels(modelLabels.checked));
     const labelToggle=append(el("label","factory-label-toggle"),modelLabels,document.createTextNode("Model labels"));
-    append(toolbar,button("−",()=>factory.zoom(-.15)),button("+",()=>factory.zoom(.15)),button("Fit factory",()=>factory.fit()),crowd,labelToggle,crewCount,runCount);
+    append(toolbar,button("−",()=>factory.zoomAt(1/1.25)),zoomReadout,button("+",()=>factory.zoomAt(1.25)),button("Fit factory",()=>factory.fit()),crowd,labelToggle,crewCount,runCount,el("span","factory-hint","Ctrl + wheel to zoom · drag to move · right-click for options"));
     toolbar.querySelectorAll("button")[0].setAttribute("aria-label","Zoom out");toolbar.querySelectorAll("button")[1].setAttribute("aria-label","Zoom in");
     const sceneNote=el("p","hint factory-explanation","People illustrate each sector. Walking is a visual activity indicator; it does not create extra AI agents or calls. Model names come from the task’s recorded routing. Idle staff can walk inside their rooms.");
     wrap.after(sceneNote);

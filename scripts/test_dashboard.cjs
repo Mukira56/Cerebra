@@ -104,6 +104,21 @@ const path = require('node:path');
     await page.getByRole('button',{name:'Zoom in',exact:true}).click();
     await shot('factory-active-zoom');
     await page.getByRole('button',{name:'Fit factory',exact:true}).click();
+    // Mouse controls: Ctrl + wheel zooms at the pointer, drag pans, right-click opens the blueprint menu.
+    const floor = page.locator('.factory-viewport'), readout = page.locator('.factory-zoom-readout');
+    const fitted = await readout.textContent(), box = await floor.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.keyboard.down('Control'); await page.mouse.wheel(0, -600); await page.keyboard.up('Control');
+    assert.ok(parseInt(await readout.textContent()) > parseInt(fitted), 'Ctrl + wheel zooms in');
+    const scrolled = await floor.evaluate(element => element.scrollLeft);
+    await page.mouse.move(box.x + 30, box.y + box.height - 30); await page.mouse.down(); await page.mouse.move(box.x + 230, box.y + box.height - 30, {steps: 6}); await page.mouse.up();
+    assert.notEqual(await floor.evaluate(element => element.scrollLeft), scrolled, 'Dragging the floor pans the blueprint');
+    await page.locator('.factory-building[aria-label="Test runner"]').click({button: 'right'});
+    await page.locator('.context-menu .context-item', {hasText: 'Inspect this building'}).click();
+    await page.locator('.inspector h3', {hasText: 'Test runner'}).waitFor();
+    await floor.click({button: 'right', position: {x: 40, y: 40}});
+    await page.locator('.context-menu .context-item', {hasText: 'Fit factory to window'}).click();
+    assert.equal(await readout.textContent(), fitted, 'Fit from the right-click menu restores the fitted zoom');
     await shot('factory-active');
     const courier = page.locator('.courier[data-state="running"]').first();
     const before = await courier.getAttribute('transform'); await page.waitForTimeout(350);
@@ -181,6 +196,20 @@ const path = require('node:path');
     assert.ok(await connectionSmall.evaluate(() => document.documentElement.scrollWidth <= 400), 'Connection forms fit a phone');
     if (shots) await connectionSmall.screenshot({path:path.join(shots,'connections-narrow.png')});
     await connectionPhone.close();
+
+    // App-wide right-click: Cerebra's menu on a task row; text boxes keep the native edit menu.
+    await page.locator('[data-page="tasks"]').click();
+    await page.locator('[data-task-id]').first().click({button: 'right'});
+    for (const label of ['Open task', 'Plain report', 'Copy task ID', 'Refresh']) await page.locator('.context-menu .context-item', {hasText: label}).first().waitFor();
+    await page.keyboard.press('Escape');
+    assert.ok(await page.locator('.context-menu').isHidden(), 'Escape closes the menu');
+    await page.locator('[data-task-id]').first().click({button: 'right'});
+    await page.locator('.context-menu .context-item', {hasText: 'Open task'}).click();
+    await page.locator('dialog .tabs').waitFor(); await page.getByRole('button', {name: 'Close dialog'}).click();
+    await page.locator('[data-page="settings"]').first().click();
+    const prevented = await page.locator('input[type=number]').first().evaluate(input => { const event = new MouseEvent('contextmenu', {bubbles: true, cancelable: true}); input.dispatchEvent(event); return event.defaultPrevented; });
+    assert.equal(prevented, false, 'Text boxes keep the native cut/copy/paste menu');
+    assert.ok(await page.locator('.context-menu').isHidden());
 
     for (const name of ['approvals', 'activity', 'toolchain', 'github', 'settings', 'overview']) {
       await page.locator(`[data-page="${name}"]`).first().click();

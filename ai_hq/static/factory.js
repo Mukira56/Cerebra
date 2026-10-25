@@ -23,7 +23,7 @@ window.CerebraFactory = (() => {
   const add = (parent, ...children) => { children.forEach(child => parent.append(child)); return parent; };
   const compact = text => String(text || "Unassigned").replace(/Claude Code\s*\(([^)]+)\)/i, "Claude $1").replace(/^OpenAI /, "").slice(0, 28);
 
-  function mount(svg, {onSelect}) {
+  function mount(svg, {onSelect, onZoom = () => {}}) {
     let disposed = false, frame = 0, lastFrame = 0, visible = true, online = false, people = [], snapshot = null, selected = "supervisor", density = 72, labels = true, zoom = 1;
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     const viewport = svg.parentElement;
@@ -33,11 +33,11 @@ window.CerebraFactory = (() => {
     svg.setAttribute("aria-label", "Cerebra factory blueprint. Select a building or person to inspect its recorded work.");
     svg.classList.add("factory-floor");
     const defs = node("defs"), grid = node("pattern", {id: "factory-grid", width: 25, height: 25, patternUnits: "userSpaceOnUse"});
-    add(grid, node("path", {d: "M25 0H0V25", fill: "none", stroke: "#416574", "stroke-opacity": .16, "stroke-width": 1}));
+    add(grid, node("path", {d: "M25 0H0V25", fill: "none", stroke: "#2f8fc4", "stroke-opacity": .28, "stroke-width": 1}));
     const largeGrid = node("pattern", {id: "factory-major-grid", width: 100, height: 100, patternUnits: "userSpaceOnUse"});
-    add(largeGrid, node("rect", {width: 100, height: 100, fill: "url(#factory-grid)"}), node("path", {d: "M100 0H0V100", fill: "none", stroke: "#416574", "stroke-opacity": .24, "stroke-width": 1}));
+    add(largeGrid, node("rect", {width: 100, height: 100, fill: "url(#factory-grid)"}), node("path", {d: "M100 0H0V100", fill: "none", stroke: "#4fc3f7", "stroke-opacity": .45, "stroke-width": 1.2}));
     add(defs, grid, largeGrid); svg.append(defs);
-    add(svg, node("rect", {width: WIDTH, height: HEIGHT, fill: "#081c29"}), node("rect", {x: 20, y: 20, width: WIDTH - 40, height: HEIGHT - 40, fill: "url(#factory-major-grid)", stroke: "#56818a", "stroke-opacity": .35}));
+    add(svg, node("rect", {width: WIDTH, height: HEIGHT, fill: "#020b16"}), node("rect", {x: 20, y: 20, width: WIDTH - 40, height: HEIGHT - 40, fill: "url(#factory-major-grid)", stroke: "#8fd9ff", "stroke-opacity": .8, "stroke-width": 2}));
     add(svg, node("text", {x: 52, y: 54, class: "factory-heading"}, "CEREBRA / OPERATIONS CAMPUS"), node("text", {x: 1720, y: 54, class: "factory-caption", "text-anchor": "end"}, "LIVE SECTORS · FLOOR 01"));
     const hall = node("g", {class: "factory-corridors", "aria-hidden": "true"});
     const hallPaths = ["M215 390H1535", "M215 760H1535", "M875 390V760"];
@@ -175,13 +175,50 @@ window.CerebraFactory = (() => {
       restart();
     }
     function fit(){const maxHeight=parseFloat(getComputedStyle(viewport).maxHeight)||innerHeight*.76;zoom=Math.min(1,Math.max(.15,Math.min((viewport.clientWidth-4)/WIDTH,(maxHeight-4)/HEIGHT)));applyZoom();}
-    function applyZoom(){svg.style.width=`${WIDTH*zoom}px`;svg.style.height=`${HEIGHT*zoom}px`;}
-    function setZoom(delta){zoom=Math.min(1.8,Math.max(.15,zoom+delta));applyZoom();}
+    function applyZoom(){svg.style.width=`${WIDTH*zoom}px`;svg.style.height=`${HEIGHT*zoom}px`;onZoom(zoom);}
+    // Zoom keeping the blueprint point under (clientX, clientY) still; defaults to the viewport centre.
+    function zoomTo(next,clientX,clientY){
+      const box=viewport.getBoundingClientRect(),x=(clientX??box.left+box.width/2)-box.left,y=(clientY??box.top+box.height/2)-box.top;
+      const before=svg.getBoundingClientRect(),px=(box.left+x-before.left)/before.width,py=(box.top+y-before.top)/before.height;
+      zoom=Math.min(3,Math.max(.15,next));svg.dataset.manualZoom='true';applyZoom();
+      const after=svg.getBoundingClientRect();
+      viewport.scrollLeft+=after.left+px*after.width-(box.left+x);viewport.scrollTop+=after.top+py*after.height-(box.top+y);
+    }
+    function setZoom(delta){zoomTo(zoom+delta);}
+    // Mouse controls: wheel scrolls; Ctrl/⌘ + wheel zooms at the pointer; drag empty floor to pan;
+    // double-click zooms in; keyboard +, -, 0 when the blueprint has focus.
+    viewport.tabIndex=0;
+    viewport.addEventListener('wheel',event=>{if(!event.ctrlKey&&!event.metaKey)return;event.preventDefault();zoomTo(zoom*Math.exp(-event.deltaY*.0015),event.clientX,event.clientY);},{passive:false});
+    let drag=null,dragged=false;
+    viewport.addEventListener('pointerdown',event=>{
+      const onItem=event.target.closest('.person, .factory-building');
+      if(!(event.button===1||(event.button===0&&!onItem)))return;
+      drag={x:event.clientX,y:event.clientY,left:viewport.scrollLeft,top:viewport.scrollTop,id:event.pointerId};dragged=false;
+      if(event.button===1)event.preventDefault();
+    });
+    viewport.addEventListener('pointermove',event=>{
+      if(!drag||event.pointerId!==drag.id)return;
+      const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+      if(!dragged&&Math.hypot(dx,dy)<4)return;
+      if(!dragged){dragged=true;viewport.classList.add('dragging');viewport.setPointerCapture(event.pointerId);}
+      viewport.scrollLeft=drag.left-dx;viewport.scrollTop=drag.top-dy;
+    });
+    const endDrag=()=>{if(drag&&viewport.hasPointerCapture?.(drag.id))viewport.releasePointerCapture(drag.id);drag=null;viewport.classList.remove('dragging');};
+    viewport.addEventListener('pointerup',endDrag);viewport.addEventListener('pointercancel',endDrag);
+    viewport.addEventListener('click',event=>{if(dragged){event.stopPropagation();event.preventDefault();dragged=false;}},true);
+    viewport.addEventListener('dblclick',event=>{if(event.target.closest('.person, .factory-building'))return;event.preventDefault();zoomTo(zoom*1.5,event.clientX,event.clientY);});
+    viewport.addEventListener('keydown',event=>{
+      if(event.target!==viewport)return;
+      if(['+','='].includes(event.key)){event.preventDefault();zoomTo(zoom*1.25);}
+      else if(['-','_'].includes(event.key)){event.preventDefault();zoomTo(zoom/1.25);}
+      else if(event.key==='0'){event.preventDefault();delete svg.dataset.manualZoom;fit();}
+    });
     const observer=new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;restart();});observer.observe(svg);
     const resize=new ResizeObserver(()=>{if(!svg.dataset.manualZoom)fit();});resize.observe(viewport);
     document.addEventListener('visibilitychange',restart);media.addEventListener('change',restart);
     buildPeople();fit();
     return {render, fit:()=>{delete svg.dataset.manualZoom;fit();}, zoom:delta=>{svg.dataset.manualZoom='true';setZoom(delta);},
+      zoomAt:(factor,clientX,clientY)=>zoomTo(zoom*factor,clientX,clientY), select:choose,
       density:value=>{density=[24,48,72].includes(Number(value))?Number(value):72;buildPeople();},
       labels:value=>{labels=!!value;if(snapshot)render(snapshot);},
       dispose:()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();resize.disconnect();document.removeEventListener('visibilitychange',restart);media.removeEventListener('change',restart);}};

@@ -22,7 +22,7 @@
   };
   const PROVIDER_ICON = {codex: "◇", claude: "✳", copilot: "⧉", gemini: "✦"};
   const ACTIVE = ["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"];
-  let csrf = "", data = null, page = "overview", param = "", lastFingerprint = "", fetching = false, toastTimer = 0;
+  let csrf = "", data = null, page = "overview", param = "", lastFingerprint = "", fetching = null, toastTimer = 0;
   let detailTaskId = "", detailTab = "Overview", detailFingerprint = "", pageTimer = 0, renderToken = 0;
   const cache = {providers: null, tools: null, github: null, repos: null, chats: null};
   const content = $("#page-content"), dialog = $("#dialog"), dialogContent = $("#dialog-content");
@@ -135,7 +135,7 @@
     const list = el("div", "row-list");
     tasks.forEach(task => {
       const row = el("div", "row"), info = el("div", "row-main"), meta = el("div", "row-meta"), models = taskModels(task);
-      row.tabIndex = 0; row.setAttribute("role", "button"); row.addEventListener("click", () => taskDetail(task.id)); row.addEventListener("keydown", event => { if (event.key === "Enter") taskDetail(task.id); });
+      row.tabIndex = 0; row.setAttribute("role", "button"); row.dataset.taskId = task.id; row.addEventListener("click", () => taskDetail(task.id)); row.addEventListener("keydown", event => { if (event.key === "Enter") taskDetail(task.id); });
       append(meta, el("span", "", projectFor(task.project_id)?.name || "project"), el("span", "", "·"), el("span", "", `${models.implementer} → ${models.reviewer}`), el("span", "", "·"), el("span", "", relative(task.updated_at)), task.mode === "mock" ? badge("old demo", "muted") : null);
       append(info, el("strong", "", task.description), meta); append(row, info, badge(task.pause_requested ? "PAUSED" : task.state), el("span", "chev", "›")); list.append(row);
     });
@@ -583,7 +583,7 @@
     (async () => {
       let state; try { state = await api("/api/business"); } catch (issue) { list.replaceChildren(body(empty("Business Studio unavailable", issue.message))); return; }
       if (token !== renderToken) return;
-      const rows = state.jobs.map(job => { const row = el("a", "row"); row.href = `#job/${job.id}`; append(row, append(el("div"), el("strong", "", job.title), el("div", "row-meta", `${job.kind_label}${job.client ? ` · ${job.client}` : ""} · ${relative(job.created_at)}`)), badge(job.stage_words, STAGE_STYLE[job.stage])); return row; });
+      const rows = state.jobs.map(job => { const row = el("a", "row"); row.href = `#job/${job.id}`; row.dataset.jobId = job.id; append(row, append(el("div"), el("strong", "", job.title), el("div", "row-meta", `${job.kind_label}${job.client ? ` · ${job.client}` : ""} · ${relative(job.created_at)}`)), badge(job.stage_words, STAGE_STYLE[job.stage])); return row; });
       list.replaceChildren(panel("Jobs", rows.length ? append(el("div", "row-list"), rows) : body(empty("No business jobs yet", "Paste a client brief or describe a product, and Cerebra makes original, reviewed files for you.", button("+ New business job", () => businessForm(), "button primary"), "$")), null, rows.length));
       const folder = el("form"), root_ = input("", state.settings.output_root), save = submitButton("Save");
       append(folder, field("Save jobs in", root_, "Each job gets its own folder here. Existing files are never overwritten."), actionsRow(save));
@@ -784,16 +784,77 @@
     return root;
   }
 
+  // ---------- right-click menu ----------
+  // Text boxes and selected text keep the Windows edit menu (cut/copy/paste); everything else gets Cerebra's menu.
+  const menu = el("div", "context-menu"); menu.setAttribute("role", "menu"); menu.hidden = true; document.body.append(menu);
+  async function copyText(text, label = "Copied.") {
+    try { await navigator.clipboard.writeText(text); }
+    catch { const area = el("textarea"); area.value = text; area.style.position = "fixed"; area.style.opacity = "0"; document.body.append(area); area.select(); document.execCommand("copy"); area.remove(); }
+    toast(label);
+  }
+  function closeMenu() { if (!menu.hidden) { menu.hidden = true; menu.replaceChildren(); } }
+  function openMenu(items, x, y) {
+    menu.replaceChildren();
+    items.forEach(item => {
+      if (item === "-") { menu.append(el("div", "context-separator")); return; }
+      const [label, action, disabled] = item, entry = button(label, () => { closeMenu(); action(); }, "context-item");
+      entry.setAttribute("role", "menuitem"); entry.tabIndex = -1; entry.disabled = !!disabled; menu.append(entry);
+    });
+    menu.hidden = false;
+    const width = menu.offsetWidth, height = menu.offsetHeight;
+    menu.style.left = `${Math.max(4, Math.min(x, innerWidth - width - 4))}px`; menu.style.top = `${Math.max(4, Math.min(y, innerHeight - height - 4))}px`;
+    menu.querySelector(".context-item:not(:disabled)")?.focus();
+  }
+  menu.addEventListener("keydown", event => {
+    const items = [...menu.querySelectorAll(".context-item:not(:disabled)")], index = items.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+    else if (event.key === "Escape" || event.key === "Tab") { event.preventDefault(); closeMenu(); }
+  });
+  document.addEventListener("contextmenu", event => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest("input, textarea, select, [contenteditable='true']") || String(getSelection()).trim()) { closeMenu(); return; }  // native edit menu
+    if (target.closest(".context-menu")) { event.preventDefault(); return; }
+    event.preventDefault();
+    const items = [...(event.cerebraMenu || [])];
+    const taskRow = target.closest("[data-task-id]"), jobRow = target.closest("[data-job-id]"), chat = target.closest(".chat-item"), code = target.closest("pre, code, .code-block");
+    const taskId = taskRow?.dataset.taskId, task = taskId && taskFor(taskId);
+    if (taskId) {
+      if (items.length) items.push("-");
+      items.push(["Open task", () => taskDetail(taskId)], ["Plain report", () => { closeDialog(); location.hash = `report/${taskId}`; }]);
+      if (task && pendingApprovals().some(item => item.task_id === taskId)) items.push(["Go to its approvals", () => { closeDialog(); location.hash = "approvals"; }]);
+      if (task && ["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"].includes(task.state)) items.push(["Pause task", () => taskAction(taskId, "pause")]);
+      items.push(["Copy task ID", () => copyText(taskId, "Task ID copied.")]);
+    }
+    if (jobRow) {
+      const id = jobRow.dataset.jobId;
+      if (items.length) items.push("-");
+      items.push(["Open job", () => { location.hash = `job/${id}`; }], ["Open job folder", () => act("Opened.", () => mutate(`/api/business/jobs/${encodeURIComponent(id)}/open`, {what: "folder"}))], ["Copy job ID", () => copyText(id, "Job ID copied.")]);
+    }
+    if (chat?.dataset.id) { if (items.length) items.push("-"); items.push(["Open chat", () => chat.click()]); }
+    if (code) { if (items.length) items.push("-"); items.push(["Copy this text", () => copyText(code.textContent)]); }
+    if (items.length) items.push("-");
+    items.push(["Back", () => history.back(), history.length < 2], ["Refresh", async () => { await refresh(true); render(); toast("Refreshed."); }]);
+    items.push("-", ["New task", () => taskForm()], ["New business job", () => { location.hash = "business"; setTimeout(() => businessForm(), 0); }], ["Ask Support", () => { location.hash = "chat"; }]);
+    openMenu(items, event.clientX || target.getBoundingClientRect().left + 10, event.clientY || target.getBoundingClientRect().top + 10);
+  });
+  // Close on user actions only: panels that refresh themselves can fire scroll events every few seconds.
+  ["pointerdown", "wheel"].forEach(kind => window.addEventListener(kind, event => { if (menu.contains(event.target)) return; closeMenu(); }, true));
+  window.addEventListener("resize", closeMenu); window.addEventListener("blur", event => { if (event.target === window) closeMenu(); });
+  document.addEventListener("keydown", event => { if (event.key === "Escape") closeMenu(); });
+
   // ---------- data loop & routing ----------
   async function refresh(force = false) {
-    if (fetching) return; fetching = true;
+    // A background poll may be in flight. A forced refresh (after a button press) must not be dropped:
+    // wait for that poll, then fetch again so the page shows the state the action produced.
+    while (fetching) { if (!force) return fetching; await fetching; }
+    let done; fetching = new Promise(resolve => { done = resolve; });
     try {
       const next = await api("/api/overview"), fingerprint = JSON.stringify(next); data = next;
       const status = $("#connection-status"); status.className = "pill good"; status.replaceChildren(el("span", "dot"), document.createTextNode("Local connection")); notice("");
       if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "projects", "approvals", "reports", "activity"].includes(page) || force) render(); else chrome(); }
       if (detailTaskId && dialog.open) await taskDetail(detailTaskId, true);
     } catch (issue) { const status = $("#connection-status"); status.className = "pill bad"; status.replaceChildren(el("span", "dot"), document.createTextNode("Disconnected")); notice(`Local connection unavailable. ${issue.message}`, true); }
-    finally { fetching = false; }
+    finally { fetching = null; done(); }
   }
   function route() { const [name, ...rest] = location.hash.slice(1).split("/"); page = Object.hasOwn(pages, name) ? name : "overview"; param = rest.join("/"); if (page === "job" && !param) page = "business"; if (page === "report" && !param) page = "reports"; render(); }
   window.addEventListener("hashchange", route);

@@ -227,5 +227,13 @@ Open **System view** to see the factory blueprint. Each building represents a re
 
 There are 72 illustrated people by default. Choose 24 or 48 for a quieter floor. These people are a visual crew, not separate agent processes. Idle staff may walk inside rooms; active sectors send people along corridors. The separate **recorded AI runs active** badge reports actual provider runs recorded by Cerebra. Model labels come from the task's routing record, not an invented version or claim about an unreported server-side model snapshot. An unassigned model stays unassigned. Non-model buildings show their software or human approval role.
 
-Use **+**, **−** and **Fit factory** to inspect the floor. Scroll inside the drawing to pan when zoomed. Switch model labels on or off. A person holds position when hovered or keyboard-focused. Waiting staff pause, failed sectors show a problem, and disconnected telemetry freezes movement. Reduced-motion and offscreen/hidden views stop walking animation. The design is based on the user's transcript and factory description; no external creator's assets were copied.
+Mouse and keyboard:
+- the **wheel** scrolls the floor; **Ctrl + wheel** zooms toward the pointer
+- **drag** empty floor to move around; **double-click** to zoom in
+- **+**, **−** and **Fit factory** are also buttons, and `+`, `-` and `0` work when the floor has focus
+- **Right-click** a building to inspect it, or anywhere on the floor to zoom or fit
+
+Right-click works throughout Cerebra:
+- on tasks, business jobs and chats it offers their actions (open, report, copy ID, folder)
+- in text boxes it gives the normal cut, copy and paste menu Switch model labels on or off. A person holds position when hovered or keyboard-focused. Waiting staff pause, failed sectors show a problem, and disconnected telemetry freezes movement. Reduced-motion and offscreen/hidden views stop walking animation. The design is based on the user's transcript and factory description; no external creator's assets were copied.
 

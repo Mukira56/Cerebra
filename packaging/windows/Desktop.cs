@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Drawing;
 using System.Threading.Tasks;
@@ -35,7 +36,23 @@ internal sealed class DesktopWindow : Form {
             var environment=await CoreWebView2Environment.CreateAsync(null,profile);
             await view.EnsureCoreWebView2Async(environment);
             var settings=view.CoreWebView2.Settings;
-            settings.AreDevToolsEnabled=false;settings.AreDefaultContextMenusEnabled=false;
+            settings.AreDevToolsEnabled=false;settings.AreDefaultContextMenusEnabled=true;
+            // The page shows its own menu for app items. Where the native menu appears (text boxes, selected
+            // text) keep only editing commands: no Inspect, Save as, Print, Back/Reload or link actions.
+            view.CoreWebView2.ContextMenuRequested+=delegate(object sender,CoreWebView2ContextMenuRequestedEventArgs args) {
+                var keep=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"undo","redo","cut","copy","paste","pasteAndMatchStyle","selectAll","emoji","spellCheck"};
+                var items=args.MenuItems;
+                for(int index=items.Count-1;index>=0;index--) {
+                    var item=items[index];
+                    if(item.Kind==CoreWebView2ContextMenuItemKind.Separator) continue;
+                    if(!keep.Contains(item.Name) && !item.Name.StartsWith("spellCheck",StringComparison.OrdinalIgnoreCase)) items.RemoveAt(index);
+                }
+                for(int index=items.Count-1;index>=0;index--) {
+                    bool separator=items[index].Kind==CoreWebView2ContextMenuItemKind.Separator;
+                    if(separator && (index==0 || index==items.Count-1 || items[index-1].Kind==CoreWebView2ContextMenuItemKind.Separator)) items.RemoveAt(index);
+                }
+                if(items.Count==0) args.Handled=true;
+            };
             settings.AreBrowserAcceleratorKeysEnabled=false;settings.IsStatusBarEnabled=false;
             settings.IsPasswordAutosaveEnabled=false;settings.IsGeneralAutofillEnabled=false;
             settings.AreHostObjectsAllowed=false;settings.IsWebMessageEnabled=false;
