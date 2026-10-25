@@ -170,6 +170,11 @@ def validate(item):
             raise ValueError("a task needs a project and a clear description")
         clean["requirements"] = [_short(value, 500) for value in (item.get("requirements") or [])[:20] if isinstance(value, str)]
         clean["acceptance_criteria"] = [_short(value, 500) for value in (item.get("acceptance_criteria") or [])[:20] if isinstance(value, str)]
+        for role in ("implementer", "reviewer"):  # optional: who builds and who reviews (e.g. as a Council agreed)
+            value = str(item.get(role, "")).strip()
+            if value and not re.fullmatch(r"auto|catalog:(codex|claude):[A-Za-z0-9._:/\[\]-]{0,100}|[a-z0-9][a-z0-9-]{0,47}", value):
+                raise ValueError("implementer and reviewer must be auto, a catalog model or a saved profile such as codex or claude")
+            if value: clean[role] = value
     elif kind == "run_readiness_check":
         pass
     elif kind == "set_test_commands":
@@ -247,7 +252,7 @@ quoting task ids, states, errors and test output. Never invent records that are 
 To make Cerebra do something, add ONE fenced block at the end of your answer:
 ```cerebra-actions
 [{"action": "create_project", "name": "Booking site", "test_commands": [["npm", "test"]]},
- {"action": "create_task", "project": "Booking site", "description": "Clear, specific outcome", "requirements": ["..."], "acceptance_criteria": ["..."]},
+ {"action": "create_task", "project": "Booking site", "description": "Clear, specific outcome", "requirements": ["..."], "acceptance_criteria": ["..."], "implementer": "codex", "reviewer": "claude"},
  {"action": "start_task", "task": "<task id prefix>"}]
 ```
 Fixing failed work: the FAILURE LOGS section holds the real error, the failing run's log tail and the failing test

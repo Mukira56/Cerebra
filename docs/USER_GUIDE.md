@@ -154,16 +154,21 @@ In **Models & sign-in**:
 
 Open **Council** and press **+ New meeting**:
 1. Choose the project and write what they should decide. For example: "How do we make this ready for paying customers? Agree on the 3 most valuable changes and who builds each."
-2. Choose who speaks first and how many rounds. Each round is one turn each, followed by a closing summary and a confirmation.
+2. Choose who speaks first and how long they talk:
+   - **Until they agree (no limit)**, the default: they keep reviewing and improving each other's ideas. Each turn ends with "STATUS: AGREED" or "STATUS: CONTINUE", and the meeting closes once both say AGREED one after the other.
+   - Or a fixed number of rounds. Each round is one turn each, followed by a closing summary and a confirmation.
+3. Leave **When they agree, send the plan to Support** ticked to hand the result straight to Support.
 
 What happens:
 - Both models read the project's files, docs and Git history (including the GitHub remote and recent commits) and talk to each other. Each one replies to what the other said.
-- You see every turn as it arrives, with who said it, the model and the round. **Stop meeting** ends it after the current turn.
+- You see every turn as it arrives, with who said it, the model and the round. You can scroll back and read while they talk; the page only follows new turns when you're at the bottom. **Stop meeting** ends it after the current turn.
 - At the end they agree on up to 6 proposals. Each proposal says what to do, why, who builds it and who reviews it, and how to check it's done.
 
 During the meeting the models can read but can't change anything. Every turn uses your AI plan.
 
-**Create task** on a proposal makes a normal task: the model they chose builds it and the other one reviews it. It still asks for your plan approval and your approval to merge. It runs with your Full access setting, so on your laptop and GitHub only when you've switched that on. Away mode can answer those approvals for you.
+**Send to Support** (automatic if you ticked the box) opens a Support conversation containing the plan. Support checks each proposal against your current projects and tasks: it skips what's already done, corrects conflicts and explains why, and creates a new project only when one is really needed. It then proposes the tasks, with the agreed builder and reviewer, and starts them. With **Let support act for me** ticked in Support, it does this without waiting for your clicks. Tasks Support creates never get Full access; that stays limited to tasks you create yourself.
+
+**Create task** on a proposal makes a normal task yourself: the model they chose builds it and the other one reviews it. It still asks for your plan approval and your approval to merge. It runs with your Full access setting, so on your laptop and GitHub only when you've switched that on. Away mode can answer those approvals for you.
 
 ## Full access: let the agents use your laptop and GitHub
 

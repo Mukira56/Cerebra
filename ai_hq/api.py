@@ -602,7 +602,26 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def council_list(): return council.list()
 
     @app.post("/api/council", status_code=201)
-    def council_start(payload: CouncilCreate): return council.start(payload.project_id, payload.topic, payload.rounds, payload.first, payload.second)
+    def council_start(payload: CouncilCreate): return council.start(payload.project_id, payload.topic, payload.rounds, payload.first, payload.second, payload.send_to_support)
+
+    def council_handoff(session_id):
+        """Send a finished meeting's plan to Support as a new conversation; Support proposes (or runs) the actions."""
+        from .council import handoff_message
+        meeting = council.get(session_id)
+        if meeting["status"] != "done" or not meeting["proposals"]:
+            raise ValueError("Only a finished meeting with agreed proposals can be sent to Support")
+        if meeting.get("support_chat"):
+            raise ValueError("This meeting was already sent to Support")
+        with db.Session() as session:
+            project = session.get(Project, meeting["project_id"])
+        conversation = chats.create(meeting["first"], meeting["project_id"], f"Council plan: {meeting['topic'][:80]}")
+        council.remember(session_id, support_chat=conversation["id"])
+        chats.send(conversation["id"], handoff_message(meeting, project.name if project else "this project"))
+        return {"conversation_id": conversation["id"]}
+    council.on_done = council_handoff
+
+    @app.post("/api/council/{session_id}/support", status_code=201)
+    def council_to_support(session_id: str): return chat_or_404(council_handoff, session_id)
 
     @app.get("/api/council/{session_id}")
     def council_get(session_id: str): return chat_or_404(council.get, session_id)
@@ -657,7 +676,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             return f"Created the project {project['name']} (id {project['id'][:8]})." + ("" if action["test_commands"] else " Add its test commands on the Projects page before tasks can run.")
         if kind == "create_task":
             project = find_project(action["project"])
-            task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None, origin="support")
+            task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None,
+                                      implementer=action.get("implementer"), reviewer=action.get("reviewer"), origin="support")
             return f"Created task {task.id[:8]} in {project.name}. Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
         if kind == "retry_task":
             task = find_task(action["task"])

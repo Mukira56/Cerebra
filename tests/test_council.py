@@ -120,3 +120,57 @@ def test_proposal_parsing_rejects_bad_blocks():
     assert parse_proposals("```cerebra-council\nnot json\n```", {"codex", "claude"}) == []
     good = parse_proposals('```cerebra-council\n[{"title": "A", "description": "B", "executor": "Codex"}]\n```', {"codex", "claude"})
     assert good[0]["executor"] == "codex" and good[0]["requirements"] == [] and good[0]["task_id"] is None
+
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")  # a crashed meeting thread fails the test
+
+
+class ScriptedRegistry(MeetingRegistry):
+    """Discussion turns answer from a script of statuses; closing and confirm reuse MeetingRegistry."""
+    def __init__(self, statuses):
+        super().__init__()
+        self.statuses = list(statuses)
+
+    def chat(self, name, prompt, workdir, model="", cancel_event=None):
+        if "closing turn" in prompt or "has written the agreed list" in prompt or "Council (a recorded meeting" in prompt:
+            return super().chat(name, prompt, workdir, model, cancel_event)
+        self.turns.append((name, prompt, workdir))
+        status = self.statuses.pop(0) if self.statuses else "CONTINUE"
+        return AgentResult(True, f"{name}: I reviewed the other proposal and improved it.\nSTATUS: {status}")
+
+
+def test_until_they_agree_has_no_round_limit(client):
+    client.app.state.supervisor.registry = ScriptedRegistry(["CONTINUE"] * 7 + ["AGREED", "CONTINUE", "AGREED", "AGREED"])
+    state = wait(client, client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan", "rounds": 0}).json()["id"])
+    discussion = [message for message in state["messages"] if message["kind"] == "discussion"]
+    assert state["status"] == "done" and len(discussion) == 11 and discussion[-1]["round"] == 6  # past the old 6-round limit
+    assert [message["kind"] for message in state["messages"][-2:]] == ["closing", "confirm"]
+    prompt = client.app.state.supervisor.registry.turns[0][1]
+    assert "no fixed end" in prompt and "STATUS: AGREED" in prompt and "critically" in prompt
+
+
+def test_agreed_plan_goes_to_support_automatically_once(client):
+    meeting = client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan", "rounds": 1, "send_to_support": True}).json()["id"]
+    state = wait(client, meeting)
+    for _ in range(200):  # the hand-off starts right after the meeting thread finishes
+        state = client.get(f"/api/council/{meeting}").json()
+        if state.get("support_chat"):
+            break
+        time.sleep(0.05)
+    chat = client.get(f"/api/chats/{state['support_chat']}").json()
+    assert chat["conversation"]["title"].startswith("Council plan") and chat["conversation"]["project_id"] == client.project["id"]
+    sent = chat["messages"][0]["content"]
+    assert "1. Fix addition" in sent and "Builds it: codex; reviews it: claude" in sent and "skip anything already done" in sent
+    assert "cerebra-council" not in sent
+    assert client.post(f"/api/council/{meeting}/support").status_code == 400  # only once
+
+
+def test_support_creates_tasks_with_the_agreed_builder_and_reviewer(client):
+    from ai_hq import support
+    action = support.validate({"action": "create_task", "project": "Calc", "description": "Fix addition in add()", "implementer": "claude", "reviewer": "codex"})
+    result = client.app.state.chats.executor(action)
+    task = client.get("/api/overview").json()["tasks"][0]
+    detail = client.get(f"/api/tasks/{task['id']}").json()
+    assert "Created task" in result and detail["results"]["models"]["implementer"]["provider"] == "claude" and detail["results"]["origin"] == "support"
+    with pytest.raises(ValueError):
+        support.validate({"action": "create_task", "project": "Calc", "description": "Fix addition in add()", "implementer": "rm -rf /"})

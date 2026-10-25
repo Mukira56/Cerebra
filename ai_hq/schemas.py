@@ -193,7 +193,8 @@ class ChatCreate(StrictModel):
 class CouncilCreate(StrictModel):
     project_id: str = Field(min_length=1, max_length=64)
     topic: str = Field(min_length=1, max_length=4000)
-    rounds: int = Field(default=3, ge=1, le=6)
+    rounds: int = Field(default=3, ge=0)  # 0: until both models agree
+    send_to_support: bool = False
     first: str = Field(default="codex", max_length=120)
     second: str = Field(default="claude", max_length=120)
 
