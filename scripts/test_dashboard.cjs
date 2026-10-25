@@ -196,6 +196,14 @@ const path = require('node:path');
     await page.locator('[data-page="connections"]').click();
     await page.getByText('Read-only Gmail intake', {exact:true}).waitFor();
     assert.equal(await page.locator('.connection-grid input[type="password"]').count(), 6, 'Secrets use password fields');
+    // Setup notes beside each connection, and the full guide in a pop-up.
+    assert.equal(await page.locator('.guide-notes').count(), 6, 'Setup notes beside every connection (Etsy, Printify, images, Gmail, phone, Fiverr)');
+    assert.ok(await page.getByText('Fiverr orders', {exact: true}).count(), 'Fiverr card is shown');
+    await page.locator('.panel', {hasText: 'Etsy drafts'}).locator('.guide-notes').getByRole('button', {name: 'How to connect…'}).click();
+    await page.locator('dialog h3', {hasText: '1. Open an Etsy shop'}).waitFor();
+    assert.ok(await page.locator('dialog .guide-links button', {hasText: 'Your Etsy apps'}).count(), 'Guide links to the official pages');
+    await shot('connection-guide');
+    await page.locator('dialog').getByRole('button', {name: 'Close', exact: true}).click();
     await shot('business-connections');
     const connectionPhone = await browser.newContext({viewport:{width:390,height:860}}); await connectionPhone.addCookies(await context.cookies());
     const connectionSmall = await connectionPhone.newPage();
@@ -227,6 +235,8 @@ const path = require('node:path');
     await page.locator('[data-page="settings"]').first().click();
     await page.getByRole('button', {name: 'Switch agents on'}).waitFor();
     await page.getByText('Where your data lives', {exact: true}).waitFor();
+    await page.locator('.panel-header h2', {hasText: 'Updates'}).waitFor();
+    assert.ok(await page.getByRole('button', {name: 'Check for updates'}).isVisible(), 'Updates can be checked from inside the app');
     assert.ok(await page.getByRole('button', {name: 'Turn Away mode on'}).isDisabled(), 'Away mode needs agents on first');
     await shot('settings');
 

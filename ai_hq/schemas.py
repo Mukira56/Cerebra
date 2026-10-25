@@ -179,6 +179,9 @@ class NotificationSetup(StrictModel):
     telegram_chat_id: str = Field(default="", max_length=32)
     only_orders: bool = False
 
+class UpdateDownload(StrictModel):
+    tag: str = Field(pattern=r"^v\d+\.\d+\.\d+$")
+
 class ChatCreate(StrictModel):
     profile: str = Field(default="codex", max_length=120)
     project_id: str | None = Field(default=None, max_length=64)

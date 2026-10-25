@@ -722,6 +722,59 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def notification_setup(payload: NotificationSetup):
         with db.Session.begin() as session: return notify.public(notify.save(session, payload.model_dump()))
 
+    @app.post("/api/business/notifications/telegram-chat")
+    def notification_telegram_chat(): return notifier.find_telegram_chat()
+
+    # Official setup pages the guides link to. Only these fixed addresses can be opened, in the user's browser.
+    SETUP_LINKS = {
+        "etsy_sell": "https://www.etsy.com/sell", "etsy_apps": "https://www.etsy.com/developers/your-apps",
+        "etsy_register": "https://www.etsy.com/developers/register", "etsy_auth_docs": "https://developers.etsy.com/documentation/essentials/authentication",
+        "etsy_creativity": "https://www.etsy.com/legal/creativity/", "etsy_api_terms": "https://www.etsy.com/legal/api",
+        "printify_signup": "https://printify.com/app/register", "printify_tokens": "https://printify.com/app/account/api",
+        "printify_token_help": "https://help.printify.com/hc/en-us/articles/4483626447249-How-can-I-generate-an-API-token",
+        "printify_docs": "https://developers.printify.com/",
+        "openai_keys": "https://platform.openai.com/api-keys", "openai_billing": "https://platform.openai.com/settings/organization/billing/overview",
+        "openai_verify": "https://platform.openai.com/settings/organization/general", "openai_images_docs": "https://platform.openai.com/docs/guides/image-generation",
+        "google_console": "https://console.cloud.google.com/", "google_gmail_api": "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
+        "google_auth": "https://console.cloud.google.com/auth/overview", "google_clients": "https://console.cloud.google.com/auth/clients",
+        "google_permissions": "https://myaccount.google.com/connections",
+        "ntfy_app": "https://ntfy.sh/", "ntfy_docs": "https://docs.ntfy.sh/subscribe/phone/", "telegram_botfather": "https://t.me/BotFather",
+        "fiverr_sell": "https://www.fiverr.com/start_selling",
+        "fiverr_ai": "https://help.fiverr.com/hc/en-us/articles/37333301560593-Using-AI-on-Fiverr-Guidelines-for-freelancers-and-clients",
+    }
+
+    # ---- updates from the user's GitHub releases -----------------------------------------------
+    from .updater import Updater
+    updater = Updater(settings)
+    app.state.updater = updater
+
+    @app.get("/api/updates")
+    def updates_check(): return updater.check()
+
+    from .schemas import UpdateDownload
+
+    @app.post("/api/updates/download")
+    def updates_download(payload: UpdateDownload):
+        tag = payload.tag
+        result = updater.download(tag)
+        with db.Session.begin() as session:
+            session.add(Event(kind="update", message=f"Downloaded and verified Cerebra {tag[1:]}"))
+        return result
+
+    @app.post("/api/updates/install")
+    def updates_install():
+        with db.Session.begin() as session:
+            session.add(Event(kind="update", message="User started an update; Cerebra will close, update and reopen"))
+        return updater.install()
+
+    @app.post("/api/open-link/{target}")
+    def open_link(target: str):
+        url = SETUP_LINKS.get(target)
+        if url is None: raise HTTPException(404, "Unknown link")
+        import webbrowser
+        webbrowser.open(url)
+        return {"opened": url}
+
     @app.post("/api/business/notifications/test")
     def notification_test(): return notifier.send("Cerebra connection test", "Your progress notifications are ready.")
 

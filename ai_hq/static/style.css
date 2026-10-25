@@ -232,7 +232,7 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .diagram .courier:focus .courier-figure { outline: 3px solid var(--cyan); }
 .diagram .courier[data-state="failed"] { filter: drop-shadow(0 0 6px var(--red)); }
 .diagram .courier[data-state="waiting"] { filter: drop-shadow(0 0 4px var(--amber)); }
-.connection-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; align-items: start; }
+.connection-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 .connection-grid .panel, .connection-grid form { min-width: 0; }
 .connection-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; font-size: 12px; }
 .mail-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
@@ -280,6 +280,17 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .person[data-state="waiting"] .person-label { fill: #ffc928; }
 .factory-floor .person:focus .human-figure, .factory-floor .person:hover .human-figure { filter: drop-shadow(0 0 4px #acf2e9); }
 .factory-floor.factory-offline .person { opacity: .4; }
+.connection-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 330px); gap: 18px; align-items: start; }
+.connection-form { min-width: 0; }
+.guide-notes { background: var(--bg-2); border: 1px solid var(--line-2); border-left: 3px solid var(--cyan); border-radius: 10px; padding: 12px 14px; font-size: 13px; color: var(--soft); display: flex; flex-direction: column; gap: 6px; }
+.guide-notes ul, .guide-notes ol { margin: 0 0 4px; padding-left: 18px; }
+.guide-notes li { margin: 2px 0; }
+.guide-notes strong { color: var(--text); font-size: 12px; }
+.guide-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.guide h3 { margin: 18px 0 6px; font-size: 15px; }
+.guide ol, .guide ul { padding-left: 20px; margin: 0; }
+.guide li { margin: 5px 0; line-height: 1.5; }
+@media (max-width: 900px) { .connection-layout { grid-template-columns: 1fr; } }
 .context-menu { position: fixed; z-index: 1000; min-width: 210px; padding: 5px; background: #0d141c; border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.55); }
 .context-item { display: block; width: 100%; text-align: left; padding: 7px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: 13px var(--sans); cursor: pointer; }
 .context-item:hover, .context-item:focus { background: var(--panel-2); outline: none; }

@@ -662,14 +662,35 @@
     showDialog("Review an external action", form);
   }
 
+  // ---------- setup guides ----------
+  function openLink(id) { return act(() => "Opened in your browser.", () => mutate(`/api/open-link/${encodeURIComponent(id)}`)); }
+  function linkButtons(links) { return append(el("div", "guide-links"), ...array(links).map(([label, id]) => button(`${label} ↗`, () => openLink(id), "button small ghost"))); }
+  function guideDialog(key) {
+    const guide = window.CerebraGuides?.[key]; if (!guide) return;
+    const content = el("div", "guide");
+    append(content, el("h3", "", "What you need"), list(guide.need));
+    guide.sections.forEach(section => { const steps = el("ol"); section.steps.forEach(step => steps.append(el("li", "", step))); append(content, el("h3", "", section.heading), steps, section.links ? linkButtons(section.links) : null); });
+    append(content, hint("Keys and tokens are saved encrypted for your Windows account only. Never paste them into Support chat or task descriptions."), actionsRow(button("Close", closeDialog, "button ghost")));
+    showDialog(`How to connect ${guide.title}`, content);
+  }
+  function guideNotes(key) {
+    const guide = window.CerebraGuides?.[key]; if (!guide) return null;
+    const notes = el("aside", "guide-notes"), steps = el("ol");
+    guide.quick.forEach(step => steps.append(el("li", "", step)));
+    append(notes, el("div", "eyebrow", "SETUP NOTES"), el("strong", "", "You need"), list(guide.need), el("strong", "", "Steps"), steps,
+      button("How to connect…", () => guideDialog(key), "button small primary"), linkButtons(guide.links));
+    return notes;
+  }
+  function withNotes(form, key) { return append(el("div", "connection-layout"), append(el("div", "connection-form"), form), guideNotes(key)); }
+
   function connectionView() {
     const root = el("div", "connection-grid"), token = renderToken;
     (async () => {
       const [connections, mail, notifications] = await Promise.all([api("/api/business/connections"), api("/api/business/gmail"), api("/api/business/notifications")]);
       if (token !== renderToken) return;
       const specs = {
-        etsy: {title: "Etsy drafts", help: "Register your own Etsy developer app. Etsy requires a registered HTTPS callback you control. Authorize in your browser, then paste the full redirected callback URL here. Credentials alone do not mean a connection has been verified.", fields: [["api_key", "App keystring", true], ["shared_secret", "Shared secret", true], ["shop_id", "Shop ID"], ["redirect_uri", "Registered HTTPS callback URL"]]},
-        printify: {title: "Printify drafts", help: "Use your own Printify personal API token. Check connection to list your shop IDs. Choose real catalog variant/provider IDs in each product draft. Orders, order imports and production are blocked because shop auto-approval cannot be verified here.", fields: [["api_key", "API token", true], ["shop_id", "Shop ID"]]},
+        etsy: {title: "Etsy drafts", help: "Register your own Etsy developer app. Etsy requires a registered HTTPS callback you control. Authorize in your browser, then paste the full redirected callback URL here. Credentials alone do not mean a connection has been verified.", fields: [["api_key", "App keystring", true], ["shared_secret", "Shared secret", true], ["shop_id", "Shop ID (optional: found for you by Check connection)"], ["redirect_uri", "Registered HTTPS callback URL"]]},
+        printify: {title: "Printify drafts", help: "Use your own Printify personal API token. Check connection to list your shop IDs. Choose real catalog variant/provider IDs in each product draft. Orders, order imports and production are blocked because shop auto-approval cannot be verified here.", fields: [["api_key", "API token", true], ["shop_id", "Shop ID (optional if you have one store)"]]},
         images: {title: "Raster images", help: "Use your own OpenAI API key with image-model access. Checking access does not generate an image. A reviewed job offers a separate paid generation action. Your coding subscription does not include these API charges.", fields: [["api_key", "OpenAI API key", true], ["model", "Image model"]]}
       };
       for (const [provider, spec] of Object.entries(specs)) {
@@ -685,19 +706,50 @@
           append(buttons, button("Authorize Etsy…", () => act(value => value.message, () => mutate("/api/business/connections/etsy/authorize"))), button("Finish authorization", () => act(value => { callback.value = ""; result.textContent = value.message; return value.message; }, () => mutate("/api/business/connections/etsy/finish", {redirected_url: callback.value.trim()}))));
         }
         append(form, buttons, result); wireForm(form, save, async () => { const values = Object.fromEntries(Object.entries(controls).map(([key, control]) => [key, control.value])); await mutate(`/api/business/connections/${provider}`, {values}, "PUT"); spec.fields.forEach(([key,,secret]) => { if (secret) controls[key].value = ""; }); result.textContent = "Settings saved. Check the connection next."; });
-        root.append(panel(spec.title, body(form)));
+        root.append(panel(spec.title, body(withNotes(form, provider)), button("How to connect…", () => guideDialog(provider), "button small ghost")));
       }
       const gmailForm = el("form"), clientId = input("Google Desktop app OAuth client ID", mail.client_id || ""), secret = input("Google client secret", ""); secret.type = "password"; secret.autocomplete = "off";
       const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", "hint", mail.connected ? `Connected read-only: ${mail.email}` : "Not connected");
       append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra can read selected messages; it cannot send, delete or change mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
-      wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Read-only Gmail intake", body(gmailForm)));
+      wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Read-only Gmail intake", body(withNotes(gmailForm, "gmail")), button("How to connect…", () => guideDialog("gmail"), "button small ghost")));
       const notifyForm = el("form"), ntfy = check("Send progress notifications through ntfy", notifications.ntfy_enabled), telegram = check("Send progress notifications to my Telegram bot", notifications.telegram_enabled);
       const server = input("HTTPS ntfy server", notifications.ntfy_server), bot = input("Telegram bot token (blank keeps saved token)", ""), chat = input("Your private Telegram chat ID", notifications.telegram_chat_id || ""); bot.type = "password"; bot.autocomplete = "off";
       const saveNotify = submitButton("Save notifications"), notifyResult = el("pre", "connection-result");
-      append(notifyForm, hint("Optional: task titles and states leave your computer for your selected service. Do not put client secrets in titles. Anyone with your ntfy topic can read its messages. Subscribe privately in your ntfy app."), field("ntfy subscription topic", input("", notifications.ntfy_topic)), ntfy.wrap, field("ntfy HTTPS server", server), telegram.wrap, field("Bot token", bot), field("Your Telegram chat ID", chat), actionsRow(saveNotify, button("Send me a test", () => act(value => { notifyResult.textContent = json(value); return value.sent.length ? "Test sent." : "No notification sent; check settings."; }, () => mutate("/api/business/notifications/test")))), notifyResult);
-      wireForm(notifyForm, saveNotify, async () => { await mutate("/api/business/notifications", {ntfy_enabled: ntfy.control.checked, ntfy_server: server.value, telegram_enabled: telegram.control.checked, telegram_token: bot.value, telegram_chat_id: chat.value}, "PUT"); bot.value = ""; toast("Notifications saved."); }); root.append(panel("Progress on your phone", body(notifyForm)));
+      append(notifyForm, hint("Optional: task titles and states leave your computer for your selected service. Do not put client secrets in titles. Anyone with your ntfy topic can read its messages. Subscribe privately in your ntfy app."), field("ntfy subscription topic", input("", notifications.ntfy_topic)), ntfy.wrap, field("ntfy HTTPS server", server), telegram.wrap, field("Bot token", bot), field("Your Telegram chat ID", chat, "After pressing Start in your bot, press Find my chat."), button("Find my chat", () => act(value => { chat.value = value.chat_id; return `Found your chat${value.name ? ` with ${value.name}` : ""}.`; }, () => mutate("/api/business/notifications/telegram-chat")), "button small"), actionsRow(saveNotify, button("Send me a test", () => act(value => { notifyResult.textContent = json(value); return value.sent.length ? "Test sent." : "No notification sent; check settings."; }, () => mutate("/api/business/notifications/test")))), notifyResult);
+      wireForm(notifyForm, saveNotify, async () => { await mutate("/api/business/notifications", {ntfy_enabled: ntfy.control.checked, ntfy_server: server.value, telegram_enabled: telegram.control.checked, telegram_token: bot.value, telegram_chat_id: chat.value}, "PUT"); bot.value = ""; toast("Notifications saved."); }); root.append(panel("Progress on your phone", body(withNotes(notifyForm, "notify")), button("How to connect…", () => guideDialog("notify"), "button small ghost")));
+      const fiverr = append(el("div"), badge("manual", "blue"), el("p", "", "Fiverr has no seller API, so there is nothing to connect. Paste each order's requirements into Business Studio, review the exported files yourself and deliver them in Fiverr."), button("+ New business job from a Fiverr order", () => businessForm(), "button small"));
+      root.append(panel("Fiverr orders", body(withNotes(fiverr, "fiverr")), button("How to connect…", () => guideDialog("fiverr"), "button small ghost")));
     })().catch(issue => { if (token === renderToken) root.replaceChildren(body(empty("Connections unavailable", issue.message))); });
     return root;
+  }
+
+  // ---------- updates ----------
+  function updatesPanel() {
+    const node = el("div"), state = el("div"), notes = el("div"), log = el("div");
+    append(node, kv([["This version", data.version], ["Updates from", "your GitHub releases (Mukira56/Cerebra)"]]), state, notes, log);
+    const check = button("Check for updates", () => run(), "button primary");
+    state.append(actionsRow(check), hint("Uses your GitHub sign-in (GitHub page). Updating closes Cerebra, installs the new version and reopens it; running tasks are paused and can be resumed."));
+    async function run() {
+      check.disabled = true; check.textContent = "Checking…";
+      let info; try { info = await api("/api/updates", {timeout: 90000}); } catch (issue) { state.replaceChildren(hint(issue.message, true), actionsRow(button("Try again", () => run(), "button"))); return; }
+      const actions = el("div", "form-actions"), download = button(`Download ${info.latest || ""}`, async () => {
+        download.disabled = true; download.textContent = "Downloading and verifying…";
+        const result = await act(value => value.message, () => mutate("/api/updates/download", {tag: info.tag}, "POST", 900000));
+        if (result) { download.replaceWith(install); } else { download.disabled = false; download.textContent = `Download ${info.latest}`; }
+      }, "button primary");
+      const install = button("Install and restart", async () => {
+        install.disabled = true;
+        const result = await act(value => value.message, () => mutate("/api/updates/install", {}, "POST", 60000));
+        if (result) state.replaceChildren(el("div", "notice", result.message)); else install.disabled = false;
+      }, "button primary");
+      if (info.available) actions.append(info.downloaded ? install : download);
+      actions.append(button("Check again", () => run(), "button ghost"));
+      state.replaceChildren(append(el("div", "row-meta"), badge(info.available ? "update available" : "up to date", info.available ? "green" : "muted"), el("span", "", info.message)),
+        !info.installed && info.available ? hint("You're running Cerebra from source: update it with git pull instead.", true) : null, info.installed || !info.available ? actions : null);
+      notes.replaceChildren(info.available && info.notes ? append(el("details", "update-notes"), el("summary", "", `What's new in ${info.latest}`), markdown(info.notes)) : el("span"));
+      log.replaceChildren(array(info.last_log).length ? append(el("details"), el("summary", "", "Last update log"), code(info.last_log.join("\n"))) : el("span"));
+    }
+    return node;
   }
 
   // ---------- full access ----------
@@ -784,6 +836,7 @@
     const save = submitButton("Save"); limits.append(actionsRow(save));
     wireForm(limits, save, async () => { const payload = {}; Object.entries(controls).forEach(([name, control]) => { payload[name] = unlimited[name]?.[0].checked ? unlimited[name][1] : control.type === "number" ? Number(control.value) : control.value.trim(); }); await mutate("/api/settings", payload, "PATCH"); await refresh(true); toast("Settings saved."); });
     root.append(panel("Limits & programs", body(limits)));
+    root.append(panel("Updates", body(updatesPanel())));
 
     root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));
 

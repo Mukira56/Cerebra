@@ -165,11 +165,25 @@ class Commerce:
         if provider == "printify":
             shops = self.request("GET", "https://api.printify.com/v1/shops.json", headers={"Authorization": "Bearer " + vault.unprotect(item["api_key"])})
             shops = [{"id": str(shop["id"]), "title": shop.get("title", "")} for shop in shops]
+            if not shops: raise Rejected("Your Printify account has no store yet. In Printify open My stores › Add new store, then check again.")
             if item.get("shop_id") and item["shop_id"] not in [shop["id"] for shop in shops]: raise ValueError("This Printify key cannot access that shop ID")
-            result = {"shops": shops, "message": "Printify key verified. Select a shop ID before creating a draft product. Order creation and production are blocked."}
+            if not item.get("shop_id") and len(shops) == 1:
+                self.update("printify", shop_id=shops[0]["id"])
+                result = {"shops": shops, "shop_id": shops[0]["id"], "message": f"Printify verified. Using your store “{shops[0]['title']}” (ID {shops[0]['id']}). Order creation and production are blocked."}
+            else:
+                result = {"shops": shops, "message": "Printify key verified." + ("" if item.get("shop_id") else " You have several stores: type the ID of the one to use in Shop ID and save.") + " Order creation and production are blocked."}
         elif provider == "etsy":
-            if not item.get("shop_id"): raise ValueError("Save your Etsy shop ID first")
-            shop = self.request("GET", f"https://api.etsy.com/v3/application/shops/{item['shop_id']}", headers=self.etsy_headers())
+            headers = self.etsy_headers()
+            if not item.get("shop_id"):
+                # Etsy access tokens begin with the numeric user ID of the person who authorized the app.
+                user_id = headers["Authorization"].split(" ", 1)[1].split(".", 1)[0]
+                if not user_id.isdigit(): raise ValueError("Type your Etsy shop ID and save, then check again")
+                try: owned = self.request("GET", f"https://api.etsy.com/v3/application/users/{user_id}/shops", headers=headers)
+                except Rejected: raise Rejected("This Etsy account has no shop yet. Open one at etsy.com/sell, then check again.") from None
+                if not owned.get("shop_id"): raise Rejected("This Etsy account has no shop yet. Open one at etsy.com/sell, then check again.")
+                self.update("etsy", shop_id=str(owned["shop_id"]))
+                item = self.config("etsy")
+            shop = self.request("GET", f"https://api.etsy.com/v3/application/shops/{item['shop_id']}", headers=headers)
             result = {"shop_id": str(shop["shop_id"]), "message": "Etsy shop verified: " + str(shop.get("shop_name", ""))}
         elif provider == "images":
             model = item.get("model", IMAGE_MODEL)
