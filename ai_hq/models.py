@@ -136,6 +136,18 @@ class ChatMessage(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     finished_at: Mapped[str] = mapped_column(String, default="")
 
+class ChatAction(Base):
+    """Something the support chat asked Cerebra to do, and what happened when it ran."""
+    __tablename__ = "chat_actions"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    message_id: Mapped[str] = mapped_column(ForeignKey("chat_messages.id"))
+    conversation_id: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, default="proposed")  # proposed | done | failed | dismissed
+    result: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

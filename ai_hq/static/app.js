@@ -4,7 +4,7 @@
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
     overview: ["WORKSPACE", "Overview", "Everything happening in your development HQ, at a glance."],
-    chat: ["WORK", "Chat", "Ask Codex or Claude about a project. Chat is read-only: to change code, create a task."],
+    chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     tasks: ["WORK", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
     projects: ["WORK", "Projects", "Repositories Cerebra is allowed to work in."],
     approvals: ["WORK", "Approvals", "Nothing important happens without your yes."],
@@ -230,7 +230,7 @@
       root.append(actions);
       const tabs = el("div", "tabs"), pane = el("div");
       const views = {
-        "Overview": () => append(el("div", "section"), routingCard(task), kv([["Project", projectFor(task.project_id)?.name], ["Planner", models.planner], ["Coder", models.implementer], ["Reviewer", models.reviewer], ["Files allowed", array(task.allowed_paths).join(", ")], ["Repairs", `${task.retry_count || 0} / ${task.max_retries ?? 3}`], ["Created", date(task.created_at)], ["Task ID", task.id]]), el("h3", "", "Plan"), plan(task.plan), array(task.requirements).length ? [el("h3", "", "Requirements"), list(task.requirements)] : null, task.results?.architecture?.output ? [el("h3", "", "AI architecture advisory"), code(task.results.architecture.output)] : null),
+        "Overview": () => append(el("div", "section"), routingCard(task), kv([["Project", projectFor(task.project_id)?.name], ["Planner", models.planner], ["Coder", models.implementer], ["Reviewer", models.reviewer], ["Files allowed", array(task.allowed_paths).join(", ")], ["Repairs", `${task.retry_count || 0} / ${task.max_retries < 0 ? "no limit" : task.max_retries ?? 3}`], ["Created", date(task.created_at)], ["Task ID", task.id]]), el("h3", "", "Plan"), plan(task.plan), array(task.requirements).length ? [el("h3", "", "Requirements"), list(task.requirements)] : null, task.results?.architecture?.output ? [el("h3", "", "AI architecture advisory"), code(task.results.architecture.output)] : null),
         "Results": () => { const node = append(el("div", "section"), el("h3", "", "Tests")); if (!array(task.test_results).length) node.append(el("p", "", "No tests have run yet.")); array(task.test_results).forEach(result => append(node, append(el("div", "row-meta"), badge(result.passed ? "passed" : "failed", result.passed ? "green" : "red"), el("code", "", array(result.command).join(" "))), code((result.stdout || "") + (result.stderr ? `\n${result.stderr}` : "")))); node.append(el("h3", "", "Review findings")); if (!array(task.review_findings).length) node.append(el("p", "", array(task.reviews).length ? "The reviewer found no problems." : "No review yet.")); array(task.review_findings).forEach(finding => append(node, append(el("div", "row-meta"), badge(finding.severity, ["critical", "high"].includes(finding.severity) ? "red" : "amber"), el("code", "", `${finding.path || ""}${finding.line ? `:${finding.line}` : ""}`), finding.validated ? badge("verified", "green") : badge("unverified", "muted")), el("p", "", finding.message))); return node; },
         "Changes": () => append(el("div", "section"), kv([["Branch", task.branch], ["Base commit", task.base_commit], ["Working copy", task.worktree_path]]), code(task.diff || task.results?.diff || "No changes yet.")),
         "Runs & logs": () => { const node = el("div", "section"); if (!array(task.runs).length) node.append(el("p", "", "No AI runs yet.")); array(task.runs).forEach(run => append(node, append(el("div", "row-meta"), el("strong", "", `${nice(run.agent)} · ${run.role}`), badge(run.status, run.status === "succeeded" ? "green" : run.status === "running" ? "blue" : "red"), el("span", "", date(run.started_at))), run.error ? code(run.error) : null, run.output ? code(run.output.slice(-6000)) : null)); node.append(el("h3", "", "Event history")); node.append(activityList([...array(task.events)].reverse(), 200)); return node; }
@@ -352,13 +352,24 @@
     flush(); return root;
   }
   const chatDefault = () => (data?.roles?.implementer && data.roles.implementer !== "auto" ? data.roles.implementer : "codex");
+  function actionCard(action) {
+    const node = el("div", `action-card ${action.status}`), top = el("div", "row-meta");
+    append(top, badge(action.status === "proposed" ? "proposed" : action.status, {done: "green", failed: "red", proposed: "amber", dismissed: "muted", running: "blue"}[action.status]), el("strong", "", action.summary));
+    node.append(top);
+    if (action.result) node.append(el("p", "", action.result));
+    if (action.status === "proposed") {
+      const decide = run => async event => { node.querySelectorAll("button").forEach(item => { item.disabled = true; }); if (await act(run ? "Done." : "Dismissed.", () => mutate(`/api/chats/actions/${encodeURIComponent(action.id)}`, {run}, "POST", 120000))) { await refresh(true); render(); } else node.querySelectorAll("button").forEach(item => { item.disabled = false; }); };
+      node.append(append(el("div", "actions"), button("Do it", decide(true), "button small primary"), button("Dismiss", decide(false), "button small ghost")));
+    }
+    return node;
+  }
   async function newChat(projectId = "", profile = chatDefault()) {
     const conversation = await act(null, () => mutate("/api/chats", {profile, project_id: projectId || null}));
     if (conversation) { chatId = conversation.id; cache.chats = null; if (page === "chat") render(); else location.hash = "chat"; }
   }
   function chatView() {
     const root = el("div", "chat"), side = el("div", "chat-list"), head = el("div", "chat-list-head"), items = el("div", "chat-items"), main = el("div", "chat-main");
-    const profile = select(roleChoices().filter(([id]) => id !== "auto"), chatDefault()), project = select([["", "No project (general chat)"], ...array(data.projects).map(item => [item.id, item.name])]);
+    const profile = select(roleChoices().filter(([id]) => id !== "auto"), chatDefault()), project = select([["", "All projects"], ...array(data.projects).map(item => [item.id, item.name])]);
     append(head, field("Talk to", profile), field("About", project), button("+ New chat", () => newChat(project.value, profile.value), "button primary"));
     append(side, head, items); append(root, side, main);
     const token = renderToken;
@@ -366,20 +377,26 @@
     function paintList() { items.querySelectorAll(".chat-item").forEach(node => node.classList.toggle("active", node.dataset.id === chatId)); }
     async function openChat(keepScroll = false) {
       clearTimeout(chatPoll);
-      if (!chatId) { main.replaceChildren(body(empty("Chat with your AI team", "Ask how something works, plan a feature, or get a review of a file. Chat can read the chosen project but never changes it.", null, ">_"))); return; }
+      if (!chatId) { main.replaceChildren(body(empty("Cerebra Support", "Ask where any project or task stands and why, paste a client's request to have it understood and planned, or ask Cerebra to build something. Support sees all your projects and tasks.", button("+ Start a conversation", () => newChat(project.value, profile.value), "button primary"), ">_"))); return; }
       let state; try { state = await api(`/api/chats/${encodeURIComponent(chatId)}`); } catch (issue) { main.replaceChildren(body(empty("Chat unavailable", issue.message))); return; }
       if (token !== renderToken) return;
       const conversation = state.conversation, header = el("div", "chat-head"), messages = el("div", "messages"), composer = el("form", "composer"), box = textarea("Message " + profileLabel(conversation.profile) + "…  (Enter to send, Shift+Enter for a new line)"), send = submitButton("Send");
       const previous = main.querySelector(".messages"), wasAtBottom = !previous || previous.scrollHeight - previous.scrollTop - previous.clientHeight < 40, draft = main.querySelector("textarea")?.value || "";
-      append(header, el("strong", "", conversation.title), badge(profileLabel(conversation.profile), "blue"), conversation.project_id ? badge(projectFor(conversation.project_id)?.name || "project", "purple") : badge("no project", "muted"), badge("read-only", "green"), el("span", "", ""), button("→ Make it a task", () => taskForm(conversation.project_id || "", [...state.messages].reverse().find(message => message.role === "user")?.content || ""), "button small primary"), button("Delete", async () => { if (await act("Chat deleted.", () => api(`/api/chats/${encodeURIComponent(chatId)}`, {method: "DELETE"}))) { chatId = ""; loadList(); } }, "button small ghost"));
+      const auto = check("Let support act for me"); auto.control.checked = state.settings?.act_automatically === true; auto.wrap.title = "When ticked, projects and tasks that support proposes are created and started right away. Approval steps still ask you unless Away mode is on.";
+      auto.control.addEventListener("change", async () => { if (!await act(auto.control.checked ? "Support will act on its own." : "Support will ask before acting.", () => mutate("/api/support", {act_automatically: auto.control.checked}, "PUT"))) auto.control.checked = !auto.control.checked; });
+      append(header, el("strong", "", conversation.title), badge(profileLabel(conversation.profile), "blue"), conversation.project_id ? badge(projectFor(conversation.project_id)?.name || "project", "purple") : badge("all projects", "muted"), badge("read-only", "green"), el("span", "", ""), auto.wrap, button("→ Make it a task", () => taskForm(conversation.project_id || "", [...state.messages].reverse().find(message => message.role === "user")?.content || ""), "button small primary"), button("Delete", async () => { if (await act("Chat deleted.", () => api(`/api/chats/${encodeURIComponent(chatId)}`, {method: "DELETE"}))) { chatId = ""; loadList(); } }, "button small ghost"));
       if (!agentsOn()) messages.append(hint("AI agents are switched off, so messages will fail. Turn them on in Settings › Agent permissions.", true));
-      if (!state.messages.length) messages.append(empty("Say hello", conversation.project_id ? "This chat can read the project's files to answer you." : "This is a general chat, not linked to a project.", null, ">_"));
+      if (!state.messages.length) {
+        const ideas = el("div", "prompt-chips"), named = projectFor(conversation.project_id)?.name || array(data.projects)[0]?.name || "my project";
+        [`Where are we on ${named}, and why did anything fail?`, "What is waiting for my approval, and what should I do first?", "Build me a small web app for booking appointments. Plan it, create the project and tasks, and start them.", "Here is a client's request. Help me understand exactly what they want, list questions to ask them, draft my reply, and plan the work:\n\n"].forEach(text => ideas.append(button(text.split("\n")[0], () => { box.value = text; box.focus(); }, "chip")));
+        messages.append(empty("How can I help?", "I can see every project and task in Cerebra. Ask anything, or pick a starting point:", ideas, ">_"));
+      }
       state.messages.forEach(message => {
         const row = el("div", `message ${message.role}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
         if (message.role === "user") bubble.append(el("p", "", message.content));
         else if (message.status === "pending") bubble.append(append(el("div", "typing"), el("span"), el("span"), el("span")), el("small", "", `${nice(message.provider)} is thinking… this can take a minute.`));
         else if (message.status === "failed") bubble.append(el("p", "", `⚠ ${message.error || "No answer."}`));
-        else bubble.append(markdown(message.content));
+        else { bubble.append(markdown(message.content)); array(message.actions).forEach(action => bubble.append(actionCard(action))); }
         append(holder, bubble, el("div", "message-meta", `${message.role === "user" ? "you" : nice(message.provider) + (message.model ? ` · ${message.model}` : "")} · ${relative(message.created_at)}`));
         append(row, el("span", "avatar", message.role === "user" ? "you" : PROVIDER_ICON[message.provider] || "AI"), holder); messages.append(row);
       });
@@ -606,11 +623,19 @@
     root.append(panel("Away mode — work while I'm away", body(awayForm())));
 
     const limits = el("form"), controls = {}, grid = el("div", "form-grid");
-    [["agent_timeout", "AI run time limit (seconds)", 10, 7200], ["test_timeout", "Test time limit (seconds)", 1, 1800], ["max_retries", "Automatic repair attempts", 0, 3]].forEach(([name, label, min, max]) => { const node = input("", values[name], "number"); node.min = min; node.max = max; controls[name] = node; grid.append(field(label, node)); });
+    const unlimited = {};
+    // "No limit" sends 0 seconds for time limits and -1 for repair attempts.
+    [["agent_timeout", "AI run time limit (seconds)", 10, 86400, 0, 600], ["test_timeout", "Test time limit (seconds)", 1, 86400, 0, 120], ["max_retries", "Automatic repair attempts", 0, 100, -1, 3]].forEach(([name, label, min, max, none, fallback]) => {
+      const current = values[name], node = input("", current === none ? fallback : current, "number"), box = check("No limit");
+      node.min = min; node.max = max; box.control.checked = current === none; node.disabled = box.control.checked;
+      box.control.addEventListener("change", () => { node.disabled = box.control.checked; });
+      controls[name] = node; unlimited[name] = [box.control, none];
+      grid.append(append(field(label, node, name === "max_retries" ? "With no limit, repairs continue until tests and review pass, or an attempt changes nothing." : "With no limit, use Pause or Cancel to stop a long run."), box.wrap));
+    });
     controls.codex_path = input("found automatically", values.codex_path); controls.claude_path = input("found automatically", values.claude_path);
     append(limits, grid, field("Codex program path (optional)", controls.codex_path), field("Claude program path (optional)", controls.claude_path));
     const save = submitButton("Save"); limits.append(actionsRow(save));
-    wireForm(limits, save, async () => { const payload = {}; Object.entries(controls).forEach(([name, control]) => { payload[name] = control.type === "number" ? Number(control.value) : control.value.trim(); }); await mutate("/api/settings", payload, "PATCH"); await refresh(true); toast("Settings saved."); });
+    wireForm(limits, save, async () => { const payload = {}; Object.entries(controls).forEach(([name, control]) => { payload[name] = unlimited[name]?.[0].checked ? unlimited[name][1] : control.type === "number" ? Number(control.value) : control.value.trim(); }); await mutate("/api/settings", payload, "PATCH"); await refresh(true); toast("Settings saved."); });
     root.append(panel("Limits & programs", body(limits)));
 
     root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));

@@ -146,14 +146,14 @@ class Supervisor:
                 mode="live", allowed_paths=self._allowed(allowed_paths or ["."]),
                 requirements=_clean(requirements or [objective]),
                 acceptance_criteria=_clean(acceptance_criteria or ["Configured verification commands pass", "Independent review has no unresolved defects", "Human approves integration"]),
-                max_retries=min(3, max(0, self.settings.max_retries)), results={"queued": False, "models": chosen, "routing": routing_record})
+                max_retries=-1 if self.settings.max_retries < 0 else min(100, self.settings.max_retries), results={"queued": False, "models": chosen, "routing": routing_record})
             session.add(task)
             session.flush()
             self._state(session, task, "PLANNING", "Deterministic supervisor is preparing an execution plan")
             task.plan = [
                 {"milestone": "Scope", "agent": "supervisor", "tasks": ["Confirm requirements, authorized paths and project test commands", "Wait for plan approval and completed dependencies"]},
                 {"milestone": "Implementation", "agent": assigned_agent, "tasks": ["Create an isolated task branch and worktree", str(objective).strip()]},
-                {"milestone": "Verification", "agent": "supervisor", "tasks": ["Run registered test commands and inspect changes", "Validate independent review findings", f"Repair verified defects at most {task.max_retries} times"]},
+                {"milestone": "Verification", "agent": "supervisor", "tasks": ["Run registered test commands and inspect changes", "Validate independent review findings", "Repair verified defects until the work passes (it stops if an attempt makes no progress)" if task.max_retries < 0 else f"Repair verified defects at most {task.max_retries} times"]},
                 {"milestone": "Review", "agent": task.reviewer, "tasks": ["Inspect a separate candidate snapshot", "Return structured findings with reproducible evidence"]},
                 {"milestone": "Integration", "agent": "human", "tasks": ["Review candidate diff and verification output", "Explicitly approve local integration"]},
             ]
@@ -673,7 +673,7 @@ class Supervisor:
         return output
 
     def _repair(self, session, task):
-        if task.retry_count >= task.max_retries:
+        if task.max_retries >= 0 and task.retry_count >= task.max_retries:
             task.results = {**task.results, "queued": False, "error": "Repair retry limit reached"}
             self._state(session, task, "FAILED", "Repair retry limit reached")
             return False
@@ -697,7 +697,7 @@ class Supervisor:
                 cursor = cursor.parent
 
     def _refresh_registry(self):
-        self.registry.timeout = self.settings.agent_timeout
+        self.registry.timeout = self.settings.agent_timeout or None
         self.registry.allow_live = self.settings.live_enabled
         self.registry.confinement_mode = "cli-confinement" if self.settings.cli_confinement_accepted else "none"
         self.registry.full_access = self.settings.full_access
@@ -781,7 +781,7 @@ class Supervisor:
                 break
             if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
                 raise ValueError("Registered test commands must be nonempty argument lists")
-            process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout, cancel_event=self._cancels[task_id])
+            process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout or None, cancel_event=self._cancels[task_id])
             result = {"command": _clean(command), "exit_code": process.exit_code, "stdout": redact(process.stdout),
                 "stderr": redact(process.stderr), "timed_out": process.timed_out, "cancelled": process.cancelled,
                 "output_truncated": process.output_truncated,

@@ -51,9 +51,10 @@ class SessionCreate(StrictModel):
     key: str = Field(min_length=20, max_length=200)
 
 class SettingsUpdate(StrictModel):
-    agent_timeout: int | None = Field(default=None, ge=10, le=7200)
-    test_timeout: int | None = Field(default=None, ge=1, le=1800)
-    max_retries: int | None = Field(default=None, ge=0, le=3)
+    # 0 seconds means no time limit; -1 repair attempts means repair until the work passes or stops progressing.
+    agent_timeout: int | None = Field(default=None, ge=0, le=86400)
+    test_timeout: int | None = Field(default=None, ge=0, le=86400)
+    max_retries: int | None = Field(default=None, ge=-1, le=100)
     max_concurrency: Literal[1] | None = None
     codex_path: str | None = Field(default=None, max_length=2048)
     claude_path: str | None = Field(default=None, max_length=2048)
@@ -127,6 +128,12 @@ class RoutingUpdate(StrictModel):
     mode: str = Field(pattern="^(rules|model)$")
     provider: str = Field(default="claude", pattern="^(codex|claude)$")
     model: str = Field(default="", max_length=100)
+
+class SupportSettings(StrictModel):
+    act_automatically: bool
+
+class ActionDecision(StrictModel):
+    run: bool
 
 class ChatCreate(StrictModel):
     profile: str = Field(default="codex", max_length=120)

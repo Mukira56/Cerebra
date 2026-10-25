@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate)
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision)
 from .security import redact
 from . import __version__
 
@@ -519,6 +519,58 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/chats/{conversation_id}/stop")
     def chat_stop(conversation_id: str): return chats.stop(conversation_id)
+
+    # ---- support actions: validated requests from the support chat, run like dashboard buttons ----
+    def find_project(reference):
+        with db.Session() as session:
+            rows = session.scalars(select(Project)).all()
+        key = reference.strip().lower()
+        matches = [row for row in rows if row.name.lower() == key] or [row for row in rows if row.id.startswith(key)]
+        if len(matches) != 1: raise ValueError(f"No single project matches “{reference}”")
+        return matches[0]
+
+    def find_task(prefix):
+        with db.Session() as session:
+            matches = session.scalars(select(Task).where(Task.id.like(prefix + "%"))).all()
+        if len(matches) != 1: raise ValueError(f"No single task has an id starting with {prefix}")
+        return matches[0]
+
+    def run_support_action(action):
+        kind = action["action"]
+        if kind == "create_project":
+            project = register(ProjectCreate(name=action["name"], create_new=True, authorize=True, test_commands=action["test_commands"]))
+            return f"Created the project {project['name']} (id {project['id'][:8]})." + ("" if action["test_commands"] else " Add its test commands on the Projects page before tasks can run.")
+        if kind == "create_task":
+            project = find_project(action["project"])
+            task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None)
+            return f"Created task {task.id[:8]} in {project.name}. Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
+        task = find_task(action["task"])
+        method = {"approve_plan": supervisor.approve_plan, "start_task": supervisor.start, "pause_task": supervisor.pause, "resume_task": supervisor.resume, "cancel_task": supervisor.cancel}[kind]
+        result = method(task.id)
+        if kind == "start_task" and result.state == "AWAITING_APPROVAL":
+            return f"Task {task.id[:8]} is ready; it is waiting for your OK to let the agents run (Approvals)."
+        return f"Task {task.id[:8]} is now {result.state.replace('_', ' ').lower()}."
+
+    def app_autopilot_active():
+        from . import autopilot
+        with db.Session() as session: return autopilot.active(autopilot.load(session))
+
+    chats.executor = run_support_action
+
+    @app.post("/api/chats/actions/{action_id}")
+    def chat_action(action_id: str, payload: ActionDecision): return chat_or_404(chats.run_action, action_id, not payload.run)
+
+    @app.get("/api/support")
+    def support_settings():
+        from . import support
+        with db.Session() as session: return support.load(session)
+
+    @app.put("/api/support")
+    def support_update(payload: SupportSettings):
+        from . import support
+        with db.Session.begin() as session:
+            session.add(Event(kind="settings_changed", message="Support chat may now act on its own" if payload.act_automatically else "Support chat now asks before acting"))
+            return support.save(session, payload.act_automatically)
 
     @app.delete("/api/chats/{conversation_id}")
     def chat_delete(conversation_id: str):

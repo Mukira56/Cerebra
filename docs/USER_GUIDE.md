@@ -62,12 +62,42 @@ Everything stays on this computer, in the data folder shown in **Settings › Wh
 
 Open **Reports** from the sidebar, or press **Plain report** in any task. Each report opens on its own page that you can simply read through.
 
-## Chat
+## Support
 
-**Chat** lets you talk to Codex or Claude about a project: ask how something works, plan a feature, or get a second opinion.
-- Chat is **read-only**: the agent can read the chosen project, but it never changes files. To change code, press **→ Make it a task**: it opens a new task with your last message already filled in.
-- Each message uses your provider account, just like a task.
-- Chats are saved, and you can delete them.
+**Support** is your support engineer. Every message includes the live record of all your projects and tasks: states, errors, test output and what's waiting for you. So you can ask:
+- "Where are we in EstatePilot, and why did it fail?"
+- "What is waiting for my approval?"
+- "Build me a booking web app." Support plans it and proposes the project and tasks.
+- "Here is a client's request: …" Support works out what the client really wants, lists questions to ask, drafts a reply for you to send, and plans the work.
+
+When Support wants to do something (create a project, create a task, approve a plan, start, pause, resume or cancel a task), its answer shows an **action card**.
+- Press **Do it** to run it, or **Dismiss**.
+- Tick **Let support act for me** to run actions straight away.
+- Approval steps still ask you, unless Away mode is on. With both on, Cerebra plans, creates and runs the work by itself.
+
+Support can read the chosen project's files but never edits them directly; code is written by tasks.
+- Projects it creates are new, empty folders in Cerebra's data folder.
+- Their tests must be a standard runner (`npm test`, `python -m pytest -q`, `dotnet test`, `go test ./...`, `cargo test` and similar). Other test commands you set yourself on the Projects page.
+- **→ Make it a task** still turns your last message into a task by hand.
+
+Each message uses your provider account. Chats are saved, and you can delete them.
+
+### Freelance platforms and email
+
+Cerebra does not log in to Upwork, Fiverr or Gmail, bid on jobs, or message clients on its own:
+- Fiverr has no public API for sellers.
+- Upwork's API needs an approved developer application, and its terms prohibit automated proposals.
+- Sending messages to clients as you, without them knowing it's an AI, risks your accounts and misleads the people paying you.
+
+Instead, paste a job post or client email into Support. It breaks down the requirements, writes the questions and the reply for you to send, and turns the work into a project and tasks that run on their own (with **Let support act for me** and **Away mode**).
+
+## Limits
+
+In **Settings › Limits & programs**, each limit has a **No limit** box:
+- **AI run time** and **Test time**: with no limit, a run continues until it finishes. Use Pause or Cancel to stop it.
+- **Automatic repair attempts**: with no limit, Cerebra keeps sending failures back for repair until the tests and review pass. It stops as soon as an attempt changes nothing.
+
+No limit can use a lot of your plan's usage on a stubborn task.
 
 ## Models
 

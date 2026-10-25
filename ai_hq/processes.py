@@ -115,14 +115,15 @@ class ProcessRunner:
         self.max_output_bytes = max_output_bytes
         self.allowed_roots = allowed_roots
 
-    def run(self, args: Sequence[str], cwd, timeout: float, cancel_event=None,
+    def run(self, args: Sequence[str], cwd, timeout: float | None, cancel_event=None,
             input_text: str | None = None, env: dict[str, str] | None = None,
             redact_output: bool = True) -> ProcessResult:
         # redact_output=False is only for bounded machine-parsed output (Git/CLI protocol); the caller
         # must redact anything it persists, displays or raises.
         if isinstance(args, (str, bytes)) or not args or any(not isinstance(arg, str) or "\x00" in arg for arg in args):
             raise ValueError("Process arguments must be a nonempty list of NUL-free strings")
-        if not 0 < timeout <= 86400:
+        # None means no time limit (the user chose "No limit"); cancellation still stops the process.
+        if timeout is not None and not 0 < timeout <= 86400:
             raise ValueError("Process timeout must be positive and no longer than 24 hours")
         if Path(args[0]).suffix.lower() in {".cmd", ".bat", ".ps1"}:
             raise ValueError("Shell wrappers are not accepted; configure a native executable")
@@ -183,7 +184,7 @@ class ProcessRunner:
             timed_out = cancelled = False
             while process.poll() is None:
                 cancelled = bool(cancel_event is not None and cancel_event.is_set())
-                timed_out = time.monotonic() - started >= timeout
+                timed_out = timeout is not None and time.monotonic() - started >= timeout
                 if cancelled or timed_out:
                     break
                 time.sleep(0.025)

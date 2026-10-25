@@ -26,6 +26,19 @@ Plan approval, task start, agent execution, and integration are deliberate opera
 
 Integration requires the recorded approval and fresh repository checks. The system never pushes, force-pushes, deploys, or publishes on its own. **Push** and **Publish to GitHub** run only when you press them, using your own `gh`/Git credentials. The system never reads browser credentials or purchases services. Existing projects remain untouched until explicitly registered and authorized.
 
+## Support chat actions (0.7.0)
+
+Each support message includes a bounded brief of the stored records (`support.brief`: projects, tasks, states, errors, test output, pending gates), labelled as data, not instructions.
+
+The model may request actions in a fenced `cerebra-actions` JSON block. `support.validate` keeps only seven kinds: create_project, create_task, approve_plan, start_task, pause_task, resume_task, cancel_task.
+- Tasks are referenced by hex id prefix.
+- New projects are only empty folders under the data directory.
+- Test commands must equal one of the fixed standard runners in `support.TEST_RUNNERS`, so model text can never define an executable command.
+
+Actions are stored as `chat_actions` rows. They run once, through the same supervisor methods as dashboard buttons, either on the user's click or automatically if *Let support act for me* is on. Plan, run-consent and merge gates are unchanged; Away mode may answer them.
+
+**No limits.** A run with a time limit of `0` has no deadline, and repair attempts of `-1` are unbounded. Repair still stops when an attempt produces no new change. The user can always pause or cancel.
+
 ## Full access (0.6.0, opt-in)
 
 **Settings › Full access** (`POST /api/permissions/full-access`) is refused unless agents are switched on and both acknowledgements are ticked (machine, and GitHub). It is stored as the `access_policy` record, and switching agents off resets it.

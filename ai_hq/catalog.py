@@ -37,8 +37,24 @@ def _tier(description):
     return "balanced"
 
 
+_CACHE: dict = {}
+
+
 def codex_models(home=None):
+    """Codex's model list, re-read only when its cache file changes (the dashboard asks every few seconds)."""
     cache = Path(home or Path.home()) / ".codex" / "models_cache.json"
+    try:
+        stamp = (str(cache), cache.stat().st_mtime_ns, cache.stat().st_size)
+    except OSError:
+        stamp = (str(cache), None, None)
+    if _CACHE.get("stamp") == stamp:
+        return [dict(item) for item in _CACHE["models"]]
+    models = _read_codex(cache)
+    _CACHE.update(stamp=stamp, models=models)
+    return [dict(item) for item in models]
+
+
+def _read_codex(cache):
     try:
         if cache.stat().st_size > 2_000_000:
             raise ValueError("cache too large")

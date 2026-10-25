@@ -23,7 +23,7 @@ class Settings:
     data_dir: Path = field(default_factory=default_data_dir)
     agent_timeout: int = 600
     test_timeout: int = 120
-    max_retries: int = 3
+    max_retries: int = 3  # -1 = no limit
     max_concurrency: int = 1
     live_enabled: bool = False
     # Sandbox policy B: the user accepted CLI-enforced confinement and its residual read risk.
