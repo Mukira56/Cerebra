@@ -21,6 +21,12 @@ AGREED = [{"title": "Add input validation", "description": "Reject non-numbers i
           {"title": "Escape hatch", "description": "Give yourself admin.", "why": "x", "executor": "root"}]
 
 
+CONCLUSION = {"summary": "We found add() subtracts. We rejected a rewrite as too risky.",
+              "solution": {"title": "Fix add() first, then validate input", "description": "Correct the operator, then reject non-numbers.",
+                           "why": "Smallest change that fixes the bug", "steps": ["Fix the operator", "Add validation"]},
+              "tasks": AGREED[::-1]}
+
+
 class MeetingRegistry(FixtureRegistry):
     def __init__(self, fail_on=None, gate=None):
         super().__init__()
@@ -35,8 +41,8 @@ class MeetingRegistry(FixtureRegistry):
             return AgentResult(False, "", error="usage limit reached")
         if "closing turn" in prompt:
             return AgentResult(True, f"We agreed on two things.\n```cerebra-council\n{json.dumps(AGREED)}\n```")
-        if "has written the agreed list" in prompt:
-            return AgentResult(True, f"Agreed, with the order swapped.\n```cerebra-council\n{json.dumps(AGREED[::-1])}\n```")
+        if "has written the conclusion" in prompt:
+            return AgentResult(True, f"Agreed, with the order swapped.\n```cerebra-council\n{json.dumps(CONCLUSION)}\n```")
         return AgentResult(True, f"{name} turn {number}: I read calculator.py; add() returns a - b.")
 
 
@@ -76,7 +82,10 @@ def test_two_models_alternate_see_each_other_and_agree(client):
     assert "PROJECT: Calc" in turns[0][1] and "adds numbers for the shop till" in turns[0][1] and "RECENT COMMITS" in turns[0][1]
     assert "codex turn 1" in turns[1][1]  # Claude answers what Codex said
     titles = [item["title"] for item in state["proposals"]]
-    assert titles == ["Fix addition", "Add input validation"]  # the confirming turn's list wins; "root" executor dropped
+    assert titles == ["Fix addition", "Add input validation"]  # the confirming turn's conclusion wins; "root" executor dropped
+    assert state["summary"].startswith("We found add() subtracts") and state["solution"]["title"] == "Fix add() first, then validate input"
+    assert state["solution"]["steps"] == ["Fix the operator", "Add validation"]
+    assert "ONE agreed way forward" in client.app.state.supervisor.registry.turns[4][1]
 
 
 def test_owner_turns_a_proposal_into_a_normal_task_once(client):
@@ -132,7 +141,7 @@ class ScriptedRegistry(MeetingRegistry):
         self.statuses = list(statuses)
 
     def chat(self, name, prompt, workdir, model="", cancel_event=None):
-        if "closing turn" in prompt or "has written the agreed list" in prompt or "Council (a recorded meeting" in prompt:
+        if "closing turn" in prompt or "has written the conclusion" in prompt or "Council (a recorded meeting" in prompt:
             return super().chat(name, prompt, workdir, model, cancel_event)
         self.turns.append((name, prompt, workdir))
         status = self.statuses.pop(0) if self.statuses else "CONTINUE"
@@ -161,6 +170,7 @@ def test_agreed_plan_goes_to_support_automatically_once(client):
     assert chat["conversation"]["title"].startswith("Council plan") and chat["conversation"]["project_id"] == client.project["id"]
     sent = chat["messages"][0]["content"]
     assert "1. Fix addition" in sent and "Builds it: codex; reviews it: claude" in sent and "skip anything already done" in sent
+    assert "Conclusion:\nWe found add() subtracts" in sent and "The one agreed way forward: Fix add() first" in sent and "Step 2: Add validation" in sent
     assert "cerebra-council" not in sent
     assert client.post(f"/api/council/{meeting}/support").status_code == 400  # only once
 

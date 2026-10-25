@@ -9,6 +9,8 @@ from dataclasses import dataclass
 import ctypes
 import os
 from pathlib import Path
+import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -108,6 +110,51 @@ class _WindowsJob:
             self.handle = None
 
 
+class CommandNotFound(ValueError):
+    """A bare command name (such as npm) is not installed or not on PATH."""
+
+
+# npm-style Windows shims ("npm.cmd", "pnpm.cmd") only start Node.js with a JavaScript file next to them.
+SHIM_SCRIPT = re.compile(r'"?%~?dp0%?\\?([^"%*]+?\.(?:c?js|mjs))"?', re.I)
+
+
+def node_shim(path):
+    """[node.exe, script] that an npm-style .cmd shim would run, or None when the shim isn't recognised.
+    Running Node.js directly avoids cmd.exe, which would interpret &, |, ^ and % inside arguments."""
+    shim = Path(path)
+    try:
+        text = shim.read_text(encoding="utf-8", errors="replace")[:20000]
+    except OSError:
+        return None
+    scripts = [shim.parent / name for name in SHIM_SCRIPT.findall(text) if "prefix" not in Path(name).name.lower()]
+    if shim.stem.lower() == "npm" and os.environ.get("APPDATA"):  # a globally updated npm takes precedence, as in npm.cmd
+        scripts.insert(0, Path(os.environ["APPDATA"]) / "npm" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+    script = next((item for item in scripts if item.is_file()), None)
+    node = shim.parent / "node.exe" if (shim.parent / "node.exe").is_file() else shutil.which("node")
+    return [str(node), str(script)] if script and node else None
+
+
+def resolve_command(args, cwd):
+    """Turn a bare command name into the executable to start, with diagnostics when it can't be found.
+    Explicit paths are left unchanged (and .cmd/.bat paths stay refused by ProcessRunner.run)."""
+    name = args[0]
+    if os.path.dirname(name):
+        return list(args)
+    found = shutil.which(name)
+    if not found:
+        folders = [folder for folder in os.environ.get("PATH", "").split(os.pathsep) if folder][:8]
+        raise CommandNotFound(f"“{name}” isn't installed, or isn't on PATH, so Cerebra couldn't run “{' '.join(args)}” in {cwd}. "
+                              f"Looked in: {'; '.join(folders) or 'no PATH folders'}{' and more' if len(os.environ.get('PATH', '').split(os.pathsep)) > 8 else ''}. "
+                              "Install it from Required tools (npm, pnpm and yarn come with Node.js), then press Resume.")
+    if os.name == "nt" and Path(found).suffix.lower() in {".cmd", ".bat"}:
+        command = node_shim(found)
+        if command is None:
+            raise ValueError(f"“{name}” is a Windows batch wrapper ({found}). Cerebra doesn't run those through cmd.exe because "
+                             "special characters in arguments could start other commands. Set the test command to the real program instead.")
+        return [*command, *args[1:]]
+    return [found, *args[1:]]
+
+
 class ProcessRunner:
     def __init__(self, max_output_bytes: int = 262144, allowed_roots=None):
         if not 1024 <= max_output_bytes <= 16 * 1024 * 1024:
@@ -127,9 +174,13 @@ class ProcessRunner:
             raise ValueError("Process timeout must be positive and no longer than 24 hours")
         if Path(args[0]).suffix.lower() in {".cmd", ".bat", ".ps1"}:
             raise ValueError("Shell wrappers are not accepted; configure a native executable")
-        directory = canonical(cwd, self.allowed_roots, must_exist=True) if self.allowed_roots is not None else Path(cwd).resolve(strict=True)
+        try:
+            directory = canonical(cwd, self.allowed_roots, must_exist=True) if self.allowed_roots is not None else Path(cwd).resolve(strict=True)
+        except FileNotFoundError:
+            raise ValueError(f"The working folder {cwd} doesn't exist (it may have been moved or deleted)") from None
         if not directory.is_dir():
-            raise ValueError("Process working directory must be a directory")
+            raise ValueError(f"The working folder {cwd} is not a folder")
+        args = resolve_command(list(args), directory)
         payload = input_text.encode("utf-8") if input_text is not None else None
         if payload is not None and len(payload) > 1024 * 1024:
             raise ValueError("Process input exceeds the 1 MiB limit")

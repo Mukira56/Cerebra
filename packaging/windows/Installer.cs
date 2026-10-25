@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Cerebra Setup")]
-[assembly: AssemblyVersion("0.18.0.0")]
+[assembly: AssemblyVersion("0.19.0.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
@@ -112,6 +112,17 @@ internal static class Setup {
             return 1;
         }
     }
+    // Antivirus scans and just-closed processes can hold the folder for a few seconds: retry, then explain.
+    internal static void MoveFolder(string from,string to) {
+        for(int attempt=1;;attempt++) {
+            try { Directory.Move(from,to); return; }
+            catch(Exception error) {
+                if(!(error is IOException || error is UnauthorizedAccessException)) throw;
+                if(attempt>=20) throw new IOException("Windows wouldn't let Setup replace "+from+" because another program is using it ("+error.Message.Trim()+"). Close any window, terminal or file explorer opened in that folder and try again.");
+                System.Threading.Thread.Sleep(1000);
+            }
+        }
+    }
     internal static void Install(InstallOptions options, Action<int> progress) {
         options.Target=Shared.Full(options.Target); options.Data=Shared.Full(options.Data);
         if(options.Port<1024 || options.Port>65535) throw new ArgumentException("Port must be between 1024 and 65535.");
@@ -149,8 +160,8 @@ internal static class Setup {
             string menu=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs),options.TestRegistration?Shared.TestMenuName:Shared.MenuName);
             string desktop=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Shared.ShortcutFile);
             Shared.WriteJson(Path.Combine(stage,"aihq-install.json"),new {app_id=Shared.AppId,version=Shared.Version,files=inventory,data_dir=options.Data,port=options.Port,registry=options.Registration,menu=options.Shortcuts?menu:"",desktop=options.Shortcuts&&options.Desktop?desktop:""});
-            if(Directory.Exists(options.Target)) {backup=options.Target+".previous-"+Guid.NewGuid().ToString("N");Directory.Move(options.Target,backup);}
-            Directory.Move(stage,options.Target);committed=true; Directory.CreateDirectory(options.Data);
+            if(Directory.Exists(options.Target)) {backup=options.Target+".previous-"+Guid.NewGuid().ToString("N");MoveFolder(options.Target,backup);}
+            MoveFolder(stage,options.Target);committed=true; Directory.CreateDirectory(options.Data);
             using(var key=Registry.CurrentUser.CreateSubKey(options.Registration)) {
                 key.SetValue("DisplayName",options.TestRegistration?"Cerebra Installer Test":Shared.Product);key.SetValue("DisplayVersion",Shared.Version);
                 key.SetValue("Publisher","Cerebra (Mukira56)");key.SetValue("InstallLocation",options.Target);key.SetValue("DisplayIcon",Path.Combine(options.Target,"AIHQ.exe"));

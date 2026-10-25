@@ -514,7 +514,20 @@
       });
       if (state.error) messages.append(hint(state.error, state.status === "failed"));
       if (state.handoff_error) messages.append(hint(`Sending the plan to Support failed: ${state.handoff_error}`, true));
-      const parts = [header, messages];
+      const conclusionPlace = readingPlace(main.querySelector(".council-conclusion"));
+      const panes = append(el("div", "council-body"), messages), parts = [header, panes];
+      let conclusion = null;
+      if (state.summary || state.solution || state.proposals.length) {
+        conclusion = el("section", "council-conclusion");
+        conclusion.append(el("h2", "", "Conclusion"));
+        if (state.summary) conclusion.append(el("p", "", state.summary));
+        if (state.solution) {
+          const way = append(el("div", "way-forward"), el("span", "eyebrow", "The agreed way forward"), el("strong", "", state.solution.title), el("p", "", state.solution.description),
+            state.solution.why ? el("p", "row-meta", `Why this one: ${state.solution.why}`) : null);
+          if (array(state.solution.steps).length) way.append(append(el("ol", ""), ...state.solution.steps.map(step => el("li", "", step))));
+          conclusion.append(way);
+        }
+      }
       if (state.proposals.length) {
         const list = el("div", "council-proposals");
         state.proposals.forEach((proposal, index) => {
@@ -525,10 +538,12 @@
             : button("Create task", async () => { const made = await act("Task created. It still asks for your approval before any work starts.", () => mutate(`/api/council/${encodeURIComponent(councilId)}/proposals/${index}/task`, {})); if (made) { await refresh(true); openMeeting(); } }, "button small primary"));
           list.append(card);
         });
-        parts.push(append(el("section", "report-section"), el("h2", "", "What they agreed"), el("p", "row-meta", "Each task runs through the normal steps: your plan approval, tests, the other model's review, and your approval to merge. Full access applies only if you've switched it on."), list));
+        append(conclusion, el("h2", "", "Tasks that carry it out"), el("p", "row-meta", "Each task runs through the normal steps: your plan approval, tests, the other model's review, and your approval to merge. Full access applies only if you've switched it on."), list);
       }
+      if (conclusion) { panes.classList.add("split"); panes.append(conclusion); }
       main.replaceChildren(...parts);
       keepReading(place, messages); window.scrollTo(window.scrollX, pageY);
+      if (conclusion && conclusionPlace) conclusion.scrollTop = conclusionPlace.top;
       if (state.busy || (state.send_to_support && state.status === "done" && !state.support_chat && !state.handoff_error))
         councilPoll = setTimeout(() => { if (token === renderToken && page === "council") openMeeting(true).then(() => loadListQuiet()); }, 2500);
     }

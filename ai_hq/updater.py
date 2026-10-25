@@ -45,6 +45,8 @@ def installed_root():
 HELPER = r"""# Cerebra update helper: stop Cerebra, install the verified update silently, reopen Cerebra.
 # Shows a small window with the real step being done (Cerebra itself is closed during these steps).
 $ErrorActionPreference = 'Stop'
+# Never work from inside the program folder: Windows can't replace a folder that a process is using.
+Set-Location -LiteralPath $PSScriptRoot; [Environment]::CurrentDirectory = $PSScriptRoot
 $plan = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'update-plan.json') | ConvertFrom-Json
 $log = Join-Path $PSScriptRoot 'update.log'
 function Write-Log($message) { Add-Content -LiteralPath $log -Value ("{0} {1}" -f (Get-Date -Format s), $message) -Encoding UTF8 }
@@ -78,9 +80,13 @@ try {
     $arguments = "--quiet --dir `"$root`" --data `"$($plan.data)`" --port $($plan.port)"
     if (-not $plan.desktop_shortcut) { $arguments += ' --no-desktop' }
     if ($plan.test_registration) { $arguments += ' --test-registration' }
-    $setup = Start-Process -FilePath $plan.installer -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    $out = Join-Path $PSScriptRoot 'installer-output.txt'; $err = Join-Path $PSScriptRoot 'installer-error.txt'
+    $setup = Start-Process -FilePath $plan.installer -ArgumentList $arguments -PassThru -WindowStyle Hidden -WorkingDirectory $PSScriptRoot -RedirectStandardOutput $out -RedirectStandardError $err
+    $null = $setup.Handle  # without reading Handle now, PowerShell reports no ExitCode for a redirected process
     while (-not $setup.HasExited) { if ($window) { [System.Windows.Forms.Application]::DoEvents() }; Start-Sleep -Milliseconds 200 }
-    if ($setup.ExitCode -ne 0) { throw "The installer reported exit code $($setup.ExitCode); the previous version is kept." }
+    $setup.WaitForExit()
+    $reason = ((Get-Content -Raw -LiteralPath $err -ErrorAction SilentlyContinue) + '').Trim()
+    if ($setup.ExitCode -ne 0) { throw "The installer stopped (exit code $($setup.ExitCode)): $(if ($reason) { $reason } else { 'it gave no reason' }) The previous version is kept." }
     Write-Log "Installed $($plan.to)"
     Step 90 "Step 4 of 4: opening Cerebra $($plan.to)…"
 } catch { $failed = $true; Write-Log "Update failed: $_"; if ($window) { $label.Text = "The update didn't finish: $_  Cerebra will reopen as before."; [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Seconds 4 } }
@@ -273,8 +279,11 @@ class Updater:
         # Started through a short-lived cmd so the helper is not a child of the server: stopping the server's
         # process tree during the update must not stop the helper itself.
         powershell = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        # Start in the updates folder, never the server's working folder (the program folder): a process using the
+        # program folder as its working folder stops the installer from replacing it.
         subprocess.Popen(["cmd.exe", "/d", "/c", "start", "", "/min", str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(script)],
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+                         cwd=str(Path(script).parent), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
 
     def last_log(self):
         try:

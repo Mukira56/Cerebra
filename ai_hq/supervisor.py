@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from . import evidence
 from .agents import AgentRegistry, AgentRequest
-from .processes import ProcessRunner
+from .processes import CommandNotFound, ProcessRunner
 from .gitops import GitManager
 from .models import Agent, Approval, Dependency, Event, Finding, Project, Review, Run, Task, Worktree, now, uid
 from .security import redact, relative_paths
@@ -526,6 +526,11 @@ class Supervisor:
                 self._wait_for_usage(task_id, str(exc))
                 return True
             raise
+        except CommandNotFound as exc:  # a missing tool is fixed by installing it, then Resume: pause, don't fail
+            if task_id:
+                self._fail(task_id, str(exc), blocked=True)
+                return True
+            raise
         except Exception as exc:
             if task_id:
                 self._fail(task_id, f"Execution failed: {exc}")
@@ -999,6 +1004,13 @@ class Supervisor:
     def _run_test(self, task_id, command, workdir):
         if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
             raise ValueError("Registered test commands must be nonempty argument lists")
+        runner = Path(command[0]).stem.lower()
+        if runner in {"npm", "pnpm", "yarn"} and not (Path(workdir) / "package.json").is_file():
+            # An empty or new repository has nothing to test yet: report that plainly instead of a crash.
+            return {"command": _clean(command), "exit_code": None, "duration_seconds": 0, "stdout": "", "passed": False, "no_target": True,
+                    "stderr": f"No package.json in this project yet, so “{' '.join(command)}” has nothing to run. "
+                              "The task can add one with a test script, or choose another test command on the Projects page.",
+                    "timed_out": False, "cancelled": False, "output_truncated": False, "attempt": self.get(task_id).retry_count}
         started = time.monotonic()
         process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout or None, cancel_event=self._cancels[task_id])
         return {"command": _clean(command), "exit_code": process.exit_code, "duration_seconds": round(time.monotonic() - started, 2), "stdout": redact(process.stdout),

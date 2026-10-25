@@ -313,8 +313,22 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .proof-run.pass span { color: var(--green); }
 .proof-run.fail span { color: var(--red); }
 .proof-run code { overflow-wrap: anywhere; }
-.council .chat-main > .report-section { padding: 4px 16px 16px; flex: none; max-height: 45%; overflow-y: auto; border-top: 1px solid var(--line); }
-.council .messages { min-height: 240px; }
+/* The conversation and the conclusion are separate panes that each scroll on their own. */
+.council-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.council-body > .messages { min-height: 0; overflow-y: auto; }
+.council-body.split { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+.council-conclusion { min-height: 0; overflow-y: auto; padding: 14px 16px 18px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.council-conclusion h2 { margin: 6px 0 0; font-size: 16px; }
+.council-conclusion > p { margin: 0; }
+.way-forward { border: 1px solid var(--green); border-radius: 10px; padding: 12px 14px; background: rgba(63,185,80,.06); display: flex; flex-direction: column; gap: 6px; }
+.way-forward .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--green); }
+.way-forward p, .way-forward ol { margin: 0; }
+.way-forward ol { padding-left: 20px; }
+.council .council-proposals { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1250px) {
+  .council-body.split { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .council-conclusion { border-left: 0; border-top: 1px solid var(--line); }
+}
 .council-proposals { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .proposal { border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 .proposal p { margin: 0; }

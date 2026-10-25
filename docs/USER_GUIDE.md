@@ -162,7 +162,8 @@ Open **Council** and press **+ New meeting**:
 What happens:
 - Both models read the project's files, docs and Git history (including the GitHub remote and recent commits) and talk to each other. Each one replies to what the other said.
 - You see every turn as it arrives, with who said it, the model and the round. You can scroll back and read while they talk; the page only follows new turns when you're at the bottom. **Stop meeting** ends it after the current turn.
-- At the end they agree on up to 6 proposals. Each proposal says what to do, why, who builds it and who reviews it, and how to check it's done.
+- At the end they write a **Conclusion**: a short summary of what they discussed and decided (including what they rejected and what's still unknown), **one agreed way forward** with its steps, and up to 6 tasks that carry it out. Each task says who builds it, who reviews it and how to check it's done. The second model checks and corrects the first model's conclusion.
+- The conversation and the conclusion sit side by side (stacked on narrow windows), and each scrolls on its own.
 
 During the meeting the models can read but can't change anything. Every turn uses your AI plan.
 
@@ -268,6 +269,8 @@ Open **Settings › Updates** and press **Check for updates**.
 - Running tasks are paused and can be resumed, and your projects, tasks and settings are kept.
 
 Updates use your GitHub sign-in (GitHub page), so the GitHub CLI must be installed and signed in.
+
+If an update can't be installed, Cerebra reopens the version you had and **Last update log** (Settings › Updates) shows the installer's own reason.
 
 ## Connecting your business accounts
 

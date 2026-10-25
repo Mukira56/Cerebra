@@ -608,8 +608,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         """Send a finished meeting's plan to Support as a new conversation; Support proposes (or runs) the actions."""
         from .council import handoff_message
         meeting = council.get(session_id)
-        if meeting["status"] != "done" or not meeting["proposals"]:
-            raise ValueError("Only a finished meeting with agreed proposals can be sent to Support")
+        if meeting["status"] != "done" or not (meeting["proposals"] or meeting.get("solution")):
+            raise ValueError("Only a finished meeting with an agreed conclusion can be sent to Support")
         if meeting.get("support_chat"):
             raise ValueError("This meeting was already sent to Support")
         with db.Session() as session:
