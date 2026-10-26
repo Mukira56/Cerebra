@@ -605,6 +605,13 @@
         messages.append(empty("How can I help?", "I can see every project and task in Cerebra. Ask anything, or pick a starting point:", ideas, ">_"));
       }
       state.messages.forEach(message => {
+        if (message.role === "cerebra") {  // recorded action results fed back to Support (not something the owner typed)
+          let recorded = message.content.replace(/^ACTION RESULTS[^\n]*\n/, "").split("\nContinue with")[0];
+          try { recorded = JSON.parse(recorded); } catch (issue) { /* show the text as it is */ }
+          messages.append(append(el("div", "action-results"), el("strong", "", "⚙ Cerebra ran the actions and recorded the results"),
+            append(el("details"), el("summary", "", "Show the recorded results"), code(recorded)), el("small", "", relative(message.created_at))));
+          return;
+        }
         const row = el("div", `message ${message.role}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
         if (message.role === "user") bubble.append(el("p", "", message.content));
         else if (message.status === "pending") bubble.append(append(el("div", "typing"), el("span"), el("span"), el("span")), el("small", "", `${nice(message.provider)} is thinking… this can take a minute.`));

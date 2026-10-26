@@ -418,3 +418,5 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .report-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .report-section ul { font-size: 16px; }
 .report .asked { white-space: pre-wrap; }
+.action-results { align-self: center; max-width: 860px; width: 100%; border: 1px dashed var(--line-2); border-radius: 10px; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.action-results small { color: var(--muted); }

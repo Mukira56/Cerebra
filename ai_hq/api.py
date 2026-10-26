@@ -56,6 +56,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from .council import CouncilService
     council = CouncilService(db, settings, chat_registry)
     council.recover()
+    from .work import WorkService
+    work = WorkService(db, supervisor)
     from .commerce import Commerce, public as connection_public
     from . import gmail, notify
     commerce = Commerce(db)
@@ -82,7 +84,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     app = FastAPI(title="Cerebra", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
-    app.state.integrations, app.state.chats, app.state.council = integrations, chats, council
+    app.state.integrations, app.state.chats, app.state.council, app.state.work = integrations, chats, council, work
     app.state.commerce, app.state.mailbox, app.state.notifier = commerce, mailbox, notifier
 
     @app.middleware("http")
@@ -607,6 +609,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def council_handoff(session_id):
         """Send a finished meeting's plan to Support as a new conversation; Support proposes (or runs) the actions."""
         from .council import handoff_message
+        council_plan_items(session_id)
         meeting = council.get(session_id)
         if meeting["status"] != "done" or not (meeting["proposals"] or meeting.get("solution")):
             raise ValueError("Only a finished meeting with an agreed conclusion can be sent to Support")
@@ -618,7 +621,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         council.remember(session_id, support_chat=conversation["id"])
         chats.send(conversation["id"], handoff_message(meeting, project.name if project else "this project"))
         return {"conversation_id": conversation["id"]}
-    council.on_done = council_handoff
+    def council_finished(session_id, send_to_support):
+        council_plan_items(session_id)  # every agreed conclusion becomes a stored plan with item ids
+        if send_to_support:
+            council_handoff(session_id)
+    council.on_done = council_finished
 
     @app.post("/api/council/{session_id}/support", status_code=201)
     def council_to_support(session_id: str): return chat_or_404(council_handoff, session_id)
@@ -634,25 +641,27 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         chat_or_404(council.delete, session_id)
         return {"deleted": True}
 
+    def council_plan_items(session_id):
+        """The finished meeting's plan items (creating the plan on first use) with ids copied onto its proposals."""
+        meeting = council.get(session_id)
+        if meeting["status"] != "done":
+            raise ValueError("Proposals can be used once the meeting has finished")
+        plan_id = meeting.get("plan_id") or work.council_plan(meeting)
+        council.remember(session_id, plan_id=plan_id)
+        items = work.plan(plan_id)["items"]
+        council.link(session_id, items)
+        return items
+
     @app.post("/api/council/{session_id}/proposals/{index}/task", status_code=201)
     def council_task(session_id: str, index: int):
-        """The owner's click turns an agreed proposal into an ordinary task (normal approvals, the owner's own settings)."""
-        meeting, proposal = chat_or_404(council.proposal, session_id, index)
-        executor = meeting["first"] if proposal["executor"] == get_profile_provider(meeting["first"]) else meeting["second"]
-        reviewer = meeting["second"] if executor == meeting["first"] else meeting["first"]
-        task = supervisor.propose(meeting["project_id"], f"{proposal['title']}: {proposal['description']}",
-                                  requirements=proposal["requirements"], acceptance_criteria=proposal["acceptance_criteria"],
-                                  implementer=executor, reviewer=reviewer, origin="user")
-        with db.Session.begin() as session:
-            stored = session.get(Task, task.id)
-            stored.results = {**stored.results, "council": {"session_id": session_id, "proposal": index, "why": proposal["why"]}}
-        council.mark_task(session_id, index, task.id)
-        return {"task_id": task.id, "implementer": executor, "reviewer": reviewer}
-
-    def get_profile_provider(identifier):
-        from .profiles import get_profile
-        with db.Session() as session:
-            return get_profile(session, identifier)["provider"]
+        """The owner's click: the proposal's task, created once (a repeated click returns the same task)."""
+        items = chat_or_404(council_plan_items, session_id)
+        if not 0 <= index < len(items):
+            raise HTTPException(404, "Proposal not found")
+        task_id, created = work.item_task(items[index]["id"], origin="user")
+        council.link(session_id, work.plan(items[index]["plan_id"])["items"])
+        return {"task_id": task_id, "created": created, "plan_item_id": items[index]["id"],
+                "implementer": items[index]["implementer"], "reviewer": items[index]["reviewer"]}
 
     # ---- support actions: validated requests from the support chat, run like dashboard buttons ----
     def find_project(reference):
@@ -673,12 +682,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         kind = action["action"]
         if kind == "create_project":
             project = register(ProjectCreate(name=action["name"], create_new=True, authorize=True, test_commands=action["test_commands"]))
-            return f"Created the project {project['name']} (id {project['id'][:8]})." + ("" if action["test_commands"] else " Add its test commands on the Projects page before tasks can run.")
+            return {"text": f"Created the project {project['name']} (id {project['id'][:8]})." + ("" if action["test_commands"] else " Add its test commands on the Projects page before tasks can run."),
+                    "affected": {"project_id": project["id"]}}
         if kind == "create_task":
             project = find_project(action["project"])
             task = supervisor.propose(project.id, action["description"], requirements=action["requirements"] or None, acceptance_criteria=action["acceptance_criteria"] or None,
                                       implementer=action.get("implementer"), reviewer=action.get("reviewer"), origin="support")
-            return f"Created task {task.id[:8]} in {project.name}. Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else ".")
+            return {"text": f"Created task {task.id[:8]} in {project.name}. Its plan is waiting for approval" + (" (Away mode will answer it)." if app_autopilot_active() else "."),
+                    "affected": {"task_id": task.id, "project_id": project.id}, "next_state": task.state}
+        if kind == "create_plan_task":
+            item_id = work.find_item(action["item"])
+            task_id, created = work.item_task(item_id, origin="support")
+            state = supervisor.get(task_id).state
+            return {"text": (f"Created task {task_id[:8]} for plan item {item_id[:12]}." if created else
+                             f"Plan item {item_id[:12]} already has task {task_id[:8]} (no duplicate made).") + f" It is {state.replace('_', ' ').lower()}.",
+                    "affected": {"task_id": task_id, "plan_item_id": item_id}, "next_state": state}
         if kind == "retry_task":
             task = find_task(action["task"])
             result = supervisor.retry_with_instructions(task.id, action["instructions"])
@@ -720,8 +738,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         method = {"approve_plan": supervisor.approve_plan, "start_task": supervisor.start, "pause_task": supervisor.pause, "resume_task": supervisor.resume, "cancel_task": supervisor.cancel}[kind]
         result = method(task.id)
         if kind == "start_task" and result.state == "AWAITING_APPROVAL":
-            return f"Task {task.id[:8]} is ready; it is waiting for your OK to let the agents run (Approvals)."
-        return f"Task {task.id[:8]} is now {result.state.replace('_', ' ').lower()}."
+            return {"text": f"Task {task.id[:8]} is ready; it is waiting for your OK to let the agents run (Approvals).", "affected": {"task_id": task.id}, "next_state": result.state}
+        return {"text": f"Task {task.id[:8]} is now {result.state.replace('_', ' ').lower()}.", "affected": {"task_id": task.id}, "next_state": result.state}
 
     def app_autopilot_active():
         from . import autopilot

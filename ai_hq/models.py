@@ -207,6 +207,59 @@ class CouncilMessage(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     finished_at: Mapped[str] = mapped_column(String, default="")
 
+class Plan(Base):
+    """An executable plan (see work.py). Its items stay the authoritative source for the tasks made from them."""
+    __tablename__ = "plans"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    source: Mapped[str] = mapped_column(String, default="owner")  # council | support | owner
+    source_id: Mapped[str] = mapped_column(String, default="")  # e.g. the council session id
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    objective: Mapped[str] = mapped_column(Text, default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    solution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    assumptions: Mapped[list] = mapped_column(JSON, default=list)
+    questions: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="active")  # active | superseded | done | cancelled
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+class PlanItem(Base):
+    __tablename__ = "plan_items"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("plans.id"))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    why: Mapped[str] = mapped_column(Text, default="")
+    requirements: Mapped[list] = mapped_column(JSON, default=list)
+    acceptance_criteria: Mapped[list] = mapped_column(JSON, default=list)
+    depends_on: Mapped[list] = mapped_column(JSON, default=list)  # ids of items in the same plan
+    allowed_paths: Mapped[list] = mapped_column(JSON, default=lambda: ["."])
+    implementer: Mapped[str] = mapped_column(String, default="")  # model profile ids
+    reviewer: Mapped[str] = mapped_column(String, default="")
+    task_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="proposed")  # proposed | task_created | dropped
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+class ActionRecord(Base):
+    """One action Support (or the owner, or Cerebra itself) asked for: its inputs and its recorded result."""
+    __tablename__ = "action_records"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    source: Mapped[str] = mapped_column(String, default="support")  # support | council | owner | system
+    conversation_id: Mapped[str] = mapped_column(String, default="")
+    chat_action_id: Mapped[str] = mapped_column(String, default="")
+    kind: Mapped[str] = mapped_column(String, default="")
+    inputs: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="running")  # running | done | failed
+    outcome: Mapped[str] = mapped_column(Text, default="")
+    affected: Mapped[dict] = mapped_column(JSON, default=dict)  # e.g. {"task_id": ..., "project_id": ...}
+    error: Mapped[str] = mapped_column(Text, default="")
+    next_state: Mapped[str] = mapped_column(String, default="")
+    idempotency_key: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    finished_at: Mapped[str] = mapped_column(String, default="")
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

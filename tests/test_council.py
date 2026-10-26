@@ -95,9 +95,11 @@ def test_owner_turns_a_proposal_into_a_normal_task_once(client):
     task = client.get(f"/api/tasks/{created.json()['task_id']}").json()
     assert task["description"].startswith("Add input validation") and task["requirements"] == ["Raise TypeError"]
     assert task["results"]["models"]["implementer"]["provider"] == "claude" and task["results"]["models"]["reviewer"]["provider"] == "codex"
-    assert task["results"]["origin"] == "user" and task["results"]["council"]["session_id"] == meeting["id"]
+    plan = client.app.state.work.plan(task["results"]["plan"]["plan_id"])
+    assert task["results"]["origin"] == "user" and plan["source"] == "council" and plan["source_id"] == meeting["id"]
     assert task["state"] in {"PENDING", "PLANNING", "AWAITING_APPROVAL"}  # still needs the owner's approvals
-    assert client.post(f"/api/council/{meeting['id']}/proposals/1/task").status_code == 400
+    again = client.post(f"/api/council/{meeting['id']}/proposals/1/task").json()  # a second click returns the same task
+    assert again["task_id"] == task["id"] and again["created"] is False
     assert client.get(f"/api/council/{meeting['id']}").json()["proposals"][1]["task_id"] == task["id"]
 
 
@@ -181,6 +183,6 @@ def test_support_creates_tasks_with_the_agreed_builder_and_reviewer(client):
     result = client.app.state.chats.executor(action)
     task = client.get("/api/overview").json()["tasks"][0]
     detail = client.get(f"/api/tasks/{task['id']}").json()
-    assert "Created task" in result and detail["results"]["models"]["implementer"]["provider"] == "claude" and detail["results"]["origin"] == "support"
+    assert "Created task" in result["text"] and result["affected"]["task_id"] == task["id"] and detail["results"]["models"]["implementer"]["provider"] == "claude" and detail["results"]["origin"] == "support"
     with pytest.raises(ValueError):
         support.validate({"action": "create_task", "project": "Calc", "description": "Fix addition in add()", "implementer": "rm -rf /"})

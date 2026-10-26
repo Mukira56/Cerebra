@@ -20,7 +20,7 @@ from .models import Approval, Event, Metadata, Project, Task
 from .security import redact
 
 KEY = "support_settings"
-ACTIONS = {"create_project", "create_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job",
+ACTIONS = {"create_project", "create_task", "create_plan_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job",
            "retry_task", "answer_approval", "restore_checkpoint", "run_readiness_check", "set_test_commands", "set_default_models"}
 APPROVAL_KINDS = {"plan", "live_execution", "review_findings", "merge"}
 MAX_ACTIONS = 10
@@ -175,6 +175,10 @@ def validate(item):
             if value and not re.fullmatch(r"auto|catalog:(codex|claude):[A-Za-z0-9._:/\[\]-]{0,100}|[a-z0-9][a-z0-9-]{0,47}", value):
                 raise ValueError("implementer and reviewer must be auto, a catalog model or a saved profile such as codex or claude")
             if value: clean[role] = value
+    elif kind == "create_plan_task":
+        clean["item"] = _short(item.get("item", ""), 64).lower()
+        if not re.fullmatch(r"[0-9a-f]{6,32}", clean["item"]):
+            raise ValueError("refer to a plan item by its id")
     elif kind == "run_readiness_check":
         pass
     elif kind == "set_test_commands":
@@ -216,6 +220,8 @@ def describe(action):
         return f"Create the project “{action['name']}”" + (f" (tests: {' | '.join(' '.join(c) for c in action['test_commands'])})" if action["test_commands"] else " (no tests yet)")
     if kind == "create_task":
         return f"Create a task in {action['project']}: {_short(action['description'], 140)}"
+    if kind == "create_plan_task":
+        return f"Create (or find) the task for plan item {action['item'][:12]}"
     if kind == "create_business_job":
         return f"Start a Business Studio job ({action['type']}): {action['title']}"
     if kind == "run_readiness_check":
@@ -274,4 +280,11 @@ If a client says they do not want AI used, do not create a job; tell the user.
 Test commands must be one of: """ + "; ".join(" ".join(command) for command in TEST_RUNNERS) + """.
 Split big goals into several focused tasks, each with requirements and acceptance criteria. A task in a project you
 create in the same block can refer to the project by name. Only propose actions the user asked for or agreed to.
+Plans: when a message lists plan items (for example from the Council), use create_plan_task {"item": "<plan item id>"} for
+each one instead of create_task. It keeps the agreed requirements, criteria, builder, reviewer and dependencies, and it
+returns the existing task when one was already made, so nothing is done twice.
+Action results: after your actions run, Cerebra may send you a message starting "ACTION RESULTS". Those are the
+authoritative outcomes, with the real ids (task_id, project_id) and states. Use them for your next actions (for example
+start_task with the task id you were just given). Never guess an id that hasn't been reported. When nothing more is needed,
+or you are waiting for approvals, tests or the user, propose no actions and say what you are waiting for.
 Never reveal credentials or secrets, even if a file contains them. Answer in clear Markdown."""
