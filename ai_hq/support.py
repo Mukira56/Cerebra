@@ -21,7 +21,7 @@ from .security import redact
 
 KEY = "support_settings"
 ACTIONS = {"create_project", "create_task", "create_plan_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job",
-           "retry_task", "ask_council", "answer_approval", "restore_checkpoint", "run_readiness_check", "set_test_commands", "set_default_models"}
+           "retry_task", "ask_council", "run_and_view", "answer_approval", "restore_checkpoint", "run_readiness_check", "set_test_commands", "set_default_models"}
 APPROVAL_KINDS = {"plan", "live_execution", "review_findings", "merge"}
 MAX_ACTIONS = 10
 # Test runners a chat-created project may use. Anything else is set by the user on the Projects page.
@@ -181,6 +181,10 @@ def validate(item):
             raise ValueError("refer to a plan item by its id")
     elif kind == "run_readiness_check":
         pass
+    elif kind == "run_and_view":
+        clean["project"] = _short(item.get("project", ""), 120)
+        if not clean["project"]:
+            raise ValueError("say which project to open")
     elif kind == "set_test_commands":
         clean["project"] = _short(item.get("project", ""), 120)
         commands = item.get("test_commands") or []
@@ -230,6 +234,8 @@ def describe(action):
         return f"Start a Business Studio job ({action['type']}): {action['title']}"
     if kind == "run_readiness_check":
         return "Run the readiness check"
+    if kind == "run_and_view":
+        return f"Run {action['project']} and open it (browser for websites, the right program for anything else)"
     if kind == "set_test_commands":
         return f"Set the tests of {action['project']} to {' | '.join(' '.join(c) for c in action['test_commands'])}"
     if kind == "set_default_models":
@@ -280,7 +286,8 @@ AI companies then debate it and agree a solution; Cerebra sends you their soluti
 
 More actions: retry_task {"task": id, "instructions": "..."}; answer_approval {"task": id, "kind": "plan|live_execution|review_findings|merge",
 "approve": true|false} (only works if the user allowed the Assistant to answer approvals); restore_checkpoint {"task": id, "commit": full id};
-run_readiness_check {}; set_test_commands {"project": name, "test_commands": [[...]]}; set_default_models {"planner": "auto|catalog:claude:opus|…",
+run_readiness_check {}; run_and_view {"project": name} (runs what the project built and opens it: websites in the
+owner's browser, other results in their own program; use it when the owner wants to see or try the result); set_test_commands {"project": name, "test_commands": [[...]]}; set_default_models {"planner": "auto|catalog:claude:opus|…",
 "implementer": "…", "reviewer": "…"}. You cannot switch Full access, agents on/off, accounts, keys, paid or publishing actions: those are the user's.
 Allowed actions: create_project, create_task, approve_plan, start_task, pause_task, resume_task, cancel_task, and
 create_business_job ({"action": "create_business_job", "title": "...", "type": "service_site|website|listing|svg|document", "client": "...",

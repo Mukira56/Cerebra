@@ -66,6 +66,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         return next((name for name in providers if name in {"codex", "claude"} and supervisor._usable(name)), "codex")
     autofix = autofix_module.AutoFix(db, settings, supervisor, chats, fixer_profile, council)
     autofix.work = work
+    from .viewer import Viewer, detect as view_plan
+    viewer = Viewer(settings.data_dir, lambda *args, **kwargs: integrations.terminal(*args, **kwargs))
     from .commerce import Commerce, public as connection_public
     from . import gmail, notify
     commerce = Commerce(db)
@@ -85,6 +87,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             notifier.start()
         yield
         autofix.stop()
+        viewer.stop_all()
         supervisor.shutdown()
         notifier.stop()
         commerce.close()
@@ -96,6 +99,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
     app.state.integrations, app.state.chats, app.state.council, app.state.work = integrations, chats, council, work
     app.state.autofix = autofix
+    app.state.viewer = viewer
     app.state.commerce, app.state.mailbox, app.state.notifier = commerce, mailbox, notifier
 
     @app.middleware("http")
@@ -309,6 +313,40 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def task_undo(task_id: str):
         with db.Session() as session: task_or_404(session, task_id)
         return supervisor.undo_integration(task_id)
+
+    # ---- run & view: open what a project (or a task's unmerged result) built ----
+    def view_target(kind, identifier):
+        with db.Session() as session:
+            if kind == "project":
+                project = session.get(Project, identifier)
+                if project is None: raise HTTPException(404, "Project not found")
+                return f"project:{project.id}", project.path, project.name
+            if kind == "task":
+                task = task_or_404(session, identifier)
+                if not task.worktree_path or not Path(task.worktree_path).is_dir():
+                    raise ValueError("This task has no working copy yet; open its project instead")
+                from .security import canonical
+                canonical(task.worktree_path, [settings.data_dir / "worktrees"])
+                return f"task:{task.id}", task.worktree_path, task.description[:60]
+        raise HTTPException(404, "Unknown view target")
+
+    @app.get("/api/view/{kind}/{identifier}")
+    def view_status(kind: str, identifier: str):
+        key, folder, _ = view_target(kind, identifier)
+        return {"plan": view_plan(folder), "status": viewer.status(key)}
+
+    @app.post("/api/view/{kind}/{identifier}")
+    def view_start(kind: str, identifier: str):
+        """The owner's Run & view button: start the result and open it in the browser or the right program."""
+        key, folder, title = view_target(kind, identifier)
+        with db.Session.begin() as session:
+            session.add(Event(task_id=identifier if kind == "task" else None, kind="view", message=f"Owner opened the result: {view_plan(folder)['how']}"[:500]))
+        return viewer.start(key, folder, title)
+
+    @app.delete("/api/view/{kind}/{identifier}")
+    def view_stop(kind: str, identifier: str):
+        key, _, _ = view_target(kind, identifier)
+        return viewer.stop(key)
 
     @app.post("/api/tasks/delete")
     def tasks_delete(payload: TaskDelete):
@@ -806,6 +844,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             task = find_task(action["task"])
             supervisor.restore_checkpoint(task.id, action["commit"])
             return f"Task {task.id[:8]} restored to {action['commit'][:8]}. Resume and start it to test and review that version."
+        if kind == "run_and_view":
+            project = find_project(action["project"])
+            status = viewer.start(f"project:{project.id}", project.path, project.name)
+            return {"text": f"{project.name}: {status.get('message') or 'starting'}", "affected": {"project_id": project.id}, "next_state": status["state"]}
         if kind == "run_readiness_check":
             readiness_start()
             return "Readiness check started (Settings › Readiness check shows each stage)."

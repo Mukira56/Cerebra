@@ -314,6 +314,7 @@
       if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(fixCovered
         ? button("■ Stop auto-fix", () => setAutoFix(taskId, false), "button danger")
         : ["FAILED", "BLOCKED"].includes(task.state) ? button("Auto-fix this task", () => setAutoFix(taskId, true), "button") : null);
+      if (task.worktree_path && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(viewControls("task", taskId, "▶ View this result"));
       actions.append(button("Plain report", () => { closeDialog(); location.hash = `report/${taskId}`; }, "button ghost"));
       if (["FAILED", "CANCELLED", "BLOCKED"].includes(task.state)) actions.append(button("Delete task", () => deleteTasks([{id: taskId, description: task.description, project: projectFor(task.project_id)?.name || ""}], () => render()), "button ghost"));
       root.append(actions);
@@ -408,6 +409,26 @@
     showDialog(question, root);
   }
 
+  // ---------- run & view: open what was built in the browser or the right program ----------
+  function viewControls(kind, id, label = "▶ Run & view") {
+    const holder = el("span", "view-controls"), path = `/api/view/${kind}/${encodeURIComponent(id)}`;
+    const run = button(label, () => runAndView(), "button small"), stop = button("■ Stop", async () => { await act("Stopped.", () => api(path, {method: "DELETE"})); paint({state: "stopped"}); }, "button small ghost");
+    function paint(status) { stop.hidden = !["running", "starting"].includes(status.state); run.textContent = status.state === "running" ? "↗ Open again" : status.state === "starting" ? "Starting…" : label; run.disabled = status.state === "starting"; }
+    async function runAndView() {
+      let status = await act(null, () => mutate(path)); if (!status) return;
+      paint(status); toast(status.message || "Starting…");
+      for (let tries = 0; status.state === "starting" && tries < 300; tries++) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        try { status = (await api(path)).status; } catch (issue) { break; }
+        paint(status);
+      }
+      if (status.state === "failed") toast(`${status.message}${status.log ? ` Log: ${status.log}` : ""}`, true); else if (status.state !== "starting") toast(status.message);
+    }
+    api(path).then(info => { run.title = info.plan?.how || ""; paint(info.status); }).catch(() => {});
+    paint({state: "stopped"});
+    return append(holder, run, stop);
+  }
+
   // ---------- projects ----------
   // "C:\…\node.exe C:\…\pnpm.mjs check" reads as "node pnpm check"; the full command is in the tooltip.
   function shortCommand(command) {
@@ -423,7 +444,7 @@
       const tests = array(project.test_commands), shown = el("div", "test-commands");
       tests.forEach(command => { const line = el("code", "", shortCommand(command)); line.title = command.join(" "); shown.append(line); });
       append(card, top, kv([["Branch", project.default_branch], ["Tasks", tasks.length], ["Tests", tests.length ? shown : "none — add some"]]));
-      append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), button("Chat", () => newChat(project.id), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
+      append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), viewControls("project", project.id), button("Chat", () => newChat(project.id), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
       grid.append(card);
     });
     return grid;
