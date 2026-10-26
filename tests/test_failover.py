@@ -1,5 +1,7 @@
 """Out-of-usage failover, handoff, waiting for usage, pause on close and resuming at review. Fixture agents only."""
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ai_hq.agents import AgentResult
 from ai_hq.models import Event, Task
@@ -112,3 +114,102 @@ def test_closing_pauses_running_tasks_and_lists_them(hq):
     assert stored.state == "BLOCKED" and stored.pause_requested and stored.results["blocked_reason"] == "paused_on_close"
     assert stored.results["resume_stage"] == "review" and "Paused because Cerebra was closed" in events(db, task.id, "state")[-1]
     assert manage.status(settings)["active_tasks"] == 0
+
+
+def test_work_paused_by_a_restart_continues_by_itself(hq):
+    from test_supervisor import ready
+    supervisor, _, _, db, settings = hq
+    task_id = ready(hq)  # approved, consented and queued
+    assert manage.pause_after_stop(settings) == 1  # Cerebra closes (an update, a reboot)
+    assert supervisor.get(task_id).results["blocked_reason"] == "paused_on_close"
+    assert supervisor.resume_after_restart() == [task_id]  # Cerebra starts again
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "AWAITING_APPROVAL" and task.results["restart_resumes"] == 1
+    assert "continuing this task automatically" in " ".join(events(db, task_id, "state"))
+
+
+def test_a_task_that_keeps_stopping_cerebra_is_not_resumed_forever(hq):
+    from test_supervisor import ready
+    supervisor, _, _, db, settings = hq
+    task_id = ready(hq)
+    manage.pause_after_stop(settings)
+    with db.Session.begin() as session:
+        stored = session.get(Task, task_id)
+        stored.results = {**stored.results, "restart_resumes": supervisor.MAX_RESTART_RESUMES}
+    assert supervisor.resume_after_restart() == [] and supervisor.get(task_id).state == "BLOCKED"
+
+
+class FileWriter(FixtureRegistry):
+    """Each coding run writes a file: its own (parallel work) or a shared one (overlapping work)."""
+    def __init__(self, shared=False):
+        super().__init__()
+        self.shared = shared
+
+    def execute(self, name, request, cancel_event=None):
+        if request.role == "implement":
+            self.requests.append((name, request))
+            target = "shared.txt" if self.shared else f"{request.task_id[:8]}.txt"
+            (Path(request.workdir) / target).write_text(f"written by {request.task_id}\n", encoding="utf-8")
+            return AgentResult(True, "Wrote the file.")
+        if request.role == "review":
+            self.requests.append((name, request))
+            return AgentResult(True, "Reviewed: nothing to fix.", [])
+        return super().execute(name, request, cancel_event)
+
+
+def two_finished_tasks(hq, shared=False):
+    supervisor, project_id, repo, db, _ = hq
+    supervisor.registry = FileWriter(shared)
+    with db.Session.begin() as session:
+        from ai_hq.models import Project
+        session.get(Project, project_id).test_commands = [[sys.executable, "-c", "pass"]]
+    ids = []
+    for text in ("Write the first file", "Write the second file"):
+        task = supervisor.propose(project_id, text, allowed_paths=["."])
+        supervisor.approve_plan(task.id); consent(hq, task.id); ids.append(task.id)
+    supervisor.run_until_idle()
+    assert [supervisor.get(task_id).state for task_id in ids] == ["AWAITING_APPROVAL", "AWAITING_APPROVAL"], [supervisor.get(task_id).results.get("error") for task_id in ids]
+    supervisor.resolve_approval(pending_approval(db, ids[0]).id, True)
+    assert supervisor.get(ids[0]).state == "COMPLETED"
+    return ids
+
+
+def test_a_task_whose_project_moved_on_is_caught_up_retested_and_merged(hq):
+    supervisor, _, repo, db, _ = hq
+    first, second = two_finished_tasks(hq)
+    supervisor.resolve_approval(pending_approval(db, second).id, True)  # the project moved on since it started
+    task = supervisor.get(second)
+    assert task.state == "READY" and task.results["catch_ups"] == 1 and "moved on" in " ".join(events(db, second, "state"))
+    supervisor.run_until_idle()  # tests and review again, on the latest code
+    supervisor.resolve_approval(pending_approval(db, second).id, True)
+    assert supervisor.get(second).state == "COMPLETED"
+    assert (repo / f"{first[:8]}.txt").is_file() and (repo / f"{second[:8]}.txt").is_file()
+    coding = [request for name, request in supervisor.registry.requests if getattr(request, "role", "") == "implement"]
+    assert len(coding) == 2  # no AI run was spent on catching up
+
+
+def test_overlapping_changes_pause_with_the_files_named(hq):
+    supervisor, _, repo, db, _ = hq
+    first, second = two_finished_tasks(hq, shared=True)
+    supervisor.resolve_approval(pending_approval(db, second).id, True)
+    task = supervisor.get(second)
+    assert task.state == "BLOCKED" and "shared.txt" in task.results["error"] and "Try again" in task.results["error"]
+    from ai_hq import autofix
+    assert autofix.problem(task) is None  # Auto-fix doesn't rerun the coder on old code; the owner decides
+    assert (repo / "shared.txt").read_text(encoding="utf-8") == f"written by {first}\n"  # the merged work is untouched
+
+
+def test_try_again_after_overlapping_changes_redoes_the_work_on_the_latest_code(hq):
+    supervisor, _, repo, db, _ = hq
+    first, second = two_finished_tasks(hq, shared=True)
+    supervisor.resolve_approval(pending_approval(db, second).id, True)  # overlap: paused
+    supervisor.registry.shared = False  # the redo writes its own file on top of the latest code
+    supervisor.try_again(second)
+    supervisor.run_until_idle()
+    supervisor.resolve_approval(pending_approval(db, second).id, True)
+    task = supervisor.get(second)
+    assert task.state == "COMPLETED" and task.results["previous_attempt_commit"]
+    assert (repo / "shared.txt").read_text(encoding="utf-8") == f"written by {first}\n" and (repo / f"{second[:8]}.txt").is_file()
+    coding = [request for name, request in supervisor.registry.requests if getattr(request, "role", "") == "implement"]
+    assert "Redo this task on the project's latest code" in coding[-1].description

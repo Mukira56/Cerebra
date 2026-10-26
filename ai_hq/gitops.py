@@ -49,7 +49,7 @@ class GitManager:
     def _git(self, repo, *args, check=True, timeout=60):
         self.require()
         filters = []
-        if any(argument in {"add", "commit", "merge", "worktree", "checkout", "diff", "status", "reset", "revert", "show"} for argument in args):
+        if any(argument in {"add", "commit", "merge", "rebase", "worktree", "checkout", "diff", "status", "reset", "revert", "show"} for argument in args):
             # Configured clean/smudge/process filters are arbitrary executables too.
             configured = self._git(repo, "config", "--name-only", "--get-regexp", r"^filter\..*\.(clean|smudge|process|required)$", check=False)
             for key in configured.stdout.splitlines():
@@ -240,6 +240,22 @@ class GitManager:
                 self._git(root, "add", "--", *paths)
                 self._git(root, "-c", "user.name=Cerebra", "-c", "user.email=ai-hq@localhost", "commit", "--no-verify", "-m", message)
             return {"commit": self._git(root, "rev-parse", "HEAD").stdout.strip(), "changed": bool(paths), "changed_paths": paths}
+
+    def catch_up(self, worktree, new_base):
+        """Replay a task's commits on top of the project's latest commit (git rebase), as an engineer would before merging.
+        Returns {"ok": True, "commit"} or, when both sides changed the same lines, {"ok": False, "conflicts": [paths]} with
+        the working copy left exactly as it was."""
+        root = Path(worktree)
+        if self._git(root, "status", "--porcelain=v1", "--untracked-files=all").stdout:
+            raise GitError("The task's working copy has uncommitted changes")
+        if not re.fullmatch(r"[0-9a-f]{40,64}", str(new_base)):
+            raise GitError("The project's latest commit id is invalid")
+        result = self._git(root, "-c", "user.name=Cerebra", "-c", "user.email=ai-hq@localhost", "rebase", "--no-autosquash", new_base, check=False)
+        if result.exit_code != 0:
+            conflicts = [path for path in self._git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.splitlines() if path]
+            self._git(root, "rebase", "--abort", check=False)
+            return {"ok": False, "conflicts": conflicts or ["(Git did not name the files)"]}
+        return {"ok": True, "commit": self._git(root, "rev-parse", "HEAD").stdout.strip()}
 
     def integrate(self, repo, branch, expected_base=None, approved=False, expected_branch=None, expected_candidate=None):
         if approved is not True:

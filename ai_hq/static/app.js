@@ -163,6 +163,8 @@
     [/Repair retry limit/i, "Tests or review still failed after every repair attempt. Ask the Assistant, or let Auto-fix take it."],
     [/changed or created these files|changed or created files/i, "Running the tests wrote files into the project. Open the task to see which ones."],
     [/No verification commands/i, "The project has no tests set. Add them on the Projects page."],
+    [/target branch moved/i, "Another task merged first. Press Try again: Cerebra now brings the work up to date and merges it."],
+    [/changed the same parts of/i, "The project changed the same files since this task started. Press Try again to redo it on the latest code."],
   ];
   function failureReason(task) {
     const error = String(task.results?.error || "");
@@ -200,7 +202,7 @@
     const noUsage = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_usage");
     const offline = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_network");
     if (stopped.length) {
-      const resumeAll = button(`Resume ${stopped.length === 1 ? "it" : `all ${stopped.length}`}`, async () => { resumeAll.disabled = true; for (const task of stopped) await act(null, () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/resume`)); await refresh(true); toast("Resumed. The AI team picks up where it stopped."); }, "button primary");
+      const resumeAll = button(`Resume ${stopped.length === 1 ? "it" : `all ${stopped.length}`}`, async () => { resumeAll.disabled = true; for (const task of stopped) { const resumed = await act(null, () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/resume`)); if (resumed?.state === "READY") await act(null, () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/start`)); } await refresh(true); toast("Resumed. The AI team picks up where it stopped."); }, "button primary");
       node.append(panel("Paused when Cerebra closed", body(el("p", "", `${stopped.length === 1 ? "One task was" : `${stopped.length} tasks were`} paused when Cerebra closed. Nothing was lost; resume to continue from where ${stopped.length === 1 ? "it" : "they"} stopped.`), taskRows(stopped), actionsRow(resumeAll))));
     }
     if (noUsage.length) node.append(panel("Waiting for AI usage", body(el("p", "", "No AI model had usage left for these tasks. Cerebra tries again automatically every 15 minutes, or press Resume in a task to try now."),
