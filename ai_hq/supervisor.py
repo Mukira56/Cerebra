@@ -10,7 +10,7 @@ import time
 
 from sqlalchemy import select
 
-from . import evidence, usage
+from . import evidence, packages, usage
 from .agents import AgentRegistry, AgentRequest
 from .processes import CommandNotFound, ProcessRunner
 from .gitops import GitManager
@@ -1266,6 +1266,10 @@ class Supervisor:
         with self._lock, self.db.Session.begin() as session:
             self._event(session, task_id, "baseline", "Running the tests on the untouched code to record what fails before any change")
         results = []
+        failed_install = self._install_packages(task_id, commands, workdir)
+        if failed_install:
+            results.append(failed_install)
+            commands = []
         for command in commands:
             if self._interrupted(task_id):
                 return False
@@ -1285,8 +1289,44 @@ class Supervisor:
                         "Before the change: all tests passed", {"failing": summary["failing"][:20]})
         return True
 
+    def _install_packages(self, task_id, commands, workdir):
+        """Install the project's packages in this working copy when they are missing or changed. Returns None when
+        ready (or not a JavaScript project), else a failed result that explains why the tests could not run."""
+        info = packages.plan(workdir, commands)
+        task = self.get(task_id)
+        recorded = (task.results.get("packages") or {}).get(str(workdir))
+        if not packages.needed(info, recorded):
+            return None
+        started, attempts = time.monotonic(), []
+        for args in info["steps"]:
+            command = [*info["prefix"], *args]
+            process = self.runner.run(command, cwd=workdir, timeout=packages.INSTALL_SECONDS, cancel_event=self._cancels.get(task_id))
+            attempts.append((command, process))
+            if process.exit_code == 0 and not process.timed_out and not process.cancelled:
+                with self._lock, self.db.Session.begin() as session:
+                    stored = self._get(session, task_id)
+                    stored.results = {**stored.results, "packages": {**(stored.results.get("packages") or {}), str(workdir): info["fingerprint"]}}
+                    self._event(session, task_id, "packages", f"Installed the project's packages ({' '.join(Path(str(part)).name if index < len(info['prefix']) else part for index, part in enumerate(command))}) "
+                                f"in {round(time.monotonic() - started)} s, so its tests can run in this working copy")
+                return None
+        command, process = attempts[-1]
+        output = f"{process.stdout}\n{process.stderr}"
+        return {"command": _clean(command), "exit_code": process.exit_code, "duration_seconds": round(time.monotonic() - started, 2),
+                "stdout": redact(process.stdout), "timed_out": process.timed_out, "cancelled": process.cancelled, "output_truncated": process.output_truncated,
+                "stderr": redact(process.stderr + "\nCerebra couldn't install the project's packages, so its tests could not run."),
+                "passed": False, "install": True, "what_failed": redact(evidence.what_failed(output)) or "Installing the project's packages failed.",
+                "attempt": self.get(task_id).retry_count}
+
     def _tests(self, task_id, commands, workdir):
         results = []
+        failed_install = self._install_packages(task_id, commands, workdir)
+        if failed_install:
+            commands = []
+            results.append(failed_install)
+            with self.db.Session.begin() as session:
+                task = self._get(session, task_id)
+                task.test_results = task.test_results + [failed_install]
+                self._event(session, task_id, "test", "Installing the project's packages failed, so the tests could not run", {"command": failed_install["command"]})
         for command in commands:
             if self._interrupted(task_id):
                 break

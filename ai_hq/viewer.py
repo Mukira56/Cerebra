@@ -22,6 +22,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+from . import packages
 from .processes import resolve_command
 from .security import redact
 
@@ -176,15 +177,18 @@ class Viewer:
         if kind == "static":
             return self._serve_static(key, root / plan["root"])
         port = free_port()
-        steps = self._commands(plan, port)
+        steps = self._commands(plan, port, root)
         threading.Thread(target=self._run, args=(key, root, steps, port, log), name=f"cerebra-view-{key[:8]}", daemon=True).start()
         return self.status(key)
 
-    def _commands(self, plan, port):
+    def _commands(self, plan, port, root=None):
         kind, python = plan["kind"], self.python
         if kind == "node":
             manager, steps = plan["manager"], []
-            steps.append(("install", [manager, "install"]))
+            install = packages.plan(root) if root is not None else None
+            # The lockfile is respected and never rewritten (a task's working copy must stay clean for its tests).
+            for index, args in enumerate(install["steps"] if install else [["install"]]):
+                steps.append(("install" if index == 0 else "install-fallback", [manager, *args]))
             extra = ["--", "--port", str(port), "--strictPort"] if re.search(r"\bvite\b", plan["command"]) else []
             steps.append(("serve", [manager, "run", plan["script"], *extra]))
             return steps
@@ -204,9 +208,10 @@ class Viewer:
         env = {**os.environ, "PORT": str(port), "BROWSER": "none", "HOST": "127.0.0.1", "FORCE_COLOR": "0"}
         try:
             with log.open("w", encoding="utf-8") as out:
+                installed = (root / "node_modules").is_dir()
                 for name, args in steps:
-                    if name == "install":
-                        if (root / "node_modules").is_dir():
+                    if name.startswith("install"):
+                        if installed:
                             continue
                         self._update(key, message="Installing the project's packages (first run only)…")
                     command = resolve_command(args, root)
@@ -215,10 +220,12 @@ class Viewer:
                     process = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                                stdin=subprocess.DEVNULL, creationflags=flags)
                     self._update(key, process=process, serving=name == "serve")
-                    if name == "install":
+                    if name.startswith("install"):
                         for line in process.stdout:
                             out.write(redact(line.decode("utf-8", "replace")))
-                        if process.wait() != 0:
+                        if process.wait() == 0:
+                            installed = True
+                        elif not any(step.startswith("install-fallback") for step, _ in steps[steps.index((name, args)) + 1:]):
                             return self._finish(key, "failed", "Installing the project's packages failed. The log has the details.")
                         continue
                     self._update(key, message="Starting the server…")
