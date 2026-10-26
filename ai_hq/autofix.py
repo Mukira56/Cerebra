@@ -66,6 +66,12 @@ def describe(policy, settings):
 
 def problem(task):
     """The failure Auto-fix should work on, or None when the task is fine, waiting, or paused by the owner."""
+    from .agents import readable_error
+    reason = _problem(task)
+    return readable_error(reason) if reason else None
+
+
+def _problem(task):
     results = task.results or {}
     if task.pause_requested:
         return None
@@ -99,8 +105,9 @@ def candidates(session, policy):
     return listed
 
 
-def fingerprint(task, reason):
-    return hashlib.sha256(f"{task.state}|{task.updated_at}|{reason}".encode()).hexdigest()[:16]
+def fingerprint(task, reason=None):
+    # The raw error, so improving how errors read never makes an old failure look new.
+    return hashlib.sha256(f"{task.state}|{task.updated_at}|{_problem(task)}".encode()).hexdigest()[:16]
 
 
 class AutoFix:

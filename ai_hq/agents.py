@@ -83,6 +83,17 @@ def failure_detail(text):
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return str(text or "").strip()
+
+
+def readable_error(text):
+    """"claude implementation failed: agent exited with code 1: {…JSON…}" -> the same opening words plus the JSON's readable sentence."""
+    text = str(text or "")
+    start = text.find("{")
+    if start >= 0:
+        inner = failure_detail(text[start:])
+        if inner != text[start:].strip():
+            return (text[:start].rstrip(": ") + ": " + inner).lstrip(": ")
+    return text
 READ_ONLY_ROLES = REVIEW_ROLES | {"plan", "planning", "architecture", "chat"}
 
 
@@ -256,7 +267,10 @@ class _CliAdapter:
             result = self.runner.run(args, directory, self.timeout, cancel_event, prompt, redact_output=False)
             if result.cancelled or result.timed_out or result.exit_code != 0:
                 reason = "cancelled" if result.cancelled else "timed out" if result.timed_out else f"exited with code {result.exit_code}"
-                return AgentResult(False, "", error=redact(f"{self.name} {reason}: " + (result.stderr or result.stdout).strip()[-1500:]))
+                detail = failure_detail(result.stderr or result.stdout)
+                if any(marker in detail.lower() for marker in OFFLINE_MARKERS):  # one plain sentence instead of pages of connection logs
+                    return AgentResult(False, "", error=f"offline: {self.name} couldn't reach its servers: the internet or DNS isn't working. Try again when you're online.")
+                return AgentResult(False, "", error=redact(f"{self.name} {reason}: " + detail[-600:]))
             text = final_text(result.stdout)
             if not text.strip():
                 return AgentResult(False, "", error=f"{self.name} returned no answer")

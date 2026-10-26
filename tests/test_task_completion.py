@@ -139,3 +139,11 @@ def test_an_internet_outage_waits_and_retries_instead_of_failing(hq):
         stored.results = {**stored.results, "retry_after": "2000-01-01T00:00:00+00:00"}
     supervisor.run_until_idle()
     assert supervisor.get(task_id).state == "AWAITING_APPROVAL"
+
+
+def test_stored_errors_with_json_read_as_their_sentence():
+    from ai_hq.agents import readable_error
+    stored = "claude implementation failed: agent exited with code 1: " + REAL_OFFLINE
+    assert readable_error(stored) == "claude implementation failed: agent exited with code 1: API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)"
+    assert readable_error("No meaningful progress: agent produced no new candidate changes").startswith("No meaningful progress")
+    assert readable_error("odd {not json") == "odd {not json"

@@ -201,7 +201,7 @@ class ChatService:
         try:
             try:
                 result = self.registry_source().chat(profile["provider"], prompt, workdir, profile["model"], cancel)
-                success, content, error = result.success, result.output, result.error or ""
+                success, content, error = result.success, result.output, (result.error or "").removeprefix("offline: ")
             except Exception as exc:  # A failed answer is recorded, never raised into the server.
                 success, content, error = False, "", redact(str(exc))
             actions, problems = [], []

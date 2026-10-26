@@ -114,3 +114,17 @@ def test_readiness_check_runs_every_stage_and_never_merges(client):
     assert "a - b" in (Path(project["path"]) / "calculator.py").read_text(encoding="utf-8")  # nothing merged
     again = client.post("/api/readiness").json()  # the same test project is reused
     assert again["status"] == "running" and len(client.get("/api/overview").json()["projects"]) == 1
+
+
+def test_a_cancelled_readiness_check_reads_as_cancelled_not_failed(client):
+    enable_agents(client)
+    supervisor = client.app.state.supervisor
+    supervisor.registry = ReadinessAgent(); supervisor._refresh_registry = lambda: None
+    started = client.post("/api/readiness").json()
+    client.post(f"/api/tasks/{started['task_id']}/cancel")
+    result = client.get("/api/readiness").json()
+    assert result["status"] == "cancelled" and result["error"] == ""
+    from ai_hq import readiness
+    with client.app.state.db.Session.begin() as session:  # a check saved as "failed" by an older version
+        saved = readiness.load(session); saved["status"] = "failed"; readiness._save(session, saved)
+    assert client.get("/api/readiness").json()["status"] == "cancelled"

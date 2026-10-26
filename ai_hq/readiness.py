@@ -112,15 +112,21 @@ def status(db, supervisor):
         task_id, task_state, error, blocked = task.id, task.state, (task.results or {}).get("error"), (task.results or {}).get("blocked_reason")
         merge_id = merge.id if merge else None
     overall = state.get("status", "running")
+    if overall == "failed" and task_state == "CANCELLED":
+        overall = "cancelled"  # saved as "failed" by versions before 0.24.0
     if overall == "running":
         if merge_id:
             supervisor.resolve_approval(merge_id, False)  # stop before merging: the check never changes a project
             overall = "passed"
-        elif task_state == "FAILED" or task_state == "CANCELLED":
+        elif task_state == "FAILED":
             overall = "failed"
+        elif task_state == "CANCELLED":
+            overall = "cancelled"  # stopped by the owner: nothing failed
         elif task_state == "BLOCKED" and blocked == "waiting_for_usage":
             overall = "waiting for usage"
-        if overall != "running" and overall != "waiting for usage":
+        elif task_state == "BLOCKED" and blocked == "waiting_for_network":
+            overall = "waiting for internet"
+        if overall not in {"running", "waiting for usage", "waiting for internet"}:
             with db.Session.begin() as session:
                 saved = load(session); saved.update(status=overall, finished_at=now()); _save(session, saved)
                 state = saved

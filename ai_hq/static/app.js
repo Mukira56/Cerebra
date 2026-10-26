@@ -30,6 +30,8 @@
 
   // ---------- small DOM helpers ----------
   function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined && text !== null) node.textContent = String(text); return node; }
+  // Like replaceChildren, but skips empty values (replaceChildren would print "null").
+  function fill(parent, ...nodes) { parent.replaceChildren(); return append(parent, ...nodes); }
   function append(parent, ...nodes) { nodes.flat(Infinity).forEach(node => { if (node !== null && node !== undefined && node !== false) parent.append(node); }); return parent; }
   function button(label, action, className = "button") { const node = el("button", className, label); node.type = "button"; node.addEventListener("click", action); return node; }
   function link(label, destination, className = "text-link") { const node = el("a", className, label); node.href = `#${destination}`; return node; }
@@ -45,7 +47,13 @@
   function empty(title, description, action, symbol = "∅") { return append(el("div", "empty-state"), el("div", "empty-icon", symbol), el("h3", "", title), el("p", "", description), action); }
   function code(value) { return el("pre", "code-block", json(value)); }
   function hint(text, warn = false) { return el("div", warn ? "hint warn" : "hint", text); }
-  function kv(values) { const node = el("dl", "kv"); values.forEach(([key, value]) => append(node, el("dt", "", key), el("dd", "", value === true ? "Yes" : value === false ? "No" : (value ?? "—")))); return node; }
+  // Long provider errors (pages of connection logs) show their start; the rest is one click away.
+  function failureText(text, mark = "⚠ ") {
+    const value = String(text || ""), node = el("div", "failure-text");
+    if (value.length <= 320) { node.append(el("p", "", mark + value)); return node; }
+    return append(node, el("p", "", `${mark}${value.slice(0, 300).trimEnd()}…`), append(el("details"), el("summary", "", "Show full error"), code(value)));
+  }
+  function kv(values) { const node = el("dl", "kv"); values.forEach(([key, value]) => append(node, el("dt", "", key), value instanceof Node ? append(el("dd"), value) : el("dd", "", value === true ? "Yes" : value === false ? "No" : (value ?? "—")))); return node; }
   function table(headers, rows) { const wrap = el("div", "table-wrap"), node = el("table"), head = el("tr"); headers.forEach(header => head.append(el("th", "", header))); node.append(append(el("thead"), head)); const tbody = el("tbody"); rows.forEach(cells => { const row = el("tr"); cells.forEach(value => { const cell = el("td"); cell.append(value instanceof Node ? value : document.createTextNode(String(value ?? "—"))); row.append(cell); }); tbody.append(row); }); node.append(tbody); wrap.append(node); return wrap; }
   function option(value, label, selected = false) { const node = el("option", "", label); node.value = value; node.selected = selected; return node; }
   function select(options, value) { const node = el("select"); options.forEach(([key, label, disabled]) => { const item = option(key, label); item.disabled = !!disabled; node.append(item); }); if (value !== undefined) node.value = value; return node; }
@@ -399,13 +407,20 @@
   }
 
   // ---------- projects ----------
+  // "C:\…\node.exe C:\…\pnpm.mjs check" reads as "node pnpm check"; the full command is in the tooltip.
+  function shortCommand(command) {
+    return array(command).map((part, index) => /[\\/]/.test(part) && (index === 0 || /\.(m?js|cjs|py|exe|cmd)$/i.test(part)) ? part.split(/[\\/]/).pop().replace(/\.(exe|mjs|cjs|js|cmd)$/i, "") : part).join(" ");
+  }
   function projectsView() {
     if (!array(data.projects).length) return panel("Projects", body(empty("No projects yet", "Add an existing folder, start a new project, or clone one from GitHub.", button("+ Add project", () => projectForm(), "button primary"), "{}")));
     const grid = el("div", "grid cards");
     data.projects.forEach(project => {
       const card = el("article", "card"), top = el("div", "card-top"), info = el("div"), tasks = array(data.tasks).filter(task => task.project_id === project.id);
-      append(info, el("h3", "", project.name), el("div", "row-meta", project.path)); append(top, el("span", "icon-tile", "{}"), info);
-      append(card, top, kv([["Branch", project.default_branch], ["Tasks", tasks.length], ["Tests", array(project.test_commands).map(command => command.join(" ")).join(" | ") || "none — add some"]]));
+      const where = el("div", "row-meta project-path", project.path); where.title = project.path;
+      append(info, el("h3", "", project.name), where); append(top, el("span", "icon-tile", "{}"), info);
+      const tests = array(project.test_commands), shown = el("div", "test-commands");
+      tests.forEach(command => { const line = el("code", "", shortCommand(command)); line.title = command.join(" "); shown.append(line); });
+      append(card, top, kv([["Branch", project.default_branch], ["Tasks", tasks.length], ["Tests", tests.length ? shown : "none — add some"]]));
       append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), button("Chat", () => newChat(project.id), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
       grid.append(card);
     });
@@ -561,12 +576,12 @@
       state.messages.forEach(message => {
         const row = el("div", `message ${message.speaker === state.second ? "user" : "assistant"}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
         if (message.status === "pending") bubble.append(append(el("div", "typing"), el("span"), el("span"), el("span")), el("small", "", `${nice(message.provider)} is reading the project and replying…`));
-        else if (message.status === "failed") bubble.append(el("p", "", `⚠ ${message.error || "No answer."}`));
+        else if (message.status === "failed") bubble.append(failureText(message.error || "No answer."));
         else bubble.append(markdown(message.content.replace(/```cerebra-council[\s\S]*?```/g, "").trim() || "(agreed list below)"));
         append(holder, bubble, el("div", "message-meta", `${nice(message.provider)}${message.model ? ` · ${message.model}` : ""} · round ${message.round}${kinds[message.kind] || ""} · ${relative(message.created_at)}`));
         append(row, el("span", "avatar", PROVIDER_ICON[message.provider] || "AI"), holder); messages.append(row);
       });
-      if (state.error) messages.append(hint(state.error, state.status === "failed"));
+      if (state.error) messages.append(append(hint("", state.status === "failed"), failureText(state.error, "")));
       if (state.handoff_error) messages.append(hint(`Sending the plan to Support failed: ${state.handoff_error}`, true));
       const conclusionPlace = readingPlace(main.querySelector(".council-conclusion"));
       const panes = append(el("div", "council-body"), messages), parts = [header, panes];
@@ -674,7 +689,7 @@
         const row = el("div", `message ${message.role}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
         if (message.role === "user") bubble.append(el("p", "", message.content));
         else if (message.status === "pending") bubble.append(append(el("div", "typing"), el("span"), el("span"), el("span")), el("small", "", `${nice(message.provider)} is thinking… this can take a minute.`));
-        else if (message.status === "failed") bubble.append(el("p", "", `⚠ ${message.error || "No answer."}`));
+        else if (message.status === "failed") bubble.append(failureText(message.error || "No answer."));
         else { bubble.append(markdown(message.content)); array(message.actions).forEach(action => bubble.append(actionCard(action))); }
         append(holder, bubble, el("div", "message-meta", `${message.role === "user" ? "you" : nice(message.provider) + (message.model ? ` · ${message.model}` : "")} · ${relative(message.created_at)}`));
         append(row, el("span", "avatar", message.role === "user" ? "you" : PROVIDER_ICON[message.provider] || "AI"), holder); messages.append(row);
@@ -1113,8 +1128,8 @@
       if (state.status === "never") { stages.replaceChildren(el("p", "row-meta", "Not run yet.")); run.disabled = !agentsOn(); return; }
       const rows = state.stages.map(stage => append(el("div", `readiness-stage ${stage.state}`), el("span", "readiness-icon", ICON[stage.state] || "·"), el("strong", "", stage.label),
         el("span", "row-meta", [stage.model, stage.seconds ? `${Math.round(stage.seconds)} s` : ""].filter(Boolean).join(" · ")), stage.detail ? el("p", "row-meta", stage.detail) : null));
-      const headline = {passed: ["green", "Ready: every stage worked end to end."], failed: ["red", "Not ready: a stage failed (details below)."], running: ["blue", "Running…"], "waiting for usage": ["amber", "Paused: no AI model has usage left right now."]}[state.status] || ["muted", state.status];
-      stages.replaceChildren(append(el("div", "row-meta"), badge(state.status, headline[0]), el("span", "", headline[1]), state.task_id ? button("Open task", () => taskDetail(state.task_id), "button small ghost") : null), ...rows, state.error ? hint(state.error, true) : null);
+      const headline = {passed: ["green", "Ready: every stage worked end to end."], failed: ["red", "Not ready: a stage failed (details below)."], running: ["blue", "Running…"], "waiting for usage": ["amber", "Paused: no AI model has usage left right now."], "waiting for internet": ["amber", "Paused: the AI couldn't be reached. It tries again every 5 minutes."], cancelled: ["muted", "Stopped before it finished; nothing failed. Run it again any time."]}[state.status] || ["muted", state.status];
+      fill(stages, append(el("div", "row-meta"), badge(state.status, headline[0]), el("span", "", headline[1]), state.task_id ? button("Open task", () => taskDetail(state.task_id), "button small ghost") : null), ...rows, state.error ? hint(state.error, true) : null);
       run.disabled = state.status === "running" || !agentsOn();
       if (["running", "waiting for usage"].includes(state.status) && token === renderToken) setTimeout(poll, 3000);
     }
@@ -1157,7 +1172,7 @@
       if (info.available) actions.append(info.downloaded ? install : download);
       if (info.available && !info.downloaded && ["starting", "downloading", "verifying"].includes(data.update_progress?.phase)) { download.disabled = true; download.textContent = "Downloading in the background…"; watch(); }
       actions.append(button("Check again", () => run(), "button ghost"));
-      state.replaceChildren(append(el("div", "row-meta"), badge(info.available ? "update available" : "up to date", info.available ? "green" : "muted"), el("span", "", info.message)),
+      fill(state, append(el("div", "row-meta"), badge(info.available ? "update available" : "up to date", info.available ? "green" : "muted"), el("span", "", info.message)),
         !info.installed && info.available ? hint("You're running Cerebra from source: update it with git pull instead.", true) : null, info.installed || !info.available ? actions : null);
       notes.replaceChildren(info.available && info.notes ? append(el("details", "update-notes"), el("summary", "", `What's new in ${info.latest}`), markdown(info.notes)) : el("span"));
       log.replaceChildren(array(info.last_log).length ? append(el("details"), el("summary", "", "Last update log"), code(info.last_log.join("\n"))) : el("span"));
@@ -1314,7 +1329,7 @@
     root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));
 
     const cleanup = el("div");
-    (async () => { try { const preview = await api("/api/maintenance/demo-data"); if (!preview.tasks && !preview.projects.length) { cleanup.replaceChildren(el("p", "", "No old demo data. ✓")); return; } const go = button(`Remove ${preview.tasks} demo task(s)${preview.projects.length ? ` and ${preview.projects.length} demo project(s)` : ""}`, async () => { go.disabled = true; const result = await act(r => `Removed ${r.tasks_removed} demo tasks. Backup saved.`, () => mutate("/api/maintenance/demo-data", {confirm: true}, "POST", 120000)); if (result) { await refresh(true); } else go.disabled = false; }, "button danger"); cleanup.replaceChildren(el("p", "", "Earlier versions had a simulated demo. Its records are no longer used. Real tasks and projects are kept, and the database is backed up first."), preview.projects.length ? el("p", "row-meta", `Demo projects: ${preview.projects.join(", ")}`) : null, go); } catch (issue) { cleanup.replaceChildren(hint(issue.message, true)); } })();
+    (async () => { try { const preview = await api("/api/maintenance/demo-data"); if (!preview.tasks && !preview.projects.length) { cleanup.replaceChildren(el("p", "", "No old demo data. ✓")); return; } const go = button(`Remove ${preview.tasks} demo task(s)${preview.projects.length ? ` and ${preview.projects.length} demo project(s)` : ""}`, async () => { go.disabled = true; const result = await act(r => `Removed ${r.tasks_removed} demo tasks. Backup saved.`, () => mutate("/api/maintenance/demo-data", {confirm: true}, "POST", 120000)); if (result) { await refresh(true); } else go.disabled = false; }, "button danger"); fill(cleanup, el("p", "", "Earlier versions had a simulated demo. Its records are no longer used. Real tasks and projects are kept, and the database is backed up first."), preview.projects.length ? el("p", "row-meta", `Demo projects: ${preview.projects.join(", ")}`) : null, go); } catch (issue) { cleanup.replaceChildren(hint(issue.message, true)); } })();
     root.append(panel("Old demo data", body(cleanup)));
     return root;
   }

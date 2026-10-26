@@ -328,7 +328,7 @@ class CouncilService:
                 message_id = self._begin_turn(session_id, me, number, kind)
                 try:
                     result = self.registry_source().chat(me["provider"], prompt, workdir, me["model"], stop)
-                    success, content, failure = result.success, result.output, result.error or ""
+                    success, content, failure = result.success, result.output, (result.error or "").removeprefix("offline: ")
                 except Exception as exc:  # recorded on the turn, never raised into the server
                     success, content, failure = False, "", redact(str(exc))
                 self._finish_turn(message_id, success, content, failure)
