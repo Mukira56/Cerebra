@@ -246,6 +246,13 @@
       const pending = array(task.approvals).filter(item => String(item.status).toLowerCase() === "pending");
       const progress = el("div", "progress-card"), story = task.state === "COMPLETED" ? ["Finished", "The work was tested, reviewed and merged into your project."] : pending.length ? ["Your decision is needed", `Approve or reject: ${pending.map(item => nice(item.kind)).join(", ")}.`] : task.state === "FAILED" ? ["Stopped with a problem", task.results?.error || "See Runs & logs."] : task.state === "READY" ? ["Ready", "Press Start to let the AI team work."] : [nice(task.state), "This window updates automatically."];
       append(progress, el("strong", "", story[0]), el("p", "", story[1])); root.append(progress);
+      const fixing = task.results?.auto_fix;
+      if (fixing && (fixing.attempts || fixing.stopped)) {
+        const words = {fixing: "the Assistant is fixing it", council: "the Council is working out a solution", applying: "the Assistant is applying the Council's solution", gave_up: "it stopped trying; this task needs you", stopped: "you stopped it for this task", error: fixing.error || "it couldn't start", waiting: "waiting for the next failure"};
+        root.append(append(el("div", "progress-card auto-fix-card"), el("strong", "", `Auto-fix · attempt ${fixing.attempts || 0} of ${data.auto_fix?.max_attempts ?? "?"}`), el("p", "", words[fixing.status] || nice(fixing.status || "")),
+          append(el("div", "actions"), fixing.chat ? button("Open the fix chat", () => { closeDialog(); chatId = fixing.chat; cache.chats = null; location.hash = "chat"; render(); }, "button small") : null,
+            fixing.council ? button("Open the Council meeting", () => { closeDialog(); councilId = fixing.council; location.hash = "council"; render(); }, "button small") : null)));
+      }
       const actions = el("div", "actions");
       if (pending.some(item => item.kind === "plan")) actions.append(button("Approve plan", () => taskAction(taskId, "approve-plan"), "button primary"));
       if (task.state === "READY" && task.approved) actions.append(button("▶ Start", () => startTask(taskId), "button primary"));
@@ -254,6 +261,10 @@
       if (task.pause_requested || task.state === "BLOCKED") actions.append(button("Resume", () => taskAction(taskId, "resume")));
       if (!["CANCELLED", "COMPLETED", "FAILED"].includes(task.state)) actions.append(button("Cancel", () => taskAction(taskId, "cancel"), "button danger"));
       if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button primary"));
+      const fix = task.results?.auto_fix || {};
+      if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(fix.stopped
+        ? button("Allow auto-fix", () => setAutoFix(taskId, true), "button")
+        : button("■ Stop auto-fix", () => setAutoFix(taskId, false), "button danger"));
       actions.append(button("Plain report", () => { closeDialog(); location.hash = `report/${taskId}`; }, "button ghost"));
       root.append(actions);
       const tabs = el("div", "tabs"), pane = el("div");
@@ -459,6 +470,9 @@
     }
     return node;
   }
+  async function setAutoFix(taskId, enabled) {
+    if (await act(enabled ? "Auto-fix will work on this task again." : "Auto-fix stopped for this task. Its fix chat and any fix run were stopped; Resume continues the run.", () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/auto-fix`, {enabled}))) { await refresh(true); taskDetail(taskId); }
+  }
   async function askAssistantToFix(task) {
     const conversation = await act(null, () => mutate("/api/chats", {profile: chatDefault(), project_id: task.project_id || null, title: `Fix: ${task.description.slice(0, 50)}`}));
     if (!conversation) return;
@@ -610,6 +624,11 @@
           try { recorded = JSON.parse(recorded); } catch (issue) { /* show the text as it is */ }
           messages.append(append(el("div", "action-results"), el("strong", "", "⚙ Cerebra ran the actions and recorded the results"),
             append(el("details"), el("summary", "", "Show the recorded results"), code(recorded)), el("small", "", relative(message.created_at))));
+          return;
+        }
+        if (message.role === "auto") {  // Auto-fix: a failure or the Council's solution, sent by Cerebra itself
+          messages.append(append(el("div", "action-results"), el("strong", "", message.content.startsWith("COUNCIL") ? "⚙ Cerebra sent the Council's solution" : "⚙ Auto-fix: Cerebra sent this failure to the Assistant"),
+            append(el("details"), el("summary", "", "Show what was sent"), code(message.content)), el("small", "", relative(message.created_at))));
           return;
         }
         const row = el("div", `message ${message.role}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
@@ -1126,6 +1145,26 @@
     return form;
   }
 
+  // ---------- auto-fix ----------
+  function autoFixForm() {
+    const policy = data.auto_fix || {}, form = el("form");
+    const enabled = check("When a task fails, start the Assistant on it right away (it reads the logs and retries with a fix).", policy.enabled);
+    const access = check("Give fix runs Full access (commands, installs, network and GitHub), like tasks I start myself.", policy.full_access);
+    access.control.disabled = !fullOn();
+    const attempts = select([1, 2, 3, 4, 5, 6, 8, 10].map(value => [String(value), `${value} attempt${value === 1 ? "" : "s"} per task`]), String(policy.max_attempts ?? 4));
+    const council = select([[0, "Never"], [1, "After 1 failed fix"], [2, "After 2 failed fixes"], [3, "After 3 failed fixes"]].map(([value, label]) => [String(value), label]), String(policy.council_after ?? 2));
+    append(form, append(el("div", "row-meta"), badge(policy.enabled ? "auto-fix on" : "auto-fix off", policy.enabled ? "green" : "muted"), el("span", "", policy.enabled ? (policy.full_access_effective ? "Fix runs use Full access." : "Fix runs stay inside the project copy.") : "Failed tasks wait for you.")),
+      hint("Each new failure is one attempt. When fixes don't hold, Codex and Claude meet in the Council, agree the solution (a restructure if the project's design is the problem), and the Assistant applies it. Every task has a Stop auto-fix button. Merges still wait for you unless Away mode is on; every attempt uses your plan's usage."),
+      enabled.wrap, access.wrap, !fullOn() ? hint("Turn on Full access above first if fix runs should be able to install tools and use the network.") : null,
+      field("Stop after", attempts), field("Ask the Council", council));
+    const save = submitButton("Save auto-fix"); form.append(actionsRow(save));
+    wireForm(form, save, async () => {
+      await mutate("/api/auto-fix", {enabled: enabled.control.checked, full_access: access.control.checked && fullOn(), max_attempts: Number(attempts.value), council_after: Number(council.value)}, "PUT");
+      await refresh(true); toast(enabled.control.checked ? "Auto-fix is on. Failed tasks go to the Assistant." : "Auto-fix is off.");
+    });
+    return form;
+  }
+
   // ---------- away mode ----------
   const awayOn = () => data?.autopilot?.active === true;
   function awayForm() {
@@ -1175,6 +1214,7 @@
     root.append(panel("Readiness check", body(readinessPanel())));
     root.append(panel("Full access — let agents control this laptop", body(fullAccessForm())));
     root.append(panel("Away mode — work while I'm away", body(awayForm())));
+    root.append(panel("Auto-fix — the Assistant fixes failed tasks by itself", body(autoFixForm())));
 
     const limits = el("form"), controls = {}, grid = el("div", "form-grid");
     const unlimited = {};

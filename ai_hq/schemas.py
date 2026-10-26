@@ -129,6 +129,15 @@ class RoutingUpdate(StrictModel):
     provider: str = Field(default="claude", pattern="^(codex|claude)$")
     model: str = Field(default="", max_length=100)
 
+class AutoFixSettings(StrictModel):
+    enabled: bool | None = None
+    full_access: bool | None = None
+    max_attempts: int | None = Field(default=None, ge=1, le=10)
+    council_after: int | None = Field(default=None, ge=0, le=10)
+
+class TaskAutoFix(StrictModel):
+    enabled: bool
+
 class SupportSettings(StrictModel):
     act_automatically: bool | None = None
     allow_approvals: bool | None = None

@@ -21,7 +21,7 @@ from .security import redact
 
 KEY = "support_settings"
 ACTIONS = {"create_project", "create_task", "create_plan_task", "approve_plan", "start_task", "pause_task", "resume_task", "cancel_task", "create_business_job",
-           "retry_task", "answer_approval", "restore_checkpoint", "run_readiness_check", "set_test_commands", "set_default_models"}
+           "retry_task", "ask_council", "answer_approval", "restore_checkpoint", "run_readiness_check", "set_test_commands", "set_default_models"}
 APPROVAL_KINDS = {"plan", "live_execution", "review_findings", "merge"}
 MAX_ACTIONS = 10
 # Test runners a chat-created project may use. Anything else is set by the user on the Projects page.
@@ -199,7 +199,11 @@ def validate(item):
         clean["task"] = _short(item.get("task", ""), 64)
         if not re.fullmatch(r"[0-9a-f]{6,32}", clean["task"]):
             raise ValueError("refer to a task by its id")
-        if kind == "retry_task":
+        if kind == "ask_council":
+            clean["question"] = str(item.get("question", "")).strip()[:3000]
+            if len(clean["question"]) < 10:
+                raise ValueError("say what the Council should solve, and what you already tried")
+        elif kind == "retry_task":
             clean["instructions"] = str(item.get("instructions", "")).strip()[:4000]
             if len(clean["instructions"]) < 10:
                 raise ValueError("a retry needs the diagnosis and what to change")
@@ -232,6 +236,8 @@ def describe(action):
         return "Set the default AI team: " + ", ".join(f"{role} → {value}" for role, value in action.items() if role != "action")
     if kind == "retry_task":
         return f"Retry task {action['task']} with this fix: {_short(action['instructions'], 160)}"
+    if kind == "ask_council":
+        return f"Ask the Council to solve task {action['task']}: {_short(action['question'], 160)}"
     if kind == "answer_approval":
         return f"{'Approve' if action['approve'] else 'Reject'} the {action['kind'].replace('_', ' ')} step of task {action['task']}"
     if kind == "restore_checkpoint":
@@ -268,6 +274,9 @@ limit, or unclear requirements; then fix it. For code problems use retry_task wi
 (what is wrong, which file, what to change, how to verify). For a wrong test command use set_test_commands, then retry_task.
 Account sign-in and usage limits need the user (or wait for usage): say so instead of retrying. Never invent a cause the
 evidence does not show; if it is unclear, say what to check.
+Hard problems: when a fix is hard (the cause is unclear, your earlier fixes failed, or it needs a design decision), use
+ask_council {"task": id, "question": "what is failing, what was tried, what must be decided"}. Two engineers from different
+AI companies then debate it and agree a solution; Cerebra sends you their solution and you apply it with retry_task.
 
 More actions: retry_task {"task": id, "instructions": "..."}; answer_approval {"task": id, "kind": "plan|live_execution|review_findings|merge",
 "approve": true|false} (only works if the user allowed the Assistant to answer approvals); restore_checkpoint {"task": id, "commit": full id};

@@ -47,7 +47,7 @@ Integration requires the recorded approval and fresh repository checks. The syst
 - Support's `create_business_job` action creates `origin="support"` tasks.
 
 **Hardening:**
-- Tasks created from model text (Support actions, including business jobs) never run with Full access, even when it is on.
+- Tasks created from model text (Support actions, including business jobs), and tasks retried with model-written fix instructions, run project-only even when Full access is on. The one exception is the owner's **Auto-fix Full access** grant (0.21.0, below). One function, `ai_hq/capabilities.py`, makes this decision before every agent run, and the task's origin is never rewritten (model-written instructions are marked `instructions_from`).
 - The task origin is recorded at creation, so there is no window in which it is unset.
 - Expired sessions are pruned.
 - Responses add `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a restrictive `Permissions-Policy`.
@@ -77,6 +77,16 @@ While it is on, **implementation runs only** change:
 - The prompt policy tells the agent it may run commands, install dependencies, use the network and use git/gh. It must still not merge into the base branch or touch approvals.
 
 Planning, review and chat keep their read-only flags.
+
+## Auto-fix (0.21.0, opt-in)
+
+**Settings › Auto-fix** (`PUT /api/auto-fix`), stored as the `auto_fix` record, is off by default.
+- **What it does:** when a task fails, Cerebra opens that task's fix chat and sends the failure to the Assistant. The Assistant acts without asking, using only its fixed action vocabulary (retry with fix instructions, set test commands, resume, ask the Council).
+- **Limits:** each new failure is one attempt, up to `max_attempts` (default 4). After that Cerebra stops and records that the task needs the owner.
+- **The Council:** after `council_after` failed fixes (default 2), the failure goes to a Council meeting. Its agreed solution, which can be a restructure as plan tasks, is sent back for the Assistant to apply.
+- **Approvals stay as they are:** merges wait for the owner unless Away mode or "May answer approvals" says otherwise.
+- **The Full access grant:** `full_access` is accepted only while Full access is on. With it, fix runs of tasks under Auto-fix keep Full access even though a model wrote their instructions. This is the owner's informed choice: a planted instruction in a project file could then reach the laptop and GitHub.
+- **Revoking:** turning the grant or Full access off, or pressing a task's **Stop auto-fix** (`POST /api/tasks/{id}/auto-fix`), applies to the next agent run. Stop also stops that task's fix chat and Council meeting and pauses a fix run in progress.
 
 This deliberately removes the write and network boundary on the user's machine. Prompt injection from repository content can then run arbitrary commands with the user's Windows account and GitHub credentials. The supervisor's controls still apply to what reaches the project: path validation of the worktree diff, branch checks, registered tests, independent review, and merge approval. They cannot undo side effects outside the worktree.
 

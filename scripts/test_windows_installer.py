@@ -100,7 +100,7 @@ def main():
     print('Setup finds working Git on PATH and outside PATH (registry/standard folder)...',flush=True)
     print('Installing the actual EXE into an isolated directory...',flush=True)
     run([args.installer,'--quiet','--dir',target,'--data',data,'--port','18765','--no-desktop','--test-registration'],timeout=360)
-    manifest=json.loads((target/'aihq-install.json').read_text())
+    manifest=json.loads((target/'aihq-install.json').read_text(encoding='utf-8'))
     assert manifest['data_dir']==str(data) and manifest['registry']==REGISTRY
     assert 'docs/progress.md' not in manifest['files'] and 'docs/environment-report.md' not in manifest['files']
     assert not (target/'data').exists() and not (target/'.env').exists()
@@ -110,7 +110,7 @@ def main():
     env=os.environ.copy();env['PYTHONPATH']=r'C:\Users\ADMIN\AI-Development-HQ';env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
     code="import ai_hq,fastapi,pydantic,sqlalchemy,pytest,httpx,json,sys;print(json.dumps({'file':ai_hq.__file__,'version':ai_hq.__version__,'path':sys.path}))"
     modules=json.loads(run([python,'-X','utf8','-c',code],cwd=target,env=env))
-    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.20.0'
+    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.21.0'
     assert r'C:\Users\ADMIN\AI-Development-HQ' not in modules['path']
     assert not any('__editable__' in p.name for p in target.rglob('*'))
     print('Private runtime imports application/dependencies without source Python...',flush=True)
@@ -126,7 +126,7 @@ def main():
         began=time.monotonic();run([launcher,'--start-no-browser'],cwd=target,timeout=120);started=True
         startup_seconds=round(time.monotonic()-began,2)
         with urlopen('http://127.0.0.1:18765/health',timeout=10) as response:health=json.load(response)
-        assert health['version']=='0.20.0'
+        assert health['version']=='0.21.0'
         with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'Cerebra' in response.read()
         try:urlopen('http://127.0.0.1:18765/api/overview',timeout=10);raise AssertionError('Unauthenticated API allowed')
         except HTTPError as error:assert error.code==401
@@ -149,7 +149,7 @@ def main():
     backups=list(target.parent.glob(target.name+'.previous-*'))
     assert (target/'AIHQ.exe').is_file() and len(backups)==1,backups
     assert [p.relative_to(backups[0]).as_posix() for p in backups[0].rglob('*')]==['upgrade-note.txt']
-    assert (target/'previous-install.txt').read_text()==str(backups[0])
+    assert (target/'previous-install.txt').read_text(encoding='utf-8')==str(backups[0])
     print('Upgrade removed recorded old program files and kept the unknown file...',flush=True)
     (target/'keep-my-file.txt').write_text('Unknown user file must survive uninstall',encoding='utf-8')
     run([target/'Uninstall.exe','--quiet'],cwd=ROOT,timeout=180)

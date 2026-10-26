@@ -63,6 +63,7 @@ def valid_model(value: str) -> str:
 
 
 REVIEW_ROLES = {"review", "reviewing", "security", "security_review"}
+PROBE_SECONDS = 60
 READ_ONLY_ROLES = REVIEW_ROLES | {"plan", "planning", "architecture", "chat"}
 
 
@@ -147,14 +148,15 @@ class _CliAdapter:
             self._capability = info
             return info
         try:
-            version = self.runner.run([executable, "--version"], Path(executable).parent, 10)
-            help_result = self.runner.run([executable, "exec", "--help"] if self.name == "codex" else [executable, "--help"], Path(executable).parent, 10)
+            # Generous limits: on a slow laptop a busy CLI can take well over 10 s just to print its help.
+            version = self.runner.run([executable, "--version"], Path(executable).parent, PROBE_SECONDS)
+            help_result = self.runner.run([executable, "exec", "--help"] if self.name == "codex" else [executable, "--help"], Path(executable).parent, PROBE_SECONDS)
             help_text = help_result.stdout + help_result.stderr
             info["version"] = (version.stdout or version.stderr).strip()[:300]
             if self.name == "codex":
                 required = ["--json", "--sandbox", "--ephemeral", "--ignore-user-config", "--ignore-rules"]
                 supported = all(flag in help_text for flag in required) and help_result.exit_code == 0
-                global_help = self.runner.run([executable, "--help"], Path(executable).parent, 10)
+                global_help = self.runner.run([executable, "--help"], Path(executable).parent, PROBE_SECONDS)
                 supported = supported and global_help.exit_code == 0 and all(flag in (global_help.stdout + global_help.stderr) for flag in ("--ask-for-approval", "--no-daemon"))
                 info.update(available=supported, write_available=supported,
                             reason="CLI capabilities verified using help; authenticated live execution remains unverified" if supported else "Installed CLI lacks required conservative execution flags")
@@ -167,7 +169,8 @@ class _CliAdapter:
         except (OSError, ValueError, RuntimeError) as exc:
             info["reason"] = redact(str(exc))
         info["execution_allowed"] = bool(info["available"] and self.allow_live and (self.scope_verified or self.confinement_mode == "cli-confinement"))
-        self._capability = info
+        # Only a successful check is remembered; a failed one (often just a slow start) is tried again next time.
+        self._capability = info if info["available"] else None
         return info
 
     def _prompt(self, request):

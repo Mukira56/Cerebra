@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision,
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix,
                       BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
                       OAuthFinish, GmailSetup, NotificationSetup)
 from .security import redact
@@ -58,6 +58,14 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     council.recover()
     from .work import WorkService
     work = WorkService(db, supervisor)
+    from . import autofix as autofix_module
+
+    def fixer_profile(session, task):
+        """The Assistant for a failed task: the provider that reviews it (a second pair of eyes), unless it is out of usage."""
+        providers = [task.reviewer or "claude", task.assigned_agent or "codex"]
+        return next((name for name in providers if name in {"codex", "claude"} and supervisor._usable(name)), "codex")
+    autofix = autofix_module.AutoFix(db, settings, supervisor, chats, fixer_profile, council)
+    autofix.work = work
     from .commerce import Commerce, public as connection_public
     from . import gmail, notify
     commerce = Commerce(db)
@@ -73,8 +81,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     async def lifespan(app):
         if start_worker:
             supervisor.startup()
+            autofix.start()
             notifier.start()
         yield
+        autofix.stop()
         supervisor.shutdown()
         notifier.stop()
         commerce.close()
@@ -85,6 +95,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app = FastAPI(title="Cerebra", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.db, app.state.supervisor, app.state.settings = db, supervisor, settings
     app.state.integrations, app.state.chats, app.state.council, app.state.work = integrations, chats, council, work
+    app.state.autofix = autofix
     app.state.commerce, app.state.mailbox, app.state.notifier = commerce, mailbox, notifier
 
     @app.middleware("http")
@@ -210,11 +221,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             away = autopilot.describe(autopilot.load(session))
             from . import support as support_settings_module
             assistant_settings = support_settings_module.load(session)
+            auto_fix_settings = autofix_module.describe(autofix_module.load(session), settings)
             route_policy = routing.load(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -280,6 +292,31 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def task_undo(task_id: str):
         with db.Session() as session: task_or_404(session, task_id)
         return supervisor.undo_integration(task_id)
+
+    @app.post("/api/tasks/{task_id}/auto-fix")
+    def task_auto_fix(task_id: str, payload: TaskAutoFix):
+        """The task's Stop auto-fix button (or Allow auto-fix again)."""
+        with db.Session() as session: task_or_404(session, task_id)
+        return autofix.set_task(task_id, payload.enabled)
+
+    @app.get("/api/auto-fix")
+    def auto_fix_settings():
+        with db.Session() as session: return autofix_module.describe(autofix_module.load(session), settings)
+
+    @app.put("/api/auto-fix")
+    def auto_fix_update(payload: AutoFixSettings):
+        if payload.full_access and not settings.full_access:
+            raise ValueError("Turn on Full access first (Settings › Full access), then let Auto-fix use it")
+        with db.Session.begin() as session:
+            before = autofix_module.load(session)
+            value = autofix_module.save(session, payload.enabled, payload.full_access, payload.max_attempts, payload.council_after)
+            if value["enabled"] != before["enabled"]:
+                session.add(Event(kind="policy", message="Auto-fix on: the Assistant starts on failed tasks by itself" if value["enabled"] else "Auto-fix off: failed tasks wait for you"))
+            if value["full_access"] != before["full_access"]:
+                session.add(Event(kind="policy", message="Owner let Auto-fix runs use Full access" if value["full_access"] else "Owner took Full access away from Auto-fix runs"))
+        if value["enabled"]:
+            autofix.scan()  # start on tasks that are already failed
+        return autofix_module.describe(value, settings)
 
     @app.post("/api/readiness")
     def readiness_start():
@@ -697,6 +734,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             return {"text": (f"Created task {task_id[:8]} for plan item {item_id[:12]}." if created else
                              f"Plan item {item_id[:12]} already has task {task_id[:8]} (no duplicate made).") + f" It is {state.replace('_', ' ').lower()}.",
                     "affected": {"task_id": task_id, "plan_item_id": item_id}, "next_state": state}
+        if kind == "ask_council":
+            task = find_task(action["task"])
+            meeting_id = autofix.escalate(task.id, action["question"])
+            return {"text": f"The Council is meeting about task {task.id[:8]} (meeting {meeting_id[:8]}). Cerebra will send you their solution when they agree; then apply it with retry_task.",
+                    "affected": {"task_id": task.id, "council_id": meeting_id}, "next_state": "council"}
         if kind == "retry_task":
             task = find_task(action["task"])
             result = supervisor.retry_with_instructions(task.id, action["instructions"])

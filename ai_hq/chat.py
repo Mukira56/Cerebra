@@ -6,14 +6,14 @@ import threading
 
 from sqlalchemy import select
 
-from .models import ActionRecord, ChatAction, ChatConversation, ChatMessage, Event, Project, as_dict, now, uid
+from .models import ActionRecord, ChatAction, ChatConversation, ChatMessage, Event, Metadata, Project, as_dict, now, uid
 from . import support
 from .profiles import get_profile
 from .security import redact
 
 HISTORY_TURNS = 12
 MAX_STEPS = 6  # automatic act -> results -> next actions rounds per message; stops earlier on no progress
-SPEAKERS = {"user": "User", "cerebra": "Cerebra (action results)"}
+SPEAKERS = {"user": "User", "cerebra": "Cerebra (action results)", "auto": "Cerebra (automatic)"}
 HISTORY_CHARACTERS = 24000
 GUIDANCE = support.GUIDANCE
 
@@ -90,6 +90,9 @@ class ChatService:
                 session.delete(row)
             session.flush()  # messages first; they reference the conversation
             session.delete(conversation)
+            acts = session.get(Metadata, f"chat_acts:{conversation_id}")
+            if acts is not None:
+                session.delete(acts)
 
     def stop(self, conversation_id):
         event = self._cancels.get(conversation_id)
@@ -97,7 +100,8 @@ class ChatService:
             event.set()
         return {"stopping": bool(event)}
 
-    def send(self, conversation_id, text):
+    def send(self, conversation_id, text, act=False, role="user"):
+        """Send a message. `act=True` (Cerebra's Auto-fix chats) makes this conversation run its actions without asking."""
         text = (text or "").strip()
         if not text:
             raise ValueError("Type a message first")
@@ -106,7 +110,11 @@ class ChatService:
                 raise ValueError("The agent is still answering your last message")
             self._busy.add(conversation_id)
         try:
-            reply_id, profile, prompt, workdir = self._prepare(conversation_id, text, "user")
+            if act:
+                with self.db.Session.begin() as session:
+                    if session.get(Metadata, f"chat_acts:{conversation_id}") is None:
+                        session.add(Metadata(key=f"chat_acts:{conversation_id}", value={"since": now()}))
+            reply_id, profile, prompt, workdir = self._prepare(conversation_id, text, role if role in SPEAKERS else "user")
             cancel = threading.Event()
             self._cancels[conversation_id] = cancel
             threading.Thread(target=self._answer, args=(conversation_id, reply_id, profile, prompt, workdir, cancel),
@@ -242,7 +250,7 @@ class ChatService:
                     reply = session.get(ChatMessage, reply_id)
                     reply.status = "done" if success else "failed"
                     reply.content, reply.error, reply.finished_at = redact(content), redact(error)[:4000], now()
-                    automatic = support.load(session)["act_automatically"]
+                    automatic = support.load(session)["act_automatically"] or session.get(Metadata, f"chat_acts:{conversation_id}") is not None
                     created = []
                     for action in actions:
                         row = ChatAction(id=uid(), message_id=reply_id, conversation_id=conversation_id, payload=action, summary=support.describe(action))

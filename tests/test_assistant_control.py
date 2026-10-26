@@ -52,7 +52,8 @@ def test_failure_logs_retry_with_instructions_and_finish(client, tmp_path):
     supervisor = client.app.state.supervisor
     supervisor.run_until_idle()
     task = client.get(f"/api/tasks/{task_id}").json()
-    assert task["state"] == "AWAITING_APPROVAL" and task["results"]["origin"] == "support"
+    assert task["state"] == "AWAITING_APPROVAL" and task["results"]["origin"] == "user" and task["results"]["instructions_from"] == "support"
+    assert supervisor.registry.full_access is False  # model-written fix instructions run project-only without the Auto-fix grant
     coding = [request for name, request in supervisor.registry.requests if request.role == "implement"]
     assert "FIX INSTRUCTIONS from the assistant" in coding[-1].description and "misspelled" in coding[-1].description
     assert any(event["kind"] == "retry" for event in task["events"])

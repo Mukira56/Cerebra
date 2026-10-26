@@ -187,6 +187,7 @@ class CouncilService:
         self._lock = threading.Lock()
         self._running: dict[str, threading.Event] = {}
         self.on_done = None  # set by the API: hands a finished meeting's plan to Support when asked to
+        self.on_end = []  # callables (session_id, status) told when any meeting ends, e.g. Auto-fix
 
     def recover(self):
         """Meetings that were running when Cerebra stopped can't continue by themselves; say so."""
@@ -359,6 +360,11 @@ class CouncilService:
                     self.on_done(session_id, bool(self.options(session_id).get("send_to_support")))
                 except Exception as exc:  # the meeting result stands even if planning or the hand-off fails
                     self.remember(session_id, handoff_error=redact(str(exc))[:500])
+            for listener in self.on_end:
+                try:
+                    listener(session_id, status)
+                except Exception as exc:
+                    self.remember(session_id, listener_error=redact(str(exc))[:500])
             with self._lock:
                 self._running.pop(session_id, None)
 
