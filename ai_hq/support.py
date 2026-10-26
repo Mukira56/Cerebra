@@ -17,6 +17,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from .models import Approval, Event, Metadata, Project, Task
+from .evidence import what_failed
 from .security import redact
 
 KEY = "support_settings"
@@ -71,7 +72,7 @@ def failure_logs(session, data_dir, limit=5):
         lines.append(f"### Task {task.id[:8]} ({task.state}, reason: {(task.results or {}).get('blocked_reason') or 'failed'}): {_short(task.description, 140)}\n"
                      f"Error: {_short((task.results or {}).get('error') or (failed.error if failed else ''), 600) or 'none recorded'}\n"
                      + (f"Failing run: {failed.agent} {failed.role}. Log tail:\n{redact(log).strip()}\n" if failed else "")
-                     + (f"Failing test {' '.join(map(str, tests[0].get('command', [])))[:120]} (exit {tests[0].get('exit_code')}):\n{redact((tests[0].get('stdout') or '') + (tests[0].get('stderr') or ''))[-1200:].strip()}\n" if tests else ""))
+                     + (f"Failing test {' '.join(map(str, tests[0].get('command', [])))[:120]} (exit {tests[0].get('exit_code')}):\n{redact(tests[0].get('what_failed') or what_failed((tests[0].get('stdout') or '') + chr(10) + (tests[0].get('stderr') or ''), 1500)).strip()}\n" if tests else ""))
     return "\n".join(lines) or "No failed or stuck tasks."
 
 

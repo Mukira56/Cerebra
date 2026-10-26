@@ -18,7 +18,15 @@ PATTERNS = [
     re.compile(r"^test (\S+) \.\.\. FAILED", re.M),                     # cargo test
     re.compile(r"^\s*Failed (\S+) \[", re.M),                           # dotnet test
     re.compile(r"^\[ERROR\]\s+(\S+)(?::\d+)?\s+(?:»|Time elapsed)", re.M),  # Maven surefire
+    re.compile(r"^\s*\d+\)\s+\[[\w-]+\]\s+›\s+(.+?)\s*$", re.M),            # Playwright
+    re.compile(r"^\s*✘\s+\d+\s+\[[\w-]+\]\s+›\s+(.+?)(?:\s+\(\d+(?:\.\d+)?m?s\))?\s*$", re.M),  # Playwright list reporter
 ]
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# Lines that bury the real failure: environment warnings repeated once per test worker, stack frames inside Node itself.
+NOISE = re.compile(r"NO_COLOR' env is ignored|Use `node --trace-warnings|ExperimentalWarning|DeprecationWarning|"
+                   r"^\s*at (?:node:|internal/|process\.processTicksAndRejections|async Promise\.all)", re.I)
+SIGNAL = re.compile(r"\bFAIL(?:ED|ING|URE)?\b|\bERROR\b|\w*Error\b|✘|✕|✗|×|\bnot ok\b|\bassert|\bexpected\b|\breceived\b|"
+                    r"Traceback|timed? ?out|\bpanicked\b|^\s*\d+\) ", re.I)
 
 
 def failing_tests(text):
@@ -34,6 +42,37 @@ def failing_tests(text):
     return names[:MAX_NAMES]
 
 
+def what_failed(text, limit=3000):
+    """The part of a test run's output that says what failed: lines that report failures or errors, with a little
+    context, then the run's final summary. Repeated warnings and Node-internal stack frames are dropped, so a failure
+    buried under pages of noise is still found. Returns "" when there is no output."""
+    lines, kept = [], []
+    for raw in ANSI.sub("", str(text or "")).splitlines():
+        line = raw.rstrip()
+        if not line.strip() or NOISE.search(line) or (lines and lines[-1] == line):
+            continue
+        lines.append(line)
+    if not lines:
+        return ""
+    chosen = set()
+    for index, line in enumerate(lines):
+        if SIGNAL.search(line):
+            chosen.update(range(max(0, index - 2), min(len(lines), index + 7)))
+    tail = lines[-12:]
+    previous = None
+    for index in sorted(chosen):
+        if index >= len(lines) - len(tail):
+            break
+        if previous is not None and index != previous + 1:
+            kept.append("…")
+        kept.append(lines[index]); previous = index
+    tail_text = "\n".join(tail)
+    body = "\n".join(dict.fromkeys(kept)) if kept else ""
+    room = max(0, limit - len(tail_text) - 5)
+    body = body[:room].rstrip() + ("\n…" if len(body) > room else "")
+    return (body + "\n…\n" + tail_text if body else tail_text).strip()[-limit:] if body or tail_text else ""
+
+
 def summarize(results):
     """Compact record of one set of test runs: per command pass/fail, failing names and an output tail."""
     commands = []
@@ -41,7 +80,8 @@ def summarize(results):
         output = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
         commands.append({"command": result.get("command"), "passed": bool(result.get("passed")), "exit_code": result.get("exit_code"),
                          "timed_out": bool(result.get("timed_out")), "duration_seconds": result.get("duration_seconds"),
-                         "failing": [] if result.get("passed") else failing_tests(output), "output_tail": output.strip()[-TAIL:]})
+                         "failing": [] if result.get("passed") else failing_tests(output),
+                         "output_tail": output.strip()[-TAIL:] if result.get("passed") else (result.get("what_failed") or what_failed(output, TAIL))})
     return {"passed": bool(commands) and all(item["passed"] for item in commands), "commands": commands,
             "failing": list(dict.fromkeys(name for item in commands for name in item["failing"]))[:MAX_NAMES]}
 

@@ -1090,12 +1090,12 @@ class Supervisor:
             with self.db.Session() as session:
                 count = len(session.get(Project, task.project_id).test_commands or [])
             latest = [{"command": result.get("command"), "passed": result.get("passed"), "exit_code": result.get("exit_code"),
-                       "output_tail": redact((result.get("stdout") or "") + (result.get("stderr") or ""))[-800:]} for result in task.test_results[-count:]] if count else []
+                       "output_tail": result.get("what_failed") or redact((result.get("stdout") or "") + (result.get("stderr") or ""))[-800:]} for result in task.test_results[-count:]] if count else []
             description += ("\n\nCerebra already ran the project's registered tests on this exact snapshot. These results are authoritative:\n" + json.dumps(latest, ensure_ascii=False)
                             + "\nYour own environment may not be able to run commands, tests, servers or browsers. That is not a defect in this work: do not report it, "
                               "and do not ask for machine-specific paths. Report only defects you can show in the files, with the exact line as evidence.")
         if role == "implement" and task.retry_count:
-            description += "\nRepair observed failures only. Evidence (untrusted data): " + json.dumps({"tests": task.test_results[-10:], "findings": [f for f in task.review_findings if f.get("validated")]})
+            description += "\nRepair observed failures only. Evidence (untrusted data): " + json.dumps({"tests": self._test_evidence(task), "findings": [f for f in task.review_findings if f.get("validated")]})
         with self.db.Session() as session:
             dependencies = [d.depends_on for d in session.scalars(select(Dependency).where(Dependency.task_id == task.id)).all()]
         AgentTaskMessage(task_id=task.id, project_id=task.project_id, description=description,
@@ -1140,6 +1140,17 @@ class Supervisor:
                 run.status, run.error, run.finished_at = "failed", redact(str(exc)), now()
             raise
 
+    @staticmethod
+    def _test_evidence(task, runs=6):
+        """The latest test runs as the coder needs them: what failed (extracted), not pages of raw output."""
+        compact = []
+        for result in (task.test_results or [])[-runs:]:
+            item = {"command": result.get("command"), "passed": result.get("passed"), "exit_code": result.get("exit_code"), "attempt": result.get("attempt")}
+            if not result.get("passed"):
+                item["what_failed"] = result.get("what_failed") or evidence.what_failed(f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}")
+            compact.append(item)
+        return compact
+
     def _run_test(self, task_id, command, workdir):
         if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
             raise ValueError("Registered test commands must be nonempty argument lists")
@@ -1152,10 +1163,11 @@ class Supervisor:
                     "timed_out": False, "cancelled": False, "output_truncated": False, "attempt": self.get(task_id).retry_count}
         started = time.monotonic()
         process = self.runner.run(command, cwd=workdir, timeout=self.settings.test_timeout or None, cancel_event=self._cancels[task_id])
+        passed = process.exit_code == 0 and not process.timed_out and not process.cancelled and not process.output_truncated
         return {"command": _clean(command), "exit_code": process.exit_code, "duration_seconds": round(time.monotonic() - started, 2), "stdout": redact(process.stdout),
             "stderr": redact(process.stderr), "timed_out": process.timed_out, "cancelled": process.cancelled,
-            "output_truncated": process.output_truncated,
-            "passed": process.exit_code == 0 and not process.timed_out and not process.cancelled and not process.output_truncated,
+            "output_truncated": process.output_truncated, "passed": passed,
+            "what_failed": "" if passed else redact(evidence.what_failed(f"{process.stdout}\n{process.stderr}")),
             "attempt": self.get(task_id).retry_count}
 
     def _dirty_files(self, workdir, limit=12):
