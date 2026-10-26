@@ -92,6 +92,11 @@ def test_a_failed_task_is_fixed_by_the_assistant_with_the_owners_full_access(cli
     task_id = setup(client, tmp_path)
     assert client.app.state.autofix.scan() == []  # off by default: nothing starts
     client.put("/api/auto-fix", json={"enabled": True, "full_access": True})
+    listed = client.get("/api/auto-fix/tasks").json()
+    assert [(item["id"], item["selected"]) for item in listed] == [(task_id, False)]  # switching it on starts only ticked tasks
+    assert client.app.state.autofix.scan() == []
+    assert client.post("/api/auto-fix/tasks", json={"task_ids": [task_id], "enabled": True}).status_code == 200  # the fix starts at once
+    assert client.get(f"/api/tasks/{task_id}").json()["results"]["auto_fix"]["chosen"] is True
     task = settle(client, task_id)
     assert task["state"] == "AWAITING_APPROVAL" and task["results"]["auto_fix"]["attempts"] == 1
     assert task["results"]["origin"] == "user" and task["results"]["instructions_from"] == "support"  # true origin kept
@@ -102,7 +107,7 @@ def test_a_failed_task_is_fixed_by_the_assistant_with_the_owners_full_access(cli
 
 
 def test_without_the_grant_fix_runs_stay_project_only(client, tmp_path):
-    task_id = setup(client, tmp_path, enabled=True)
+    task_id = setup(client, tmp_path, enabled=True, scope="all")
     task = settle(client, task_id)
     assert task["state"] == "AWAITING_APPROVAL" and client.app.state.supervisor.registry.access == [True, False]
 
@@ -112,7 +117,7 @@ def test_full_access_grant_needs_full_access_and_revoking_applies_to_the_next_ru
     client.post("/api/permissions/full-access", json={"enabled": False})
     assert client.put("/api/auto-fix", json={"enabled": True, "full_access": True}).status_code == 400
     client.post("/api/permissions/full-access", json={"enabled": True, "acknowledge_full_access": True, "acknowledge_github": True})
-    assert client.put("/api/auto-fix", json={"enabled": True, "full_access": True}).json()["full_access_effective"] is True
+    assert client.put("/api/auto-fix", json={"enabled": True, "full_access": True, "scope": "all"}).json()["full_access_effective"] is True
     client.put("/api/auto-fix", json={"full_access": False})  # revoked before the fix runs
     settle(client, task_id)
     assert client.app.state.supervisor.registry.access == [True, False]
@@ -122,7 +127,7 @@ def test_stop_auto_fix_for_a_task(client, tmp_path):
     task_id = setup(client, tmp_path, failures=5)
     response = client.post(f"/api/tasks/{task_id}/auto-fix", json={"enabled": False})
     assert response.status_code == 200 and response.json()["stopped"] is True
-    client.put("/api/auto-fix", json={"enabled": True, "council_after": 0})  # turning it on starts on failed tasks, but not this one
+    client.put("/api/auto-fix", json={"enabled": True, "council_after": 0, "scope": "all"})  # every failed task, except one the owner stopped
     assert client.app.state.autofix.scan() == []
     task = client.get(f"/api/tasks/{task_id}").json()
     assert task["state"] == "FAILED" and not client.app.state.supervisor.registry.support_prompts
@@ -131,14 +136,14 @@ def test_stop_auto_fix_for_a_task(client, tmp_path):
 
 
 def test_attempts_are_limited_and_the_task_is_handed_back(client, tmp_path):
-    task_id = setup(client, tmp_path, failures=10, enabled=True, max_attempts=2, council_after=0)
+    task_id = setup(client, tmp_path, failures=10, enabled=True, max_attempts=2, council_after=0, scope="all")
     task = settle(client, task_id)
     assert task["state"] == "FAILED" and task["results"]["auto_fix"]["status"] == "gave_up" and task["results"]["auto_fix"]["attempts"] == 2
     assert any("needs you" in event["message"] for event in task["events"])
 
 
 def test_hard_failures_go_to_the_council_and_the_assistant_applies_its_solution(client, tmp_path):
-    task_id = setup(client, tmp_path, failures=2, enabled=True, council_after=1, max_attempts=4)
+    task_id = setup(client, tmp_path, failures=2, enabled=True, council_after=1, max_attempts=4, scope="all")
     task = settle(client, task_id)
     fix = task["results"]["auto_fix"]
     assert task["state"] == "AWAITING_APPROVAL" and fix["attempts"] == 2 and fix.get("council")

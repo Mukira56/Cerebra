@@ -202,13 +202,16 @@ class CouncilService:
             return [as_dict(row) for row in session.scalars(select(CouncilSession).order_by(CouncilSession.created_at.desc()).limit(100)).all()]
 
     def get(self, session_id):
+        # Read "busy" before the record: a meeting saves its final status before it stops counting as busy,
+        # so "not busy" always comes with the final status.
+        busy = session_id in self._running
         with self.db.Session() as session:
             row = session.get(CouncilSession, session_id)
             if row is None:
                 raise LookupError("Meeting not found")
             messages = session.scalars(select(CouncilMessage).where(CouncilMessage.session_id == session_id).order_by(CouncilMessage.created_at)).all()
             extra = session.get(Metadata, f"council:{session_id}")
-            return {**as_dict(row), "messages": [as_dict(message) for message in messages], "busy": session_id in self._running, **(extra.value if extra else {})}
+            return {**as_dict(row), "messages": [as_dict(message) for message in messages], "busy": busy, **(extra.value if extra else {})}
 
     def start(self, project_id, topic, rounds=3, first="codex", second="claude", send_to_support=False):
         topic = (topic or "").strip()

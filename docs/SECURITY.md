@@ -82,6 +82,7 @@ Planning, review and chat keep their read-only flags.
 
 **Settings › Auto-fix** (`PUT /api/auto-fix`), stored as the `auto_fix` record, is off by default.
 - **What it does:** when a task fails, Cerebra opens that task's fix chat and sends the failure to the Assistant. The Assistant acts without asking, using only its fixed action vocabulary (retry with fix instructions, set test commands, resume, ask the Council).
+- **Which tasks:** only the tasks the owner ticks (`scope: selected`, the default, from 0.22.0), or every failed task (`scope: all`). A stopped task is never fixed until the owner ticks it again.
 - **Limits:** each new failure is one attempt, up to `max_attempts` (default 4). After that Cerebra stops and records that the task needs the owner.
 - **The Council:** after `council_after` failed fixes (default 2), the failure goes to a Council meeting. Its agreed solution, which can be a restructure as plan tasks, is sent back for the Assistant to apply.
 - **Approvals stay as they are:** merges wait for the owner unless Away mode or "May answer approvals" says otherwise.

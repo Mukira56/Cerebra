@@ -20,7 +20,9 @@ from .models import Event, Metadata, Project, Task, now
 from .security import redact
 
 KEY = "auto_fix"
-OFF = {"enabled": False, "full_access": False, "max_attempts": 4, "council_after": 2}
+# scope "selected": only the failed tasks the owner ticks; "all": every failed task, including new ones.
+OFF = {"enabled": False, "full_access": False, "max_attempts": 4, "council_after": 2, "scope": "selected"}
+SCOPES = {"selected", "all"}
 MAX_ATTEMPTS = 10
 # Stuck states the owner or Cerebra resolves without a fix: waiting for usage, the owner's pause, a retry already queued.
 WAITING = {"waiting_for_usage", "paused_by_user", "retry_requested", "restored_checkpoint", "interrupted_restart", "interrupted_integration"}
@@ -32,8 +34,12 @@ def load(session):
     return {**OFF, **(row.value if row else {})}
 
 
-def save(session, enabled=None, full_access=None, max_attempts=None, council_after=None):
+def save(session, enabled=None, full_access=None, max_attempts=None, council_after=None, scope=None):
     value = load(session)
+    if scope is not None:
+        if scope not in SCOPES:
+            raise ValueError("Choose the ticked tasks or every failed task")
+        value["scope"] = scope
     if enabled is not None:
         value["enabled"] = bool(enabled)
     if full_access is not None:
@@ -69,6 +75,28 @@ def problem(task):
             and not str(results["error"]).startswith("Supervisor shutdown"):
         return results["error"]
     return None
+
+
+def covered(policy, task):
+    """Whether Auto-fix works on this task: not stopped by the owner, and ticked unless every task is covered."""
+    fix = (task.results or {}).get("auto_fix") or {}
+    return not fix.get("stopped") and (policy.get("scope") == "all" or bool(fix.get("chosen")))
+
+
+def candidates(session, policy):
+    """The failed and stuck tasks the owner can choose from, newest first."""
+    rows = session.scalars(select(Task).where(Task.state.in_(["FAILED", "BLOCKED"])).order_by(Task.updated_at.desc()).limit(200)).all()
+    projects = {row.id: row.name for row in session.scalars(select(Project)).all()}
+    listed = []
+    for row in rows:
+        reason = problem(row)
+        if reason is None:
+            continue
+        fix = row.results.get("auto_fix") or {}
+        listed.append({"id": row.id, "description": redact(row.description)[:200], "project": projects.get(row.project_id, ""), "state": row.state,
+                       "error": redact(str(reason))[:300], "updated_at": row.updated_at, "selected": covered(policy, row),
+                       "status": fix.get("status"), "attempts": fix.get("attempts", 0)})
+    return listed
 
 
 def fingerprint(task, reason):
@@ -112,10 +140,11 @@ class AutoFix:
             return []
         with self._scan_lock:
             with self.db.Session() as session:
-                if not load(session)["enabled"]:
+                policy = load(session)
+                if not policy["enabled"]:
                     return []
                 rows = session.scalars(select(Task).where(Task.state.in_(["FAILED", "BLOCKED"])).order_by(Task.updated_at)).all()
-                due = [row.id for row in rows if (reason := problem(row)) and not (row.results.get("auto_fix") or {}).get("stopped")
+                due = [row.id for row in rows if (reason := problem(row)) and covered(policy, row)
                        and (row.results.get("auto_fix") or {}).get("last") != fingerprint(row, reason)]
             return [task_id for task_id in due if self._attempt(task_id)]
 
@@ -124,7 +153,7 @@ class AutoFix:
             policy, task = load(session), session.get(Task, task_id)
             reason = problem(task) if task else None
             fix = dict(task.results.get("auto_fix") or {}) if task else {}
-            if reason is None or fix.get("stopped") or fix.get("last") == fingerprint(task, reason):
+            if reason is None or not covered(policy, task) or fix.get("last") == fingerprint(task, reason):
                 return False
             if fix.get("chat") and fix["chat"] in self.chats._busy:
                 return False  # the Assistant is still working on the previous attempt
@@ -260,18 +289,18 @@ class AutoFix:
             task.results = {**task.results, "auto_fix": {**(task.results.get("auto_fix") or {}), **values}}
 
     def set_task(self, task_id, enabled):
-        """The task's Stop auto-fix / Allow auto-fix button."""
+        """Tick or untick a task for Auto-fix (the list in Settings, or the task's Auto-fix / Stop auto-fix button)."""
         with self.supervisor._lock, self.db.Session.begin() as session:
             task = session.get(Task, task_id)
             if task is None:
                 raise LookupError("Task not found")
             fix = dict(task.results.get("auto_fix") or {})
             was_fixing = fix.get("status") == "fixing"
-            fix.update(stopped=not enabled, status="stopped" if not enabled else "waiting")
+            fix.update(stopped=not enabled, chosen=bool(enabled), status="stopped" if not enabled else "waiting")
             if enabled:
                 fix.update(attempts=0, last=None)  # a fresh set of attempts, starting with the current failure
             task.results = {**task.results, "auto_fix": fix}
-            session.add(Event(task_id=task_id, kind="auto_fix", message="Owner stopped auto-fix for this task" if not enabled else "Owner allowed auto-fix for this task again"))
+            session.add(Event(task_id=task_id, kind="auto_fix", message="Owner stopped auto-fix for this task" if not enabled else "Owner chose this task for auto-fix"))
             chat_id, state, meeting = fix.get("chat"), task.state, fix.get("council")
         if not enabled:
             if chat_id:

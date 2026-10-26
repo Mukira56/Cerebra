@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix,
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete,
                       BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
                       OAuthFinish, GmailSetup, NotificationSetup)
 from .security import redact
@@ -293,11 +293,39 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session: task_or_404(session, task_id)
         return supervisor.undo_integration(task_id)
 
+    @app.post("/api/tasks/delete")
+    def tasks_delete(payload: TaskDelete):
+        """Delete failed, cancelled or paused tasks (database backed up first; Git branches kept)."""
+        from .maintenance import delete_tasks
+        for task_id in payload.task_ids:  # stop any fix chat or Council meeting working on them first
+            with db.Session() as session:
+                task = session.get(Task, task_id)
+            if task is not None and (task.results or {}).get("auto_fix"):
+                autofix.set_task(task_id, False)
+        try:
+            return delete_tasks(db, settings.data_dir, payload.task_ids)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
     @app.post("/api/tasks/{task_id}/auto-fix")
     def task_auto_fix(task_id: str, payload: TaskAutoFix):
         """The task's Stop auto-fix button (or Allow auto-fix again)."""
         with db.Session() as session: task_or_404(session, task_id)
         return autofix.set_task(task_id, payload.enabled)
+
+    @app.get("/api/auto-fix/tasks")
+    def auto_fix_tasks():
+        """Failed and stuck tasks, each marked with whether Auto-fix works on it."""
+        with db.Session() as session: return autofix_module.candidates(session, autofix_module.load(session))
+
+    @app.post("/api/auto-fix/tasks")
+    def auto_fix_choose(payload: AutoFixChoice):
+        """Tick or untick several failed tasks for Auto-fix at once."""
+        with db.Session() as session:
+            for task_id in payload.task_ids: task_or_404(session, task_id)
+        for task_id in payload.task_ids: autofix.set_task(task_id, payload.enabled)
+        if payload.enabled: autofix.scan()
+        with db.Session() as session: return autofix_module.candidates(session, autofix_module.load(session))
 
     @app.get("/api/auto-fix")
     def auto_fix_settings():
@@ -309,7 +337,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             raise ValueError("Turn on Full access first (Settings › Full access), then let Auto-fix use it")
         with db.Session.begin() as session:
             before = autofix_module.load(session)
-            value = autofix_module.save(session, payload.enabled, payload.full_access, payload.max_attempts, payload.council_after)
+            value = autofix_module.save(session, payload.enabled, payload.full_access, payload.max_attempts, payload.council_after, payload.scope)
             if value["enabled"] != before["enabled"]:
                 session.add(Event(kind="policy", message="Auto-fix on: the Assistant starts on failed tasks by itself" if value["enabled"] else "Auto-fix off: failed tasks wait for you"))
             if value["full_access"] != before["full_access"]:

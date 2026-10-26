@@ -262,10 +262,12 @@
       if (!["CANCELLED", "COMPLETED", "FAILED"].includes(task.state)) actions.append(button("Cancel", () => taskAction(taskId, "cancel"), "button danger"));
       if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button primary"));
       const fix = task.results?.auto_fix || {};
-      if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(fix.stopped
-        ? button("Allow auto-fix", () => setAutoFix(taskId, true), "button")
-        : button("■ Stop auto-fix", () => setAutoFix(taskId, false), "button danger"));
+      const fixCovered = !fix.stopped && (data.auto_fix?.scope === "all" || fix.chosen);
+      if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(fixCovered
+        ? button("■ Stop auto-fix", () => setAutoFix(taskId, false), "button danger")
+        : ["FAILED", "BLOCKED"].includes(task.state) ? button("Auto-fix this task", () => setAutoFix(taskId, true), "button") : null);
       actions.append(button("Plain report", () => { closeDialog(); location.hash = `report/${taskId}`; }, "button ghost"));
+      if (["FAILED", "CANCELLED", "BLOCKED"].includes(task.state)) actions.append(button("Delete task", () => deleteTasks([{id: taskId, description: task.description, project: projectFor(task.project_id)?.name || ""}], () => render()), "button ghost"));
       root.append(actions);
       const tabs = el("div", "tabs"), pane = el("div");
       const views = {
@@ -471,7 +473,7 @@
     return node;
   }
   async function setAutoFix(taskId, enabled) {
-    if (await act(enabled ? "Auto-fix will work on this task again." : "Auto-fix stopped for this task. Its fix chat and any fix run were stopped; Resume continues the run.", () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/auto-fix`, {enabled}))) { await refresh(true); taskDetail(taskId); }
+    if (await act(enabled ? "Auto-fix will work on this task." : "Auto-fix stopped for this task. Its fix chat and any fix run were stopped; Resume continues the run.", () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/auto-fix`, {enabled}))) { await refresh(true); taskDetail(taskId); }
   }
   async function askAssistantToFix(task) {
     const conversation = await act(null, () => mutate("/api/chats", {profile: chatDefault(), project_id: task.project_id || null, title: `Fix: ${task.description.slice(0, 50)}`}));
@@ -1153,16 +1155,54 @@
     access.control.disabled = !fullOn();
     const attempts = select([1, 2, 3, 4, 5, 6, 8, 10].map(value => [String(value), `${value} attempt${value === 1 ? "" : "s"} per task`]), String(policy.max_attempts ?? 4));
     const council = select([[0, "Never"], [1, "After 1 failed fix"], [2, "After 2 failed fixes"], [3, "After 3 failed fixes"]].map(([value, label]) => [String(value), label]), String(policy.council_after ?? 2));
+    const scope = select([["selected", "Only the tasks I tick below"], ["all", "Every failed task, including new failures"]], policy.scope || "selected");
     append(form, append(el("div", "row-meta"), badge(policy.enabled ? "auto-fix on" : "auto-fix off", policy.enabled ? "green" : "muted"), el("span", "", policy.enabled ? (policy.full_access_effective ? "Fix runs use Full access." : "Fix runs stay inside the project copy.") : "Failed tasks wait for you.")),
       hint("Each new failure is one attempt. When fixes don't hold, Codex and Claude meet in the Council, agree the solution (a restructure if the project's design is the problem), and the Assistant applies it. Every task has a Stop auto-fix button. Merges still wait for you unless Away mode is on; every attempt uses your plan's usage."),
       enabled.wrap, access.wrap, !fullOn() ? hint("Turn on Full access above first if fix runs should be able to install tools and use the network.") : null,
-      field("Stop after", attempts), field("Ask the Council", council));
+      field("Which tasks", scope), field("Stop after", attempts), field("Ask the Council", council));
     const save = submitButton("Save auto-fix"); form.append(actionsRow(save));
+    form.append(autoFixTaskList());
     wireForm(form, save, async () => {
-      await mutate("/api/auto-fix", {enabled: enabled.control.checked, full_access: access.control.checked && fullOn(), max_attempts: Number(attempts.value), council_after: Number(council.value)}, "PUT");
+      await mutate("/api/auto-fix", {enabled: enabled.control.checked, full_access: access.control.checked && fullOn(), max_attempts: Number(attempts.value), council_after: Number(council.value), scope: scope.value}, "PUT");
       await refresh(true); toast(enabled.control.checked ? "Auto-fix is on. Failed tasks go to the Assistant." : "Auto-fix is off.");
     });
     return form;
+  }
+
+  function autoFixTaskList() {
+    const node = el("div", "auto-fix-tasks"), rows = el("div", "check-list"), head = el("div", "row-meta");
+    append(node, el("h3", "", "Failed tasks"), head, rows);
+    const describeScope = () => data.auto_fix?.scope === "all" ? "Every failed task is fixed unless you untick it." : "Tick the tasks Auto-fix should work on.";
+    async function choose(ids, enabled) {
+      if (!ids.length) return;
+      const listed = await act(null, () => mutate("/api/auto-fix/tasks", {task_ids: ids, enabled}));
+      if (listed) paint(listed);
+    }
+    function paint(items) {
+      rows.replaceChildren();
+      head.replaceChildren(el("span", "", items.length ? `${items.filter(item => item.selected).length} of ${items.length} chosen. ${describeScope()}${data.auto_fix?.enabled ? "" : " Nothing runs until Auto-fix is switched on and saved."}` : "No failed tasks right now."));
+      if (items.length) head.append(button("Tick all", () => choose(items.filter(item => !item.selected).map(item => item.id), true), "button small"), button("Untick all", () => choose(items.filter(item => item.selected).map(item => item.id), false), "button small ghost"),
+        button("Delete all listed", () => deleteTasks(items, reload), "button small danger"));
+      items.forEach(item => {
+        const box = check("", item.selected), label = box.wrap.querySelector("span");
+        label.replaceChildren(append(el("span", "auto-fix-task"), el("strong", "", item.description), el("small", "", `${item.project} · ${nice(item.state)} · ${relative(item.updated_at)}${item.attempts ? ` · attempt ${item.attempts}` : ""}${item.status ? ` · ${nice(item.status)}` : ""}`), el("small", "hint-line", item.error)));
+        box.control.addEventListener("change", () => choose([item.id], box.control.checked));
+        rows.append(append(el("div", "auto-fix-row"), box.wrap, button("Delete", () => deleteTasks([item], reload), "button small ghost")));
+      });
+    }
+    function reload() { api("/api/auto-fix/tasks").then(paint).catch(issue => rows.replaceChildren(hint(issue.message, true))); }
+    reload();
+    return node;
+  }
+  function deleteTasks(items, after) {
+    const many = items.length > 1;
+    showDialog(many ? `Delete ${items.length} tasks?` : "Delete this task?", append(el("div"),
+      many ? list(items.map(item => `${item.description} (${item.project})`)) : el("p", "", items[0].description),
+      el("p", "", "Their records, logs and working copies are removed. Cerebra backs up its database first, keeps each task's Git branch in the project, and keeps the history in Activity."),
+      actionsRow(button("Cancel", closeDialog, "button ghost"), button(many ? `Delete ${items.length} tasks` : "Delete task", async () => {
+        const done = await act(many ? `${items.length} tasks deleted.` : "Task deleted.", () => mutate("/api/tasks/delete", {task_ids: items.map(item => item.id), confirm: true}));
+        closeDialog(); if (done) { await refresh(true); if (after) after(); }
+      }, "button danger"))));
   }
 
   // ---------- away mode ----------

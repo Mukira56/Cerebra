@@ -134,8 +134,17 @@ class AutoFixSettings(StrictModel):
     full_access: bool | None = None
     max_attempts: int | None = Field(default=None, ge=1, le=10)
     council_after: int | None = Field(default=None, ge=0, le=10)
+    scope: Literal["selected", "all"] | None = None
 
 class TaskAutoFix(StrictModel):
+    enabled: bool
+
+class TaskDelete(StrictModel):
+    task_ids: list[str] = Field(min_length=1, max_length=200)
+    confirm: Literal[True]
+
+class AutoFixChoice(StrictModel):
+    task_ids: list[str] = Field(min_length=1, max_length=200)
     enabled: bool
 
 class SupportSettings(StrictModel):

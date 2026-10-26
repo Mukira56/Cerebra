@@ -56,6 +56,7 @@ class ChatService:
             return as_dict(conversation)
 
     def messages(self, conversation_id):
+        busy = conversation_id in self._busy  # before the records, so "not busy" always comes with the final answer
         with self.db.Session() as session:
             conversation = session.get(ChatConversation, conversation_id)
             if conversation is None:
@@ -65,7 +66,6 @@ class ChatService:
             actions = {}
             for action in session.scalars(select(ChatAction).where(ChatAction.conversation_id == conversation_id).order_by(ChatAction.created_at)).all():
                 actions.setdefault(action.message_id, []).append(as_dict(action))
-            busy = conversation_id in self._busy
             stuck = [row.id for row in rows if row.status == "pending" and not busy]
         for reply_id in stuck:
             self._mark_interrupted(reply_id, "This answer was interrupted. Send the message again.")
