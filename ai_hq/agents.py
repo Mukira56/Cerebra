@@ -64,6 +64,25 @@ def valid_model(value: str) -> str:
 
 REVIEW_ROLES = {"review", "reviewing", "security", "security_review"}
 PROBE_SECONDS = 60
+# Signs that the computer couldn't reach the provider at all: wait for the connection, don't treat it as a code failure.
+OFFLINE_MARKERS = ("enotfound", "can't reach the api", "cannot reach the api", "getaddrinfo", "network is unreachable", "econnrefused",
+                   "econnreset", "etimedout", "eai_again", "connection error", "error sending request", "stream disconnected",
+                   "failed to connect", "dns error", "no such host", "temporary failure in name resolution")
+
+
+def failure_detail(text):
+    """The readable part of a CLI's failure output: Claude's `result` / Codex's error message instead of the whole JSON record."""
+    for line in reversed(str(text or "").strip().splitlines()):
+        try:
+            record = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        for value in (record.get("result"), record.get("message"), (record.get("error") or {}).get("message") if isinstance(record.get("error"), dict) else record.get("error")):
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return str(text or "").strip()
 READ_ONLY_ROLES = REVIEW_ROLES | {"plan", "planning", "architecture", "chat"}
 
 
@@ -267,8 +286,8 @@ class _CliAdapter:
                 return AgentResult(False, output, error="Agent output exceeded the configured limit; result cannot be validated")
             if result.cancelled or result.timed_out or result.exit_code != 0:
                 reason = "cancelled" if result.cancelled else "timeout" if result.timed_out else f"agent exited with code {result.exit_code}"
-                detail = (result.stderr or raw_output).strip()[:2000]
-                category = "rate_limited: " if any(marker in detail.lower() for marker in ("rate limit", "rate_limit", "429", "usage limit")) else "authentication_error: " if any(marker in detail.lower() for marker in ("unauthorized", "authentication", "not logged in", "please log in", "401")) else ""
+                detail = failure_detail(result.stderr or raw_output)[:2000]
+                category = "offline: " if any(marker in detail.lower() for marker in OFFLINE_MARKERS) else "rate_limited: " if any(marker in detail.lower() for marker in ("rate limit", "rate_limit", "429", "usage limit")) else "authentication_error: " if any(marker in detail.lower() for marker in ("unauthorized", "authentication", "not logged in", "please log in", "401")) else ""
                 return AgentResult(False, output, error=redact(category + reason + ": " + detail))
             findings = []
             structured_review = False

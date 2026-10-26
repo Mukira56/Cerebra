@@ -11,6 +11,7 @@ from ai_hq.agents import AgentResult, ClaudeAdapter
 from ai_hq.processes import ProcessResult
 from fakes import FixtureRegistry
 from test_supervisor import git, hq, pending_approval, ready  # noqa: F401  (hq is a fixture)
+from test_product_api import client  # noqa: F401  (fixture)
 
 SANDBOX_FINDING = {"severity": "medium", "path": "calculator.py", "line": 2,
                    "message": "node is unavailable on PATH in this review environment; the test summary can't be attested"}
@@ -66,3 +67,75 @@ def test_a_slow_cli_check_is_retried_instead_of_disabling_the_provider():
     assert adapter.probe()["available"] is False and adapter._capability is None  # not remembered
     assert adapter.probe()["available"] is True and adapter._capability is not None
     assert min(runner.timeouts) >= 60
+
+
+def test_try_again_reruns_a_failed_task_with_its_last_error(client, tmp_path):  # noqa: F811  (client fixture)
+    from test_assistant_control import failed_task
+    task_id, _ = failed_task(client, tmp_path)
+    assert client.post(f"/api/tasks/{task_id}/retry").status_code == 200
+    supervisor = client.app.state.supervisor
+    supervisor.run_until_idle()
+    task = client.get(f"/api/tasks/{task_id}").json()
+    assert task["state"] == "AWAITING_APPROVAL" and task["results"]["origin"] == "user" and not task["results"].get("instructions_from")
+    coding = [request for name, request in supervisor.registry.requests if getattr(request, "role", "") == "implement"]
+    assert "Try again from where it stopped" in coding[-1].description and "calcualtor" in coding[-1].description
+
+
+def test_the_refreshing_task_list_leaves_out_diffs_and_test_output(client, tmp_path):  # noqa: F811
+    from test_assistant_control import failed_task
+    task_id, _ = failed_task(client, tmp_path)
+    client.post(f"/api/tasks/{task_id}/retry"); client.app.state.supervisor.run_until_idle()
+    listed = next(task for task in client.get("/api/overview").json()["tasks"] if task["id"] == task_id)
+    full = client.get(f"/api/tasks/{task_id}").json()
+    assert full["results"]["diff"] and "diff" not in listed["results"]
+    assert full["test_results"][-1]["stdout"] and set(listed["test_results"][-1]) == {"command", "passed", "exit_code"}
+    assert listed["results"]["models"] == full["results"]["models"] and listed["results"]["origin"] == "user"
+
+
+def test_tests_that_write_files_are_named_in_the_message(hq):
+    supervisor, project_id, _, db, _ = hq
+    from ai_hq.models import Project
+    with db.Session.begin() as session:
+        session.get(Project, project_id).test_commands = [[sys.executable, "-c", "open('report-output.txt', 'w').write('x')"]]
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "BLOCKED" and "report-output.txt" in task.results["error"] and ".gitignore" in task.results["error"]
+
+
+REAL_OFFLINE = ('{"stop_reason":"stop_sequence","total_cost_usd":0,"terminal_reason":"api_error","is_error":true,"num_turns":1,"subtype":"success",'
+                '"result":"API Error: Can\'t reach the API server \u2014 check your internet or DNS (ENOTFOUND)","type":"result"}')
+
+
+def test_cli_failures_show_the_readable_sentence_and_offline_is_labelled():
+    from ai_hq.agents import OFFLINE_MARKERS, failure_detail
+    detail = failure_detail("some log line\n" + REAL_OFFLINE)
+    assert detail.startswith("API Error: Can't reach the API server") and any(marker in detail.lower() for marker in OFFLINE_MARKERS)
+    assert failure_detail('{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}') == "stream disconnected before completion"
+    assert failure_detail("plain stderr text") == "plain stderr text"
+
+
+class OfflineCoder(FixtureRegistry):
+    def execute(self, name, request, cancel_event=None):
+        if request.role == "implement":
+            self.requests.append((name, request))
+            return AgentResult(False, REAL_OFFLINE, error="offline: agent exited with code 1: API Error: Can't reach the API server (ENOTFOUND)")
+        return super().execute(name, request, cancel_event)
+
+
+def test_an_internet_outage_waits_and_retries_instead_of_failing(hq):
+    from ai_hq import autofix
+    supervisor = hq[0]
+    supervisor.registry = OfflineCoder()
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "BLOCKED" and task.results["blocked_reason"] == "waiting_for_network" and task.results["retry_after"]
+    assert "couldn't reach its servers" in task.results["error"] and autofix.problem(task) is None  # Auto-fix doesn't spend attempts on it
+    supervisor.registry = FixtureRegistry()  # the connection is back
+    with hq[3].Session.begin() as session:
+        from ai_hq.models import Task
+        stored = session.get(Task, task_id)
+        stored.results = {**stored.results, "retry_after": "2000-01-01T00:00:00+00:00"}
+    supervisor.run_until_idle()
+    assert supervisor.get(task_id).state == "AWAITING_APPROVAL"

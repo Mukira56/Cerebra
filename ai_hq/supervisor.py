@@ -36,10 +36,15 @@ TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
 OUT_OF_USAGE = ("rate_limited:", "rate limit", "usage limit", "insufficient_quota", "exceeded your current quota", "credit balance is too low",
                 "out of credits", "limit reached", "too many requests", "authentication_error:", "not logged in", "please log in", "login required")
 USAGE_RETRY_SECONDS = 15 * 60
+OFFLINE_RETRY_SECONDS = 5 * 60
 
 
 class OutOfModels(Exception):
     """No provider with available usage can take this step now; the task waits and retries later."""
+
+
+class Offline(OutOfModels):
+    """The computer couldn't reach the AI provider (no internet or DNS); the task waits for the connection."""
 
 
 def resume_stage(task):
@@ -496,9 +501,10 @@ class Supervisor:
                 candidates = session.scalars(select(Task).where(Task.state.in_(["READY", "NEEDS_CHANGES", "BLOCKED"])).order_by(Task.created_at)).all()
                 for task in candidates:
                     retry = (task.results or {}).get("retry_after")
-                    if task.state == "BLOCKED" and task.results.get("blocked_reason") == "waiting_for_usage" and not task.pause_requested and retry and retry <= now():
+                    waiting = task.results.get("blocked_reason")
+                    if task.state == "BLOCKED" and waiting in {"waiting_for_usage", "waiting_for_network"} and not task.pause_requested and retry and retry <= now():
                         task.results = {**task.results, "queued": True, "blocked_reason": None, "retry_after": None}
-                        self._state(session, task, "READY", "Trying again: checking whether an AI model has usage available")
+                        self._state(session, task, "READY", "Trying again: checking the internet connection" if waiting == "waiting_for_network" else "Trying again: checking whether an AI model has usage available")
                 for task in candidates:
                     if not task.approved or task.pause_requested or not task.results.get("queued"):
                         continue
@@ -521,6 +527,11 @@ class Supervisor:
                 return answered > 0
             self._execute(task_id)
             return True
+        except Offline as exc:
+            if task_id:
+                self._wait_for_usage(task_id, str(exc), "waiting_for_network", OFFLINE_RETRY_SECONDS)
+                return True
+            raise
         except OutOfModels as exc:
             if task_id:
                 self._wait_for_usage(task_id, str(exc))
@@ -633,7 +644,8 @@ class Supervisor:
             if self._interrupted(task_id):
                 return
             if self.git.inspect_repository(task.worktree_path).get("dirty"):
-                self._fail(task_id, "Verification modified tracked or unignored files; inspect the candidate before continuing", blocked=True)
+                self._fail(task_id, "Running the tests changed or created these files: " + self._dirty_files(task.worktree_path) + ". "
+                           "Add generated files to .gitignore, or make the tests write somewhere else, then press Resume.", blocked=True)
                 return
             with self._lock, self.db.Session.begin() as session:
                 stored = self._get(session, task_id)
@@ -808,6 +820,12 @@ class Supervisor:
         self.resume(task_id)
         return self.start(task_id)
 
+    def try_again(self, task_id):
+        """The owner's Try again: run a failed task again from where it stopped, telling the coder what went wrong."""
+        task = self.get(task_id)
+        error = " ".join(str((task.results or {}).get("error") or "it stopped without a recorded error").split())[:600]
+        return self.retry_with_instructions(task_id, f"Try again from where it stopped. The last attempt ended with: {error}", author="user")
+
     # ---- checkpoints and undo --------------------------------------------------------------------
     def checkpoints(self, task_id):
         task = self.get(task_id)
@@ -867,17 +885,17 @@ class Supervisor:
         info = self.git.inspect_repository(self.get(task_id).worktree_path)
         return candidate if info["head"] == candidate and not info.get("dirty") else None
 
-    def _wait_for_usage(self, task_id, message):
-        """Pause a task because no AI model has usage left; it is retried automatically later."""
+    def _wait_for_usage(self, task_id, message, reason="waiting_for_usage", seconds=USAGE_RETRY_SECONDS):
+        """Pause a task because no AI model has usage left (or the internet is down); it is retried automatically later."""
         from datetime import datetime, timedelta, timezone
         with self._lock, self.db.Session.begin() as session:
             task = self._get(session, task_id)
             if task.state in TERMINAL or task.pause_requested:
                 return
-            retry = (datetime.now(timezone.utc) + timedelta(seconds=USAGE_RETRY_SECONDS)).isoformat()
-            task.results = {**task.results, "queued": False, "blocked_reason": "waiting_for_usage", "retry_after": retry,
+            retry = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+            task.results = {**task.results, "queued": False, "blocked_reason": reason, "retry_after": retry,
                             "resume_stage": resume_stage(task), "error": redact(message)[:2000]}
-            self._state(session, task, "BLOCKED", f"Paused: {message} Cerebra will try again automatically in 15 minutes, or press Resume.")
+            self._state(session, task, "BLOCKED", f"Paused: {message} Cerebra will try again automatically in {seconds // 60} minutes, or press Resume.")
 
     @staticmethod
     def _out_of_usage(result):
@@ -943,6 +961,8 @@ class Supervisor:
                 task = switched
                 continue
             result = self._run_agent(task, role, workdir)
+            if not result.success and (result.error or "").startswith("offline:"):
+                raise Offline(f"{name} couldn't reach its servers ({(result.error or '')[8:].split(': ', 1)[-1][:300]}). Check the internet connection.")
             if not self._out_of_usage(result):
                 if result.success and task.results.get("handoff_note"):
                     with self._lock, self.db.Session.begin() as session:
@@ -1056,6 +1076,12 @@ class Supervisor:
             "passed": process.exit_code == 0 and not process.timed_out and not process.cancelled and not process.output_truncated,
             "attempt": self.get(task_id).retry_count}
 
+    def _dirty_files(self, workdir, limit=12):
+        """The files `git status` reports as changed or new, for messages the owner can act on."""
+        result = self.runner.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], workdir, timeout=60)
+        paths = [line[3:].strip().strip('"') for line in result.stdout.splitlines() if len(line) > 3]
+        return ", ".join(paths[:limit]) + (f" and {len(paths) - limit} more" if len(paths) > limit else "") if paths else "(unknown files)"
+
     def _baseline(self, task_id, commands, workdir):
         """Run the tests once on the untouched code, so the report can show what was broken before the change."""
         with self._lock, self.db.Session.begin() as session:
@@ -1068,8 +1094,8 @@ class Supervisor:
         if self._interrupted(task_id):
             return False
         if self.git.inspect_repository(workdir).get("dirty"):
-            self._fail(task_id, "Running the tests on the untouched code changed or created files that Git tracks. "
-                       "Add those files to .gitignore (or fix the tests) so changes can be checked reliably.", blocked=True)
+            self._fail(task_id, "Running the tests on the untouched code changed or created these files: " + self._dirty_files(workdir) + ". "
+                       "Add generated files to .gitignore, or make the tests write somewhere else, so changes can be checked reliably.", blocked=True)
             return False
         summary = evidence.summarize(results)
         with self._lock, self.db.Session.begin() as session:

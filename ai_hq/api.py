@@ -206,11 +206,28 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         values["cost_information"] = "AI usage is billed by your provider account (ChatGPT, Claude, GitHub). Cerebra does not estimate costs."
         return values
 
+    HEAVY_RESULTS = {"diff", "architecture", "handoff_note", "changed_paths", "disputed_findings"}
+
+    def slim_task(task):
+        """The task list is refreshed every few seconds: leave out diffs, advisories and test output, which only the
+        task's own window (GET /api/tasks/{id}) shows. Keeps the refresh small on slow laptops."""
+        results = task.get("results") or {}
+        task["results"] = {key: value for key, value in results.items() if key not in HEAVY_RESULTS}
+        if "architecture" in results:
+            task["results"]["architecture"] = {"agent": (results["architecture"] or {}).get("agent")}
+        task["test_results"] = [{key: result.get(key) for key in ("command", "passed", "exit_code")} for result in (task.get("test_results") or [])[-10:]]
+        return task
+
     @app.get("/api/overview")
     def overview():
         with db.Session() as session:
             projects = [as_dict(row) for row in session.scalars(select(Project).order_by(Project.created_at.desc()))]
-            tasks = [as_dict(row) for row in session.scalars(select(Task).order_by(Task.created_at.desc()).limit(500))]
+            tasks = [slim_task(as_dict(row)) for row in session.scalars(select(Task).order_by(Task.created_at.desc()).limit(500))]
+            waits_for = {}
+            for row in session.scalars(select(Dependency)).all():
+                waits_for.setdefault(row.task_id, []).append(row.depends_on)
+            for task in tasks:
+                task["dependencies"] = waits_for.get(task["id"], [])
             approvals = [as_dict(row) for row in session.scalars(select(Approval).order_by(Approval.created_at.desc()).limit(200))]
             events = [as_dict(row) for row in session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100))]
             agents = [dict(as_dict(row)["status"], name=row.id) for row in session.scalars(select(Agent)) if not row.id.startswith("mock-")]
@@ -378,7 +395,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/tasks/{task_id}/{action}")
     def task_action(task_id: str, action: str):
-        method = {"approve-plan":supervisor.approve_plan,"start":supervisor.start,"cancel":supervisor.cancel,"pause":supervisor.pause,"resume":supervisor.resume}.get(action)
+        method = {"approve-plan":supervisor.approve_plan,"start":supervisor.start,"cancel":supervisor.cancel,"pause":supervisor.pause,"resume":supervisor.resume,"retry":supervisor.try_again}.get(action)
         if not method: raise HTTPException(404,"Unknown task action")
         with db.Session() as session: task_or_404(session,task_id)
         return method(task_id)

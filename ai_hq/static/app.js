@@ -144,13 +144,39 @@
     items.forEach(([title, text, done, target], index) => { const item = el("div", `check-item${done ? " done" : ""}`), info = el("div"); append(info, el("strong", "", title), el("small", "", text)); append(item, el("span", "tick", done ? "✓" : index + 1), info, done ? badge("done", "green") : link("Open →", target)); list.append(item); });
     return {list, complete: items.every(item => item[2])};
   }
+  // Plain words for the errors people actually hit; anything else shows its own first sentence.
+  const REASONS = [
+    [/No meaningful progress/i, "The coder made no new change. If its tests pass, press Try again; the review may have asked for something it can't do."],
+    [/lacks verified|lacks required conservative/i, "Cerebra couldn't confirm the AI's command-line tool (often just a slow start). Press Try again."],
+    [/WinError 2|cannot find the file specified/i, "A program it needed wasn't found. Fixed in 0.19: press Try again."],
+    [/couldn't reach its servers|can't reach the api|ENOTFOUND|offline:/i, "The AI couldn't be reached: the internet was down when it ran. Press Try again."],
+    [/rate.?limit|usage limit|out of usage|No AI model with available usage/i, "The AI ran out of usage. It continues when usage is back."],
+    [/timeout|timed out/i, "A step took too long and was stopped. Press Try again, or raise the time limit in Settings."],
+    [/Repair retry limit/i, "Tests or review still failed after every repair attempt. Ask the Assistant, or let Auto-fix take it."],
+    [/changed or created these files|changed or created files/i, "Running the tests wrote files into the project. Open the task to see which ones."],
+    [/No verification commands/i, "The project has no tests set. Add them on the Projects page."],
+  ];
+  function failureReason(task) {
+    const error = String(task.results?.error || "");
+    if (!error && task.state === "BLOCKED") {
+      const waiting = array(task.dependencies).map(taskFor).filter(other => other && other.state !== "COMPLETED");
+      return waiting.length ? `Waiting for “${waiting[0].description.slice(0, 70)}” to finish first.` : "";
+    }
+    if (!error) return "";
+    if (task.results?.blocked_reason === "waiting_for_network") return "No internet right now. Cerebra tries again every 5 minutes.";
+    if (task.results?.blocked_reason === "waiting_for_usage") return "Waiting for AI usage. Cerebra tries again every 15 minutes.";
+    const known = REASONS.find(([pattern]) => pattern.test(error));
+    return known ? known[1] : error.split(/(?<=[.!?])\s|\n/)[0].slice(0, 160);
+  }
   function taskRows(tasks) {
     const list = el("div", "row-list");
     tasks.forEach(task => {
       const row = el("div", "row"), info = el("div", "row-main"), meta = el("div", "row-meta"), models = taskModels(task);
       row.tabIndex = 0; row.setAttribute("role", "button"); row.dataset.taskId = task.id; row.addEventListener("click", () => taskDetail(task.id)); row.addEventListener("keydown", event => { if (event.key === "Enter") taskDetail(task.id); });
       append(meta, el("span", "", projectFor(task.project_id)?.name || "project"), el("span", "", "·"), el("span", "", `${models.implementer} → ${models.reviewer}`), el("span", "", "·"), el("span", "", relative(task.updated_at)), task.mode === "mock" ? badge("old demo", "muted") : null);
-      append(info, el("strong", "", task.description), meta); append(row, info, badge(task.pause_requested ? "PAUSED" : task.state), el("span", "chev", "›")); list.append(row);
+      const reason = (task.state === "FAILED" || (task.state === "BLOCKED" && !task.pause_requested)) ? failureReason(task) : "";
+      const calm = task.state === "BLOCKED" && (!task.results?.error || ["waiting_for_usage", "waiting_for_network"].includes(task.results?.blocked_reason));
+      append(info, el("strong", "", task.description), meta, reason ? el("div", calm ? "row-reason waiting" : "row-reason", reason) : null); append(row, info, badge(task.pause_requested ? "PAUSED" : task.state), el("span", "chev", "›")); list.append(row);
     });
     return list;
   }
@@ -164,15 +190,24 @@
     // Tasks paused because Cerebra closed or stopped, or waiting for an AI model with usage left.
     const stopped = tasks.filter(task => task.state === "BLOCKED" && ["paused_on_close", "interrupted_restart"].includes(task.results?.blocked_reason));
     const noUsage = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_usage");
+    const offline = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_network");
     if (stopped.length) {
       const resumeAll = button(`Resume ${stopped.length === 1 ? "it" : `all ${stopped.length}`}`, async () => { resumeAll.disabled = true; for (const task of stopped) await act(null, () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/resume`)); await refresh(true); toast("Resumed. The AI team picks up where it stopped."); }, "button primary");
       node.append(panel("Paused when Cerebra closed", body(el("p", "", `${stopped.length === 1 ? "One task was" : `${stopped.length} tasks were`} paused when Cerebra closed. Nothing was lost; resume to continue from where ${stopped.length === 1 ? "it" : "they"} stopped.`), taskRows(stopped), actionsRow(resumeAll))));
     }
     if (noUsage.length) node.append(panel("Waiting for AI usage", body(el("p", "", "No AI model had usage left for these tasks. Cerebra tries again automatically every 15 minutes, or press Resume in a task to try now."),
       list(noUsage.map(task => `${task.description.slice(0, 80)} · next try ${date(task.results.retry_after)}`)))));
+    if (offline.length) node.append(panel("Waiting for the internet", body(el("p", "", "These tasks couldn't reach the AI because the internet or DNS was down. Nothing is lost: Cerebra tries again every 5 minutes, or press Resume in a task to try now."),
+      list(offline.map(task => `${task.description.slice(0, 80)} · next try ${date(task.results.retry_after)}`)))));
     const stats = el("div", "grid stats");
-    [["Projects", array(data.projects).length, "authorized repositories", ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length, "approvals", "amber"], ["Done", tasks.filter(task => task.state === "COMPLETED").length, "finished tasks", "green"], ["Problems", tasks.filter(task => task.state === "FAILED").length, "see reports", "red"]]
-      .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+    [["Projects", array(data.projects).length, "authorized repositories", ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length, "approvals", "amber"], ["Done", tasks.filter(task => task.state === "COMPLETED").length, "finished tasks", "green"], ["Problems", tasks.filter(task => task.state === "FAILED").length, "failed tasks", "red"]]
+      .forEach(([label, value, note, style]) => {
+        const card = append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note));
+        const target = {"Projects": ["projects"], "Active": ["tasks", "active"], "Waiting for you": ["approvals"], "Done": ["tasks", "COMPLETED"], "Problems": ["tasks", "FAILED"]}[label];
+        if (target) { card.classList.add("clickable"); card.tabIndex = 0; card.setAttribute("role", "link");
+          const go = () => { taskStateFilter = target[1] || ""; location.hash = target[0]; }; card.addEventListener("click", go); card.addEventListener("keydown", event => { if (event.key === "Enter") go(); }); }
+        stats.append(card);
+      });
     node.append(stats);
     const grid = el("div", "grid two"), left = el("div"), right = el("div");
     left.append(panel("Recent tasks", tasks.length ? taskRows(tasks.slice(0, 8)) : body(empty("No tasks yet", "Create a task: describe what you want, and the AI team plans, codes, tests and reviews it.", button("+ New task", () => taskForm(), "button primary"), "#")), link("All tasks →", "tasks"), tasks.length));
@@ -184,10 +219,12 @@
   }
 
   // ---------- tasks ----------
+  let taskStateFilter = "";
   function tasksView() {
-    const node = el("div"), filters = el("div", "form-grid"), projectFilter = select([["", "All projects"], ...array(data.projects).map(project => [project.id, project.name])]), stateFilter = select([["", "All states"], ...[...new Set(array(data.tasks).map(task => task.state))].map(state => [state, nice(state)])]);
+    const node = el("div"), filters = el("div", "form-grid"), projectFilter = select([["", "All projects"], ...array(data.projects).map(project => [project.id, project.name])]), stateFilter = select([["", "All states"], ["active", "Active (working now)"], ...[...new Set([...array(data.tasks).map(task => task.state), "FAILED", "COMPLETED"])].map(state => [state, nice(state)])], taskStateFilter);
+    taskStateFilter = "";
     const holder = el("div");
-    function paint() { const tasks = array(data.tasks).filter(task => (!projectFilter.value || task.project_id === projectFilter.value) && (!stateFilter.value || task.state === stateFilter.value)); holder.replaceChildren(panel("Tasks", tasks.length ? taskRows(tasks) : body(empty("No tasks here", "Create a task to get the AI team working.", button("+ New task", () => taskForm(projectFilter.value), "button primary"), "#")), null, tasks.length)); }
+    function paint() { const tasks = array(data.tasks).filter(task => (!projectFilter.value || task.project_id === projectFilter.value) && (!stateFilter.value || task.state === stateFilter.value || (stateFilter.value === "active" && ACTIVE.includes(task.state)))); holder.replaceChildren(panel("Tasks", tasks.length ? taskRows(tasks) : body(empty("No tasks here", "Create a task to get the AI team working.", button("+ New task", () => taskForm(projectFilter.value), "button primary"), "#")), null, tasks.length)); }
     projectFilter.addEventListener("change", paint); stateFilter.addEventListener("change", paint);
     append(filters, field("Project", projectFilter), field("State", stateFilter)); append(node, panel("Filter", body(filters)), holder); paint(); return node;
   }
@@ -226,7 +263,7 @@
     STAGES.forEach(([label], index) => node.append(el("span", index < current ? "done" : index === current ? "now" : "", label)));
     return node;
   }
-  async function taskAction(taskId, action) { await act(action === "approve-plan" ? "Plan approved." : `${nice(action)} requested.`, () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/${action}`)); await refresh(true); taskDetail(taskId); }
+  async function taskAction(taskId, action) { await act(action === "approve-plan" ? "Plan approved." : action === "retry" ? "Trying again from where it stopped." : `${nice(action)} requested.`, () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/${action}`)); await refresh(true); taskDetail(taskId); }
   async function startTask(taskId) {
     const task = await act(null, () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/start`)); if (!task) return;
     await refresh(true);
@@ -260,7 +297,8 @@
       if (ACTIVE.includes(task.state) && !task.pause_requested) actions.append(button("Pause", () => taskAction(taskId, "pause")));
       if (task.pause_requested || task.state === "BLOCKED") actions.append(button("Resume", () => taskAction(taskId, "resume")));
       if (!["CANCELLED", "COMPLETED", "FAILED"].includes(task.state)) actions.append(button("Cancel", () => taskAction(taskId, "cancel"), "button danger"));
-      if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button primary"));
+      if (task.state === "FAILED" || (task.state === "BLOCKED" && task.results?.error && !task.pause_requested)) actions.append(button("↻ Try again", () => taskAction(taskId, "retry"), "button primary"));
+      if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button"));
       const fix = task.results?.auto_fix || {};
       const fixCovered = !fix.stopped && (data.auto_fix?.scope === "all" || fix.chosen);
       if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(fixCovered
