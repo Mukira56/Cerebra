@@ -51,3 +51,16 @@ def test_repairs_get_what_failed_not_raw_output(hq):
     repairs = [request for name, request in supervisor.registry.requests if getattr(request, "role", "") == "implement" and request.attempt]
     assert repairs and '"what_failed"' in repairs[0].description and '"stdout"' not in repairs[0].description
     assert "assert" in repairs[0].description  # pytest's own failure line reached the coder
+
+
+def test_try_again_tells_the_coder_what_still_fails(hq):
+    supervisor = hq[0]
+    supervisor.registry = RecordingWrongAgent()
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    assert supervisor.get(task_id).state == "FAILED"
+    before = len(supervisor.registry.requests)
+    supervisor.try_again(task_id)
+    supervisor.run_until_idle()
+    first = next(request for name, request in supervisor.registry.requests[before:] if getattr(request, "role", "") == "implement")
+    assert "Try again from where it stopped" in first.description and "What failed:" in first.description and "assert" in first.description

@@ -136,6 +136,11 @@ class AutoFixSettings(StrictModel):
     council_after: int | None = Field(default=None, ge=0, le=10)
     scope: Literal["selected", "all"] | None = None
 
+class TaskTeam(StrictModel):
+    role: Literal["planner", "implementer", "reviewer"]
+    choice: str = Field(min_length=1, max_length=200)  # a model profile id, or "switch"
+    allow_same_company: bool = False  # the owner accepts a reviewer from the coder's own company
+
 class TaskAutoFix(StrictModel):
     enabled: bool
 

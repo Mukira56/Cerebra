@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete,
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete, TaskTeam,
                       BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
                       OAuthFinish, GmailSetup, NotificationSetup)
 from .security import redact
@@ -361,6 +361,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             return delete_tasks(db, settings.data_dir, payload.task_ids)
         except LookupError as exc:
             raise HTTPException(404, str(exc))
+
+    @app.post("/api/tasks/{task_id}/team")
+    def task_team(task_id: str, payload: TaskTeam):
+        """Change who plans, codes or reviews this task (for example when one company's usage has run out)."""
+        with db.Session() as session: task_or_404(session, task_id)
+        return supervisor.reassign(task_id, payload.role, payload.choice, payload.allow_same_company)
 
     @app.post("/api/tasks/{task_id}/auto-fix")
     def task_auto_fix(task_id: str, payload: TaskAutoFix):

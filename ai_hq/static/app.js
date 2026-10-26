@@ -1,6 +1,13 @@
 "use strict";
 // Cerebra dashboard. Every value from the server or a model is inserted as text, never as HTML.
 (() => {
+  // The browser's own append/replaceChildren print "null" for an empty value; skip empty values everywhere instead.
+  for (const proto of [Element.prototype, DocumentFragment.prototype]) {
+    for (const name of ["append", "replaceChildren"]) {
+      const native = proto[name];
+      proto[name] = function (...nodes) { return native.apply(this, nodes.filter(node => node !== null && node !== undefined && node !== false)); };
+    }
+  }
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
     overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
@@ -47,6 +54,23 @@
   function empty(title, description, action, symbol = "∅") { return append(el("div", "empty-state"), el("div", "empty-icon", symbol), el("h3", "", title), el("p", "", description), action); }
   function code(value) { return el("pre", "code-block", json(value)); }
   function hint(text, warn = false) { return el("div", warn ? "hint warn" : "hint", text); }
+  // An AI run's output is a stream of JSON records (Codex) or one result record (Claude). Show what the model said;
+  // the raw records stay one click away.
+  function runText(output) {
+    const said = [];
+    for (const line of String(output || "").split("\n")) {
+      let record; try { record = JSON.parse(line); } catch { continue; }
+      const item = record?.item || {};
+      if (item.type === "agent_message" && item.text) said.push(item.text);
+      else if (typeof record?.result === "string" && record.result.trim()) said.push(record.result);
+    }
+    return said.map(text => { try { const value = JSON.parse(text); return typeof value?.summary === "string" ? value.summary : text; } catch { return text; } }).join("\n\n").trim();
+  }
+  function runOutput(output) {
+    const said = runText(output), raw = String(output || "").slice(-6000);
+    if (!said) return raw.length > 2000 ? append(el("details"), el("summary", "", "Raw output"), code(raw)) : code(raw);
+    return [el("div", "run-said", said), append(el("details"), el("summary", "", "Raw output"), code(raw))];
+  }
   // Long provider errors (pages of connection logs) show their start; the rest is one click away.
   function failureText(text, mark = "⚠ ") {
     const value = String(text || ""), node = el("div", "failure-text");
@@ -223,7 +247,8 @@
     left.append(panel("Recent tasks", tasks.length ? taskRows(tasks.slice(0, 8)) : body(empty("No tasks yet", "Create a task: describe what you want, and the AI team plans, codes, tests and reviews it.", button("+ New task", () => taskForm(), "button primary"), "#")), link("All tasks →", "tasks"), tasks.length));
     const waiting = pendingApprovals();
     if (waiting.length) left.append(panel("Waiting for your decision", approvalCards(waiting.slice(0, 3)), link("All approvals →", "approvals"), waiting.length));
-    const team = body(kv([["Planner", profileLabel(data.roles?.planner)], ["Coder", profileLabel(data.roles?.implementer)], ["Reviewer", profileLabel(data.roles?.reviewer)], ["Agents", agentsOn() ? "On · each task asks first" : "Off"]]), link("Change models →", "models"));
+    const team = body(kv([["Planner", profileLabel(data.roles?.planner)], ["Coder", profileLabel(data.roles?.implementer)], ["Reviewer", profileLabel(data.roles?.reviewer)], ["Agents", agentsOn() ? "On · each task asks first" : "Off"],
+      ...array(data.agents).filter(agent => agent.usage_until && new Date(agent.usage_until) > new Date()).map(agent => [nice(agent.name), `Out of usage until ${new Date(agent.usage_until).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}; the other model covers for it`])]), link("Change models →", "models"));
     append(right, panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
     append(grid, left, right); node.append(grid); return node;
   }
@@ -311,7 +336,7 @@
       if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button"));
       const fix = task.results?.auto_fix || {};
       const fixCovered = !fix.stopped && (data.auto_fix?.scope === "all" || fix.chosen);
-      if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(fixCovered
+      if (data.auto_fix?.enabled && !["COMPLETED", "CANCELLED"].includes(task.state)) append(actions, fixCovered
         ? button("■ Stop auto-fix", () => setAutoFix(taskId, false), "button danger")
         : ["FAILED", "BLOCKED"].includes(task.state) ? button("Auto-fix this task", () => setAutoFix(taskId, true), "button") : null);
       if (task.worktree_path && !["COMPLETED", "CANCELLED"].includes(task.state)) actions.append(viewControls("task", taskId, "▶ View this result"));
@@ -326,7 +351,7 @@
             !result.passed && result.what_failed ? [el("strong", "what-failed-label", "What failed"), code(result.what_failed), append(el("details"), el("summary", "", "Full output"), code(raw))] : raw.length > 4000 ? append(el("details"), el("summary", "", `Full output (${Math.round(raw.length / 1000)} KB)`), code(raw)) : code(raw)); }); node.append(el("h3", "", "Review findings")); if (!array(task.review_findings).length) node.append(el("p", "", array(task.reviews).length ? "The reviewer found no problems." : "No review yet.")); array(task.review_findings).forEach(finding => append(node, append(el("div", "row-meta"), badge(finding.severity, ["critical", "high"].includes(finding.severity) ? "red" : "amber"), el("code", "", `${finding.path || ""}${finding.line ? `:${finding.line}` : ""}`), finding.validated ? badge("verified", "green") : badge("unverified", "muted")), el("p", "", finding.message))); return node; },
         "Changes": () => append(el("div", "section"), kv([["Branch", task.branch], ["Base commit", task.base_commit], ["Working copy", task.worktree_path]]), code(task.diff || task.results?.diff || "No changes yet.")),
         "History": () => checkpointsView(task),
-        "Runs & logs": () => { const node = el("div", "section"); if (!array(task.runs).length) node.append(el("p", "", "No AI runs yet.")); array(task.runs).forEach(run => append(node, append(el("div", "row-meta"), el("strong", "", `${nice(run.agent)} · ${run.role}`), badge(run.status, run.status === "succeeded" ? "green" : run.status === "running" ? "blue" : "red"), el("span", "", date(run.started_at))), run.error ? code(run.error) : null, run.output ? code(run.output.slice(-6000)) : null)); node.append(el("h3", "", "Event history")); node.append(activityList([...array(task.events)].reverse(), 200)); return node; }
+        "Runs & logs": () => { const node = el("div", "section"); if (!array(task.runs).length) node.append(el("p", "", "No AI runs yet.")); array(task.runs).forEach(run => append(node, append(el("div", "row-meta"), el("strong", "", `${nice(run.agent)} · ${run.role}`), badge(run.status, run.status === "succeeded" ? "green" : run.status === "running" ? "blue" : "red"), el("span", "", date(run.started_at))), run.error ? failureText(run.error) : null, run.output ? runOutput(run.output) : null)); node.append(el("h3", "", "Event history")); node.append(activityList([...array(task.events)].reverse(), 200)); return node; }
       };
       function choose(label) { detailTab = label; tabs.querySelectorAll("button").forEach(item => item.classList.toggle("active", item.textContent === label)); pane.replaceChildren(views[label]()); }
       Object.keys(views).forEach(label => tabs.append(button(label, () => choose(label), ""))); append(root, tabs, pane); choose(views[detailTab] ? detailTab : "Overview");
@@ -736,7 +761,75 @@
   function systemView() {
     if (!content.querySelector(".system")) { window.AIHQSystem.mount(content, {api, overview: () => data, inspect: taskDetail, report: id => { location.hash = `report/${id}`; }}); }
     else window.AIHQSystem.update?.();
+    paintTeamBar();
     return null;
+  }
+
+  // ---------- who does the work: switch planner, coder and reviewer between Codex and Claude models ----------
+  const ROLES = [["planner", "Planner", "Plans the work"], ["implementer", "Coder", "Writes the code"], ["reviewer", "Reviewer", "Checks the code (another company than the coder)"]];
+  let teamTaskId = "", teamFingerprint = "", teamOpen = null;
+  const providerOf = choice => String(choice).startsWith("catalog:") ? String(choice).split(":")[1] : (profiles().find(item => item.id === choice)?.provider || choice);
+  function outOfUsage(provider) {
+    const until = agentRow(provider).usage_until;
+    return until && new Date(until) > new Date() ? new Date(until).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"}) : "";
+  }
+  function paintTeamBar() {
+    const live = realTasks().filter(task => !["COMPLETED", "CANCELLED"].includes(task.state));
+    const pick = live.find(task => task.id === teamTaskId) || live.find(task => ACTIVE.includes(task.state))
+      || live.find(task => task.results?.blocked_reason === "waiting_for_usage") || live[0];
+    teamTaskId = pick?.id || "";
+    let bar = content.querySelector(".team-bar");
+    const fingerprint = JSON.stringify([teamTaskId, teamOpen, live.map(task => [task.id, task.state, task.results?.models, task.results?.blocked_reason]), data.roles, array(data.agents).map(agent => agent.usage_until)]);
+    if (bar && (fingerprint === teamFingerprint || bar.contains(document.activeElement))) return;  // don't redraw under the owner's hand
+    teamFingerprint = fingerprint;
+    const fresh = teamBar(live, pick);
+    if (bar) bar.replaceWith(fresh); else content.prepend(fresh);
+  }
+  function teamBar(live, task) {
+    const node = el("section", "panel team-bar"), rows = el("div", "team-rows");
+    const stuck = task && (task.state === "FAILED" || task.results?.blocked_reason === "waiting_for_usage");
+    const open = teamOpen ?? Boolean(stuck);  // compact by default; opens by itself when a model change would help
+    const summary = task ? ROLES.map(([key, label]) => `${label}: ${taskModels(task)[key]}`).join(" · ") : ROLES.map(([key, label]) => `${label}: ${profileLabel(data.roles?.[key] || "auto")}`).join(" · ");
+    const toggle = button(open ? "Close ▴" : "Change ▾", () => { teamOpen = !open; teamFingerprint = ""; paintTeamBar(); }, "button small");
+    const header = append(el("div", "panel-header"), el("h2", "", "Who does the work"), toggle);
+    node.append(header, append(el("div", "team-summary"), el("span", "", summary), stuck ? badge(task.state === "FAILED" ? "failed" : "waiting for usage", "amber") : null));
+    if (!open) return node;
+    const target = select([...live.map(item => [item.id, `${item.description.slice(0, 70)} · ${nice(item.pause_requested ? "PAUSED" : item.state)}`]), ["", "New tasks only (the default team)"]], task?.id || "");
+    target.addEventListener("change", () => { teamTaskId = target.value; teamFingerprint = ""; paintTeamBar(); });
+    const remember = check("Also use for new tasks", !task);
+    const models = task ? task.results?.models || {} : {};
+    const choices = roleChoices().filter(([id]) => id !== "auto");
+    append(node, append(el("div", "team-target"), field("Change the team of", target), task ? remember.wrap : null), rows);
+    if (task?.state === "FAILED") node.append(hint("This task failed. Switch the job that stopped to another model, then press ↻ Try again in the task: it continues from where it stopped."));
+    if (task?.results?.blocked_reason === "waiting_for_usage") node.append(hint("This task is waiting for AI usage. Switch the job to the other company's model and it continues straight away, from where it stopped.", true));
+    for (const [key, label, help] of ROLES) {
+      const current = task ? (models[key]?.provider || {implementer: task.assigned_agent, reviewer: task.reviewer}[key] || "claude") : providerOf(data.roles?.[key] || "auto");
+      const shown = task ? taskModels(task)[key] : profileLabel(data.roles?.[key] || "auto");
+      const other = current === "codex" ? "claude" : "codex", empty_ = outOfUsage(current);
+      const chooser = select([["", "Choose a model…"], ...choices], "");
+      const apply = async (choice, message, allowSame = false) => {
+        if (task) {
+          const coderCompany = models.implementer?.provider || task.assigned_agent, target = choice === "switch" ? other : providerOf(choice);
+          if (key === "reviewer" && target === coderCompany && !allowSame) {
+            showDialog(`Let ${nice(target)} review ${nice(target)}'s own work?`, append(el("div"),
+              el("p", "", `The coder is a ${nice(target)} model. Normally the reviewer comes from the other company, so mistakes one model makes are caught by a different one.`),
+              el("p", "", outOfUsage(target === "codex" ? "claude" : "codex") ? `${nice(target === "codex" ? "claude" : "codex")} is out of usage right now, so this keeps the task moving. The review is less independent, and Cerebra records that you chose it.` : "The review will be less independent. Cerebra records that you chose it."),
+              actionsRow(button("Cancel", closeDialog, "button ghost"), button(`Yes, ${nice(target)} reviews`, () => { closeDialog(); apply(choice, message, true); }, "button primary"))));
+            return;
+          }
+          const updated = await act(message, () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/team`, {role: key, choice, allow_same_company: allowSame}));
+          if (!updated) return;
+          if (remember.control.checked) { const chosen = updated.results?.models?.[key]; if (chosen) await act(null, () => mutate("/api/models/roles", {[key]: `catalog:${chosen.provider}:${chosen.model}`}, "PUT")); }
+        } else if (!await act(message, () => mutate("/api/models/roles", {[key]: choice === "switch" ? `catalog:${other}:${array(data.catalog?.[other]).find(item => item.tier === "balanced")?.model || ""}` : choice}, "PUT"))) return;
+        teamFingerprint = ""; await refresh(true);
+      };
+      chooser.addEventListener("change", () => { if (chooser.value) apply(chooser.value, `${label}: ${profileLabel(chooser.value)}.`); });
+      rows.append(append(el("div", `team-row${empty_ ? " out" : ""}`),
+        append(el("div", "team-role"), el("strong", "", label), el("small", "", help)),
+        append(el("div", "team-now"), el("span", `team-model ${current}`, shown), empty_ ? badge(`out of usage until ${empty_}`, "amber") : null),
+        append(el("div", "team-actions"), button(`↔ Switch to ${nice(other)}`, () => apply("switch", `${label} switched to ${nice(other)}.`), empty_ ? "button small primary" : "button small"), chooser)));
+    }
+    return node;
   }
 
   // ---------- reports ----------
@@ -1426,7 +1519,7 @@
     try {
       const next = await api("/api/overview"), fingerprint = JSON.stringify(next); data = next;
       const status = $("#connection-status"); status.className = "pill good"; status.replaceChildren(el("span", "dot"), document.createTextNode("Local connection")); notice("");
-      if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "projects", "approvals", "reports", "activity"].includes(page) || force) render(); else chrome(); }
+      if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "projects", "approvals", "reports", "activity"].includes(page) || force) render(); else chrome(); if (page === "system" && !force) paintTeamBar(); }
       if (detailTaskId && dialog.open) await taskDetail(detailTaskId, true);
     } catch (issue) { const status = $("#connection-status"); status.className = "pill bad"; status.replaceChildren(el("span", "dot"), document.createTextNode("Disconnected")); notice(`Local connection unavailable. ${issue.message}`, true); }
     finally { fetching = null; done(); }

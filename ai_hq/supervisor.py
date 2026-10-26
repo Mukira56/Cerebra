@@ -10,7 +10,7 @@ import time
 
 from sqlalchemy import select
 
-from . import evidence
+from . import evidence, usage
 from .agents import AgentRegistry, AgentRequest
 from .processes import CommandNotFound, ProcessRunner
 from .gitops import GitManager
@@ -595,7 +595,7 @@ class Supervisor:
             raise
         except OutOfModels as exc:
             if task_id:
-                self._wait_for_usage(task_id, str(exc))
+                self._wait_for_usage(task_id, str(exc), seconds=self._usage_back_in())
                 return True
             raise
         except CommandNotFound as exc:  # a missing tool is fixed by installing it, then Resume: pause, don't fail
@@ -887,7 +887,11 @@ class Supervisor:
         error = " ".join(str((task.results or {}).get("error") or "it stopped without a recorded error").split())[:600]
         if (task.results or {}).get("blocked_reason") == "overlapping_changes":
             return self._redo_on_latest(task, error)
-        return self.retry_with_instructions(task_id, f"Try again from where it stopped. The last attempt ended with: {error}", author="user")
+        failing = [result for result in evidence.latest_attempt(task.test_results or []) if not result.get("passed")]
+        found = " | ".join(f"{' '.join(map(str, result.get('command') or []))[-60:]}: " + " ".join(str(result.get("what_failed") or evidence.what_failed(
+            f"{result.get('stdout') or ''}{chr(10)}{result.get('stderr') or ''}", 1500)).split())[:1500] for result in failing[:2])
+        return self.retry_with_instructions(task_id, f"Try again from where it stopped. The last attempt ended with: {error}"
+            + (f" These registered tests still fail; make them pass without weakening them. What failed: {found}" if found else ""), author="user")
 
     def _redo_on_latest(self, task, error):
         """Other work changed the same files: start this task again on the project's latest code, with the earlier
@@ -967,6 +971,24 @@ class Supervisor:
         info = self.git.inspect_repository(self.get(task_id).worktree_path)
         return candidate if info["head"] == candidate and not info.get("dirty") else None
 
+    def _mark_out_of_usage(self, name, text):
+        """Rest a provider until the time its own limit message gives (default 15 minutes), and record it for the dashboard."""
+        from datetime import datetime, timedelta, timezone
+        seconds = usage.reset_in(text) or USAGE_RETRY_SECONDS
+        self._unavailable[name] = time.monotonic() + seconds
+        until = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+        with self._lock, self.db.Session.begin() as session:
+            agent = session.get(Agent, name)
+            if agent is None:
+                agent = Agent(id=name, status={})
+                session.add(agent)
+            agent.status = {**(agent.status or {}), "usage_until": until}
+
+    def _usage_back_in(self):
+        """Seconds until the first provider that ran out of usage is expected back (at least a minute)."""
+        waits = [deadline - time.monotonic() for deadline in self._unavailable.values() if deadline > time.monotonic()]
+        return max(60, int(min(waits))) if waits else USAGE_RETRY_SECONDS
+
     def _wait_for_usage(self, task_id, message, reason="waiting_for_usage", seconds=USAGE_RETRY_SECONDS):
         """Pause a task because no AI model has usage left (or the internet is down); it is retried automatically later."""
         from datetime import datetime, timedelta, timezone
@@ -977,7 +999,8 @@ class Supervisor:
             retry = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
             task.results = {**task.results, "queued": False, "blocked_reason": reason, "retry_after": retry,
                             "resume_stage": resume_stage(task), "error": redact(message)[:2000]}
-            self._state(session, task, "BLOCKED", f"Paused: {message} Cerebra will try again automatically in {seconds // 60} minutes, or press Resume.")
+            when = f"at {(datetime.now() + timedelta(seconds=seconds)).strftime('%H:%M')}" if seconds > 20 * 60 else f"in {max(1, seconds // 60)} minutes"
+            self._state(session, task, "BLOCKED", f"Paused: {message} Cerebra will try again automatically {when}, or press Resume.")
 
     @staticmethod
     def _out_of_usage(result):
@@ -1018,6 +1041,68 @@ class Supervisor:
                         {"role": key, "from": failed, "to": other})
         return self.get(task.id)
 
+    ROLE_WORDS = {"planner": "planner", "implementer": "coder", "reviewer": "reviewer"}
+
+    def reassign(self, task_id, key, choice, allow_same_company=False):
+        """The owner's choice of who does a job on this task: a model profile id, or "switch" for the other company's
+        best model of the same tier. The work continues from where it stopped; a task waiting for usage starts again
+        at once. The reviewer always stays with a different company than the coder."""
+        from .catalog import best, catalog
+        from .profiles import get_profile
+        if key not in self.ROLE_WORDS:
+            raise ValueError("Choose the planner, the coder or the reviewer")
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            if stored.state in {"COMPLETED", "CANCELLED"}:
+                raise ValueError("This task has finished; change the models for new tasks instead")
+            models = {name: dict(value) for name, value in (stored.results.get("models") or {}).items()}
+            fallback = {"implementer": stored.assigned_agent, "reviewer": stored.reviewer, "planner": "claude"}
+            current = models.get(key, {}).get("provider") or fallback[key]
+            if choice == "switch":
+                provider = "claude" if current == "codex" else "codex"
+                tier = models.get(key, {}).get("tier") or "balanced"
+                pick = best(catalog(), provider, tier if tier in {"frontier", "balanced", "fast"} else "balanced")
+                entry = {"profile": "owner", "provider": provider, "model": pick["model"], "label": pick["label"], "tier": pick.get("tier") or tier}
+            else:
+                profile = get_profile(session, choice)
+                entry = {"profile": choice, "provider": profile["provider"], "model": profile["model"], "label": profile["label"]}
+            entry["why"] = "Chosen by you."
+            coder = entry if key == "implementer" else models.get("implementer") or {"provider": stored.assigned_agent}
+            same = key == "reviewer" and entry["provider"] == coder.get("provider")
+            if same and not allow_same_company:
+                raise ValueError("The reviewer has to be from a different AI company than the coder, so the review stays independent. "
+                                 "Change the coder first, or pick a reviewer from the other company.")
+            notes = []
+            models[key] = entry
+            if key == "implementer":
+                stored.assigned_agent = entry["provider"]
+                if (models.get("reviewer") or {"provider": stored.reviewer}).get("provider") == entry["provider"]:
+                    other = "claude" if entry["provider"] == "codex" else "codex"
+                    back = best(catalog(), other, "balanced")
+                    models["reviewer"] = {"profile": "owner", "provider": other, "model": back["model"], "label": back["label"], "tier": back.get("tier") or "balanced",
+                                          "why": "Moved to keep the review independent of the new coder."}
+                    stored.reviewer = other
+                    notes.append(f"the reviewer moved to {back['label']} to stay independent")
+                    if not self._usable(other):
+                        notes.append(f"{other.title()} is out of usage, so the review waits for it unless you also switch the reviewer")
+            elif key == "reviewer":
+                stored.reviewer = entry["provider"]
+            if key == "reviewer":
+                stored.results = {**stored.results, "same_company_review": bool(same)}
+                if same:
+                    notes.append("you allowed it to review work from its own company, so this review is less independent")
+            handoffs = list(stored.results.get("handoffs", [])) + [{"role": key, "from": current, "to": entry["provider"], "at": now(), "reason": "chosen by the owner"}]
+            stored.results = {**stored.results, "models": models, "handoffs": handoffs}
+            restart = stored.state == "BLOCKED" and stored.results.get("blocked_reason") == "waiting_for_usage" and not stored.pause_requested
+            self._event(session, task_id, "models", f"You made {entry['label']} the {self.ROLE_WORDS[key]}" + ("; " + "; ".join(notes) if notes else "")
+                        + (". Press Try again to continue with it." if stored.state == "FAILED" else ". It continues from where the work stopped" + (" and starts now." if restart else ".")),
+                        {"role": key, "to": entry["provider"]})
+        self._unavailable.pop(entry["provider"], None)  # the owner expects this one to have usage: try it now
+        if restart:
+            if self.resume(task_id).state == "READY":
+                self.start(task_id)
+        return self.get(task_id)
+
     def _handoff_note(self, task, role, failed, result):
         note = f"HANDOFF: {failed} was doing this step and stopped because its usage ran out. Continue the same job; do not start over."
         if role == "implement" and task.worktree_path:
@@ -1051,7 +1136,7 @@ class Supervisor:
                         stored = self._get(session, task.id)
                         stored.results = {**stored.results, "handoff_note": None}
                 return result
-            self._unavailable[name] = time.monotonic() + USAGE_RETRY_SECONDS
+            self._mark_out_of_usage(name, f"{result.error or ''}\n{result.output or ''}")
             note = self._handoff_note(task, role, name, result)
             with self._lock, self.db.Session.begin() as session:
                 stored = self._get(session, task.id)
@@ -1123,7 +1208,7 @@ class Supervisor:
                     session.add(agent)
                 status = dict(agent.status or {})
                 if result.success:
-                    status.update(authentication="verified_by_execution", last_live_success_at=run.finished_at,
+                    status.update(authentication="verified_by_execution", last_live_success_at=run.finished_at, usage_until=None,
                         last_live_task=task.id, last_live_role=role, last_error=None)
                 elif any(marker in (run.error + "\n" + run.output).lower() for marker in
                         ("authentication_error:", "not logged in", "please log in", "invalid api key", "unauthorized", "authentication failed", "login required")):

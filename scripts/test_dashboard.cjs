@@ -118,6 +118,7 @@ const path = require('node:path');
     await page.getByRole('button',{name:'Fit factory',exact:true}).click();
     // Mouse controls: Ctrl + wheel zooms at the pointer, drag pans, right-click opens the blueprint menu.
     const floor = page.locator('.factory-viewport'), readout = page.locator('.factory-zoom-readout');
+    await floor.scrollIntoViewIfNeeded();
     const fitted = await readout.textContent(), box = await floor.boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.keyboard.down('Control'); await page.mouse.wheel(0, -600); await page.keyboard.up('Control');
@@ -293,6 +294,17 @@ const path = require('node:path');
     if (shots) await phone.screenshot({path: path.join(shots, 'mobile.png')});
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
+    // No page prints a stray "null" (an empty value handed to the browser's append).
+    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'council', 'chat', 'system']) {
+      await page.evaluate(view => { location.hash = view; }, name); await page.waitForTimeout(600);
+      assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('body').innerText()), `"null" is printed on the ${name} page`);
+    }
+    await page.evaluate(() => { location.hash = 'tasks'; }); await page.waitForTimeout(600);
+    if (await page.locator('.row[data-task-id]').count()) {
+      await page.locator('.row[data-task-id]').first().click(); await page.locator('dialog[open]').waitFor(); await page.waitForTimeout(800);
+      assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('dialog[open]').innerText()), '"null" is printed in a task window');
+      await page.keyboard.press('Escape');
+    }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({pages: 16, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
   } catch (error) {
