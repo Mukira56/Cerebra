@@ -338,7 +338,12 @@
       if (ACTIVE.includes(task.state) && !task.pause_requested) actions.append(button("Pause", () => taskAction(taskId, "pause")));
       if (task.pause_requested || task.state === "BLOCKED") actions.append(button("Resume", () => taskAction(taskId, "resume")));
       if (!["CANCELLED", "COMPLETED", "FAILED"].includes(task.state)) actions.append(button("Cancel", () => taskAction(taskId, "cancel"), "button danger"));
-      if (task.state === "BLOCKED" && (task.results?.blocked_reason === "repository_has_changes" || /registered repository has user changes/.test(task.results?.error || ""))) actions.append(button("Set aside my changes and merge", () => showDialog("Set aside your changes and merge?", append(el("div"),
+      const finished = task.finished_work || {};
+      if (finished.ready) actions.append(button("✓ Merge the finished work", () => showDialog("Merge the finished work?", append(el("div"),
+        el("p", "", finished.why),
+        finished.uncommitted ? el("p", "", `Your project folder has uncommitted changes (${finished.uncommitted}). Cerebra saves them in Git's stash with a clear label first (nothing is deleted); run git stash pop in the project folder to get them back.`) : null,
+        actionsRow(button("Cancel", closeDialog, "button ghost"), button("Merge", async () => { closeDialog(); if (await act("Merged into your project.", () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/merge-finished`))) { await refresh(true); taskDetail(taskId); } }, "button primary")))), "button primary"));
+      else if (task.state === "BLOCKED" && (task.results?.blocked_reason === "repository_has_changes" || /registered repository has user changes/.test(task.results?.error || ""))) actions.append(button("Set aside my changes and merge", () => showDialog("Set aside your changes and merge?", append(el("div"),
         el("p", "", task.results.error || "Your project folder has uncommitted changes."),
         el("p", "", "Cerebra saves them in Git's stash with a clear label (nothing is deleted), then merges this task's tested and reviewed work. To get them back later, run git stash pop in the project folder."),
         actionsRow(button("Cancel", closeDialog, "button ghost"), button("Set aside and merge", async () => { closeDialog(); if (await act("Merged. Your changes are saved in Git's stash.", () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/set-aside-and-merge`))) { await refresh(true); taskDetail(taskId); } }, "button primary")))), "button primary"));

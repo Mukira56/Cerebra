@@ -7,7 +7,8 @@ from ai_hq.agents import AgentResult
 from ai_hq.models import Event, Task
 from ai_hq import manage
 from fakes import FixtureRegistry
-from test_supervisor import consent, git, hq, pending_approval, proposed, ready  # noqa: F401  (hq is a fixture)
+import pytest
+from test_supervisor import StagnantAgentRegistry, consent, git, hq, pending_approval, proposed, ready  # noqa: F401  (hq is a fixture)
 
 LIMIT = "rate_limited: agent exited with code 1: You've hit your usage limit. Try again later."
 
@@ -246,3 +247,39 @@ def test_a_merge_blocked_by_an_older_version_can_be_set_aside_too(hq):
         stored.results = {**stored.results, "error": "Integration blocked: Integration refused: registered repository has user changes", "blocked_reason": None}
     supervisor.set_aside_and_merge(task_id)
     assert supervisor.get(task_id).state == "COMPLETED" and not (repo / "notes.txt").exists()
+
+
+def test_latest_tests_are_the_most_recent_runs_not_the_highest_attempt():
+    from ai_hq.evidence import latest_attempt
+    runs = [{"attempt": 0, "passed": False}, {"attempt": 1, "passed": False}, {"attempt": 2, "passed": False},
+            {"attempt": 0, "passed": True, "id": "a"}, {"attempt": 0, "passed": True, "id": "b"}]  # Try again restarts the count
+    assert [run.get("id") for run in latest_attempt(runs)] == ["a", "b"]
+
+
+def test_finished_work_that_ended_up_failed_can_still_be_merged(hq):
+    supervisor, _, repo, db, _ = hq
+    task_id = ready(hq)
+    supervisor.run_until_idle()  # tested and reviewed; the merge is waiting
+    with db.Session.begin() as session:  # then a retry found nothing left to code, as happened to the owner's portfolio
+        from ai_hq.models import Approval
+        for approval in session.query(Approval).filter(Approval.task_id == task_id, Approval.status == "pending"):
+            approval.status = "approved"
+        stored = session.get(Task, task_id)
+        stored.state, stored.results = "FAILED", {**stored.results, "error": "No meaningful progress: agent produced no new candidate changes"}
+    (repo / "notes.txt").write_text("owner's scratch notes", encoding="utf-8")
+    finished = supervisor.finished_work(supervisor.get(task_id))
+    assert finished["ready"] and "notes.txt" in finished["uncommitted"]
+    supervisor.merge_finished_work(task_id)
+    assert supervisor.get(task_id).state == "COMPLETED" and "return a + b" in (repo / "calculator.py").read_text()
+    assert "Cerebra set these aside" in git(repo, "stash", "list")
+
+
+def test_unfinished_work_is_not_offered_for_merging(hq):
+    supervisor, _, _, db, _ = hq
+    supervisor.registry = StagnantAgentRegistry()  # its tests keep failing
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "FAILED" and supervisor.finished_work(task) == {"ready": False}
+    with pytest.raises(ValueError, match="isn't finished"):
+        supervisor.merge_finished_work(task_id)

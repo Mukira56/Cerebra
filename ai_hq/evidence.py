@@ -87,11 +87,17 @@ def summarize(results):
 
 
 def latest_attempt(test_results):
-    """The verification runs of the most recent attempt (each repair attempt re-runs every command)."""
+    """The most recent verification runs: the trailing block that shares the last run's attempt number.
+    By time, not by the highest number: Try again starts counting at 0 again, so an older attempt can have a higher one."""
     if not test_results:
         return []
-    last = max(result.get("attempt", 0) for result in test_results)
-    return [result for result in test_results if result.get("attempt", 0) == last]
+    last = test_results[-1].get("attempt", 0)
+    block = []
+    for result in reversed(test_results):
+        if result.get("attempt", 0) != last:
+            break
+        block.append(result)
+    return block[::-1]
 
 
 def compare(baseline, test_results):

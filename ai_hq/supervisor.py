@@ -1419,11 +1419,47 @@ class Supervisor:
             self._event(session, task.id, "review", "Independent review recorded", {"simulated": result.simulated, "findings": len(findings)})
         return findings
 
-    def set_aside_and_merge(self, task_id):
+    def finished_work(self, task):
+        """Whether a stopped task's work is done and only the merge is missing: its working copy holds the candidate,
+        its most recent tests all passed and its review left nothing validated to fix. {"ready", "why", "uncommitted"}."""
+        if task.state not in {"FAILED", "BLOCKED"} or task.pause_requested or (task.results or {}).get("integration"):
+            return {"ready": False}
+        candidate = (task.results or {}).get("candidate_commit")
+        latest = evidence.latest_attempt(task.test_results or [])
+        validated = [finding for finding in (task.review_findings or []) if finding.get("validated") and finding.get("severity") in {"critical", "high", "medium"}]
+        with self.db.Session() as session:
+            reviewed = session.scalars(select(Review).where(Review.task_id == task.id)).first() is not None
+            repo = session.get(Project, task.project_id).path
+        if not (candidate and latest and all(result.get("passed") for result in latest) and reviewed and not validated
+                and task.worktree_path and Path(task.worktree_path).is_dir()):
+            return {"ready": False}
+        try:
+            copy = self.git.inspect_repository(task.worktree_path)
+            if copy["head"] != candidate or copy.get("dirty"):
+                return {"ready": False}
+            project = self.git.inspect_repository(repo)
+        except Exception:
+            return {"ready": False}
+        return {"ready": True, "why": "Its latest tests passed and the independent review left nothing to fix; only the merge is missing.",
+                "uncommitted": self._dirty_files(repo) if project.get("dirty") else ""}
+
+    def merge_finished_work(self, task_id):
+        """The owner's "Merge the finished work": set aside uncommitted project changes in Git's stash (labelled, nothing
+        lost) when there are any, then merge the tested and reviewed work."""
+        task = self.get(task_id)
+        if not self.finished_work(task)["ready"]:
+            raise ValueError("This task's work isn't finished and verified yet: its latest tests or review didn't pass")
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            if stored.state == "FAILED":
+                self._state(session, stored, "BLOCKED", "The owner chose to merge the finished, tested and reviewed work")
+        return self.set_aside_and_merge(task_id, checked=True)
+
+    def set_aside_and_merge(self, task_id, checked=False):
         """The owner's button for a merge blocked by uncommitted changes in the project folder: keep them in Git's stash
         (labelled, nothing lost), then merge the approved, tested and reviewed work."""
         task = self.get(task_id)
-        waiting = task.results.get("blocked_reason") == "repository_has_changes" or "registered repository has user changes" in str(task.results.get("error") or "")  # older versions
+        waiting = checked or task.results.get("blocked_reason") == "repository_has_changes" or "registered repository has user changes" in str(task.results.get("error") or "")  # older versions
         if task.state != "BLOCKED" or not waiting:
             raise ValueError("This task isn't waiting on uncommitted changes in its project")
         with self.db.Session() as session:

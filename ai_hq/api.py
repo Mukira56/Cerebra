@@ -374,6 +374,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
+    @app.post("/api/tasks/{task_id}/merge-finished")
+    def task_merge_finished(task_id: str):
+        """Merge a stopped task whose latest tests passed and whose review left nothing to fix."""
+        with db.Session() as session: task_or_404(session, task_id)
+        return supervisor.merge_finished_work(task_id)
+
     @app.post("/api/tasks/{task_id}/set-aside-and-merge")
     def task_set_aside_and_merge(task_id: str):
         """Keep the owner's uncommitted project changes in Git's stash, then merge the approved work."""
@@ -445,6 +451,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             for model,name in [(Run,"runs"),(Review,"reviews"),(Event,"events"),(Approval,"approvals")]:
                 result[name] = [as_dict(row) for row in session.scalars(select(model).where(model.task_id==task_id))]
             result["dependencies"] = list(session.scalars(select(Dependency.depends_on).where(Dependency.task_id==task_id)))
+            result["finished_work"] = supervisor.finished_work(task) if task.state in {"FAILED", "BLOCKED"} else {"ready": False}
             result["diff"] = ""
             if task.worktree_path and Path(task.worktree_path).is_dir():
                 try:
