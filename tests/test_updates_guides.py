@@ -153,3 +153,12 @@ def test_printify_single_store_is_selected_automatically(client):
     transport(client, lambda request: httpx.Response(200, json=[]))
     client.put("/api/business/connections/printify", json={"values": {"api_key": "another-fixture-token"}})
     assert "no store yet" in client.post("/api/business/connections/printify/check").json()["detail"]
+
+
+def test_a_finished_download_is_still_ready_after_cerebra_restarts(client, tmp_path):
+    assert download(client)["phase"] == "ready"
+    reopened = updates.Updater(Settings(data_dir=tmp_path / "data"))  # Cerebra closed and opened again
+    progress = reopened.progress()
+    assert progress["phase"] == "ready" and progress["tag"] == "v99.0.0" and "Install and restart" in progress["message"]
+    (tmp_path / "data" / "updates" / "pending.json").write_text(json.dumps({"tag": "v0.0.1", "installer": "x", "sha256": "y"}), encoding="utf-8")
+    assert updates.Updater(Settings(data_dir=tmp_path / "data")).progress()["phase"] == "idle"  # nothing real waiting

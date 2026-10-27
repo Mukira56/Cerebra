@@ -141,7 +141,7 @@
     const update = data.update_progress || {}, pill = $("#update-status"), active = ["starting", "downloading", "verifying"].includes(update.phase);
     pill.classList.toggle("hidden", !(active || update.phase === "ready"));
     pill.className = `pill ${update.phase === "ready" ? "good" : ""}${active || update.phase === "ready" ? "" : " hidden"}`;
-    pill.textContent = update.phase === "ready" ? "Update ready to install" : active ? `Update ${update.percent || 0}%` : "";
+    pill.textContent = update.phase === "ready" ? `Update ${String(update.tag || "").replace(/^v/, "")} ready · install`.replace("Update  ready", "Update ready") : active ? `Update ${update.percent || 0}%` : "";
     if (lastUpdatePhase && lastUpdatePhase !== update.phase) {
       if (update.phase === "ready") toast("The update is downloaded and verified. Install it from Settings › Updates when you're ready.");
       if (update.phase === "failed") toast(`The update download didn't finish: ${update.error}`, true);
@@ -1305,6 +1305,17 @@
     if (fullOn()) {
       append(form, append(el("div", "row-meta"), badge("full access", "red"), el("span", "", "Coding agents can run any command with your Windows account and use your GitHub login.")),
         hint("Planning, review and chat stay read-only. The supervisor still tests and reviews every change before it is merged."));
+      const helpers = check("Tasks that Support or the Council create for me get Full access too", data.assistant_full_access === true);
+      helpers.wrap.title = "Off: tasks written by Support or the Council run inside the project copy only. On: they can install packages, run commands, and use the network and GitHub, like tasks you start yourself.";
+      helpers.control.addEventListener("change", () => {
+        if (!helpers.control.checked) { act("Support and Council tasks run inside the project copy again.", () => mutate("/api/permissions/assistant-full-access", {enabled: false})).then(() => refresh(true)); return; }
+        helpers.control.checked = false;
+        showDialog("Give Support and Council tasks Full access?", append(el("div"),
+          el("p", "", "Support and the Council write task instructions from what they read in your projects, logs and messages. With this on, those tasks can run commands, install packages and use the network and your GitHub login, just like the tasks you start yourself."),
+          el("p", "", "A mistake, or a hidden instruction inside a file they read, could then reach the rest of this laptop. Turn it off any time; it applies from the next AI run."),
+          actionsRow(button("Cancel", closeDialog, "button ghost"), button("Allow", async () => { closeDialog(); if (await act("Support and Council tasks now get Full access.", () => mutate("/api/permissions/assistant-full-access", {enabled: true, acknowledge: true}))) { await refresh(true); } }, "button danger"))));
+      });
+      form.append(helpers.wrap);
       const off = submitButton("Limit agents to the project copy"); off.className = "button"; form.append(actionsRow(off));
       wireForm(form, off, async () => { await mutate("/api/permissions/full-access", {enabled: false}); await refresh(true); toast("Agents are limited to the project copy again."); });
       return form;
@@ -1315,6 +1326,26 @@
       machine.wrap, github.wrap, !agentsOn() ? hint("Switch AI agents on above first.", true) : null);
     const on = submitButton("Give full access"); on.className = "button danger"; on.disabled = !agentsOn(); form.append(actionsRow(on));
     wireForm(form, on, async () => { if (!machine.control.checked || !github.control.checked) throw new Error("Tick both boxes to give full access."); await mutate("/api/permissions/full-access", {enabled: true, acknowledge_full_access: true, acknowledge_github: true}); await refresh(true); toast("Coding agents now have full access."); });
+    return form;
+  }
+
+  // ---------- about you ----------
+  function ownerForm() {
+    const form = el("form"), grid = el("div", "form-grid"), inputs = {};
+    const fields = [["name", "Name", "e.g. Godfrey Mukira"], ["headline", "What you do", "e.g. Software engineer and AI builder"], ["email", "Email", "the address you want on your work"],
+      ["github", "GitHub username", "e.g. Mukira56"], ["linkedin", "LinkedIn", "https://www.linkedin.com/in/…"], ["website", "Website", "https://…"], ["location", "Location", "e.g. Nairobi, Kenya"]];
+    fields.forEach(([key, label, hint_]) => { inputs[key] = input(hint_); grid.append(field(label, inputs[key])); });
+    inputs.bio = textarea("A few sentences about you: your background, what you build, what you're proud of."); inputs.preferences = textarea("How you like things done: tone, colours, style, what to avoid.");
+    const share = check("Share these details with the AI team (Support, the Council and coding tasks)", true);
+    const fromGitHub = button("Use my GitHub login", async () => { const found = await act(null, () => api("/api/owner/github")); if (found?.github) { inputs.github.value = found.github; toast(`GitHub username: ${found.github}`); } }, "button small ghost");
+    append(form, hint("ChatGPT's and Claude's own memories aren't shared with Cerebra. Fill this in once so portfolios, READMEs and replies use your real details instead of placeholders. Only put here what you'd put on a public profile; never passwords or keys."),
+      grid, append(el("div", "row-meta"), fromGitHub), field("About you", inputs.bio), field("How you like things done", inputs.preferences), share.wrap);
+    const save = submitButton("Save"); form.append(actionsRow(save));
+    api("/api/owner").then(profile => { Object.entries(inputs).forEach(([key, control]) => { control.value = profile[key] || ""; }); share.control.checked = profile.share !== false; }).catch(() => {});
+    wireForm(form, save, async () => {
+      const values = Object.fromEntries(Object.entries(inputs).map(([key, control]) => [key, control.value])); values.share = share.control.checked;
+      await mutate("/api/owner", values, "PUT"); toast(share.control.checked ? "Saved. The AI team will use your details." : "Saved, and kept to yourself.");
+    });
     return form;
   }
 
@@ -1424,6 +1455,7 @@
     root.append(panel("Agent permissions", body(permissions)));
     root.append(panel("Readiness check", body(readinessPanel())));
     root.append(panel("Full access — let agents control this laptop", body(fullAccessForm())));
+    root.append(panel("About you — so the AI team can use your real details", body(ownerForm())));
     root.append(panel("Away mode — work while I'm away", body(awayForm())));
     root.append(panel("Auto-fix — the Assistant fixes failed tasks by itself", body(autoFixForm())));
 

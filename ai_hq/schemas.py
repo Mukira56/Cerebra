@@ -136,6 +136,22 @@ class AutoFixSettings(StrictModel):
     council_after: int | None = Field(default=None, ge=0, le=10)
     scope: Literal["selected", "all"] | None = None
 
+class OwnerProfile(StrictModel):
+    name: str | None = None
+    headline: str | None = None
+    email: str | None = None
+    github: str | None = None
+    linkedin: str | None = None
+    website: str | None = None
+    location: str | None = None
+    bio: str | None = None
+    preferences: str | None = None
+    share: bool | None = None
+
+class AssistantAccess(StrictModel):
+    enabled: bool
+    acknowledge: bool = False
+
 class TaskTeam(StrictModel):
     role: Literal["planner", "implementer", "reviewer"]
     choice: str = Field(min_length=1, max_length=200)  # a model profile id, or "switch"

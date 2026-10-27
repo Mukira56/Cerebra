@@ -119,7 +119,9 @@ def _proposals(items, providers):
 def project_scope(project, session, topic):
     """Facts both models see each turn: the project, its tests, its GitHub remote and history, and key docs."""
     root = Path(project.path)
-    lines = [f"PROJECT: {project.name}", f"FOLDER: {project.path}",
+    from . import owner
+    about = owner.brief(session)
+    lines = ([about] if about else []) + [f"PROJECT: {project.name}", f"FOLDER: {project.path}",
              "TESTS: " + (" | ".join(" ".join(command) for command in project.test_commands) or "none registered yet")]
     git = find_git()
     if git and (root / ".git").exists():

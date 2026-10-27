@@ -19,7 +19,7 @@ from .config import Settings, apply_stored_policies
 from .db import Database
 from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
-                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete, TaskTeam,
+                      RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete, TaskTeam, AssistantAccess, OwnerProfile,
                       BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
                       OAuthFinish, GmailSetup, NotificationSetup)
 from .security import redact
@@ -243,11 +243,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             from . import support as support_settings_module
             assistant_settings = support_settings_module.load(session)
             auto_fix_settings = autofix_module.describe(autofix_module.load(session), settings)
+            from .capabilities import assistant_grant
+            assistant_access = assistant_grant(session)
             route_policy = routing.load(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -585,6 +587,48 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             apply_stored_policies(session, settings)
         supervisor._refresh_registry()
         return public_settings()
+
+    @app.get("/api/owner")
+    def owner_profile():
+        from . import owner
+        with db.Session() as session: return owner.load(session)
+
+    @app.put("/api/owner")
+    def owner_update(payload: OwnerProfile):
+        """About you: the owner's details the AI team uses in their work (a portfolio, a README, a client reply)."""
+        from . import owner
+        with db.Session.begin() as session:
+            value = owner.save(session, payload.model_dump(exclude_none=True))
+            session.add(Event(kind="settings_changed", message="Owner updated About you" + ("" if value["share"] else " (not shared with the AI team)")))
+        return value
+
+    @app.get("/api/owner/github")
+    def owner_github_login():
+        """The GitHub username of the account Cerebra is signed in to (gh), to fill in About you."""
+        import shutil, subprocess
+        gh = shutil.which("gh")
+        if not gh:
+            raise ValueError("GitHub CLI isn't installed. Install it from Toolchain, or type your username.")
+        result = subprocess.run([gh, "api", "user", "--jq", ".login"], capture_output=True, text=True, timeout=30,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        login = result.stdout.strip()
+        if result.returncode != 0 or not login:
+            raise ValueError("Cerebra isn't signed in to GitHub yet (GitHub page), or GitHub couldn't be reached.")
+        return {"github": login}
+
+    @app.post("/api/permissions/assistant-full-access")
+    def assistant_full_access(payload: AssistantAccess):
+        """The owner's choice to let tasks that Support or the Council created use Full access too."""
+        from .capabilities import set_assistant_grant
+        if payload.enabled and not settings.full_access:
+            raise ValueError("Turn on Full access first")
+        if payload.enabled and not payload.acknowledge:
+            raise ValueError("Tick the box to confirm")
+        with db.Session.begin() as session:
+            value = set_assistant_grant(session, payload.enabled)
+            session.add(Event(kind="policy", message="Owner let tasks from Support and the Council use Full access" if payload.enabled
+                              else "Tasks from Support and the Council run project-only again"))
+        return value
 
     @app.get("/api/routing")
     def routing_status():

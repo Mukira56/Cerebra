@@ -78,6 +78,17 @@ While it is on, **implementation runs only** change:
 
 Planning, review and chat keep their read-only flags.
 
+## Support and Council tasks with Full access (0.30.0, opt-in)
+
+**Settings › Full access › "Tasks that Support or the Council create for me get Full access too"** (`POST /api/permissions/assistant-full-access`, stored as `assistant_full_access`).
+- **Default:** off. It needs Full access to be on and a confirmation that explains the risk: their instructions come from what the models read, so a planted instruction could reach the laptop.
+- **When it applies:** `capabilities.full_access` checks it before every run, for tasks whose origin or fix instructions came from `support` or `council`. Turning it off applies to the next run.
+- **Not covered:** readiness tasks.
+
+## About you (0.30.0)
+
+The owner's public-profile details (`owner_profile`) are sent to the providers in Support, Council and planning or coding prompts only while "share with the AI team" is on. Reviewers never receive them. The form says not to enter passwords or keys, and values pass through `redact`.
+
 ## Auto-fix (0.21.0, opt-in)
 
 **Settings › Auto-fix** (`PUT /api/auto-fix`), stored as the `auto_fix` record, is off by default.

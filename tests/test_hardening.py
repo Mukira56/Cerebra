@@ -68,3 +68,17 @@ def test_waiting_approvals_reach_the_system_view(client, tmp_path):
     project = client.post("/api/projects", json={"name": "Calc", "path": str(repo), "authorize": True, "test_commands": [["python", "-c", "pass"]]}).json()
     task = client.post("/api/tasks", json={"project_id": project["id"], "description": "Fix calculator addition"}).json()
     assert {"task_id": task["id"], "kind": "plan"} in client.get("/api/telemetry").json()["approvals"]
+
+
+def test_the_owner_can_let_support_tasks_use_full_access_and_take_it_back(client, tmp_path):
+    enable_agents(client)
+    assert client.post("/api/permissions/assistant-full-access", json={"enabled": True, "acknowledge": True}).status_code == 400  # Full access first
+    client.post("/api/permissions/full-access", json={"enabled": True, "acknowledge_full_access": True, "acknowledge_github": True})
+    assert client.post("/api/permissions/assistant-full-access", json={"enabled": True}).status_code == 400  # must be confirmed
+    assert client.post("/api/permissions/assistant-full-access", json={"enabled": True, "acknowledge": True}).json()["enabled"] is True
+    assert client.get("/api/overview").json()["assistant_full_access"] is True
+    assert run_task(client, tmp_path / "a", "support").results["origin"] == "support"  # origin kept
+    assert run_task(client, tmp_path / "b", "readiness").results["origin"] == "readiness"  # not covered by this grant
+    client.post("/api/permissions/assistant-full-access", json={"enabled": False})
+    run_task(client, tmp_path / "c", "support")
+    assert client.app.state.supervisor.registry.access == [True, False, False]

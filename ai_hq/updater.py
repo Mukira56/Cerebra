@@ -106,6 +106,14 @@ class Updater:
         self.folder = settings.data_dir / "updates"
         self._lock = threading.Lock()
         self._progress = {"phase": "idle", "percent": 0, "bytes": 0, "total": 0, "message": "", "error": ""}
+        # A download that finished before Cerebra restarted is still ready to install: say so straight away.
+        try:
+            pending = self._pending()
+        except OSError:
+            pending = None
+        if pending and version_tuple(pending["tag"]) > version_tuple(__version__):
+            self._progress = {"phase": "ready", "tag": pending["tag"], "percent": 100, "bytes": 0, "total": 0, "error": "",
+                              "message": f"Cerebra {pending['tag'][1:]} is downloaded and verified. Press Install and restart when you're ready."}
 
     def _gh(self):
         gh = shutil.which("gh")
