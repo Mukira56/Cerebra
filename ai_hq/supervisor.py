@@ -376,6 +376,15 @@ class Supervisor:
             except Exception as exc:
                 if "target branch moved" in str(exc) and self._catch_up(task_id, repo, payload):
                     return self.get(task_id)
+                if "registered repository has user changes" in str(exc):
+                    files = self._dirty_files(repo)
+                    with self._lock, self.db.Session.begin() as session:
+                        stored = self._get(session, task_id)
+                        stored.results = {**stored.results, "integration_in_progress": False, "queued": False, "blocked_reason": "repository_has_changes",
+                                          "error": f"Your project folder has changes that aren't committed ({files}), so Cerebra won't merge over them. "
+                                                   "Commit them yourself, or press “Set aside my changes and merge” (they're kept in Git's stash)."}
+                        self._state(session, stored, "BLOCKED", f"Merge waiting: the project folder has uncommitted changes ({files})")
+                    return self.get(task_id)
                 self._fail(task_id, f"Integration blocked: {exc}", blocked=True)
                 return self.get(task_id)
             self._auto_push(task_id, repo, payload["base_branch"])
@@ -1410,6 +1419,26 @@ class Supervisor:
             self._event(session, task.id, "review", "Independent review recorded", {"simulated": result.simulated, "findings": len(findings)})
         return findings
 
+    def set_aside_and_merge(self, task_id):
+        """The owner's button for a merge blocked by uncommitted changes in the project folder: keep them in Git's stash
+        (labelled, nothing lost), then merge the approved, tested and reviewed work."""
+        task = self.get(task_id)
+        waiting = task.results.get("blocked_reason") == "repository_has_changes" or "registered repository has user changes" in str(task.results.get("error") or "")  # older versions
+        if task.state != "BLOCKED" or not waiting:
+            raise ValueError("This task isn't waiting on uncommitted changes in its project")
+        with self.db.Session() as session:
+            repo = session.get(Project, task.project_id).path
+        label = f"Cerebra set these aside before merging task {task_id[:8]} ({now()[:16]} UTC)"
+        kept = self.git.set_aside(repo, label)
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            stored.results = {**stored.results, "error": None, "blocked_reason": None, "set_aside": kept}
+            approval = self._prepare_merge(session, stored)
+            self._event(session, task_id, "merge", ("Your uncommitted changes were saved in Git's stash as “" + label + "” (restore them with git stash pop). " if kept else "")
+                        + "Merging the approved work now")
+            approval_id = approval.id
+        return self.resolve_approval(approval_id, True)
+
     def _prepare_merge(self, session, task):
         task.results = {**task.results, "queued": False, "verified": True}
         self._approval(session, task, "merge", {"branch": task.branch, "base_commit": task.base_commit,
@@ -1417,3 +1446,4 @@ class Supervisor:
             "candidate_commit": task.results["candidate_commit"], "diff": task.results.get("diff", ""),
             "notice": "Approves local integration only. No push, publication or deployment.",
             **({"disputed_findings": task.results["disputed_findings"]} if task.results.get("disputed_findings") else {})})
+        return session.scalars(select(Approval).where(Approval.task_id == task.id, Approval.kind == "merge", Approval.status == "pending")).first()

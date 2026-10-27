@@ -190,6 +190,7 @@
     [/Repair retry limit/i, "Tests or review still failed after every repair attempt. Ask the Assistant, or let Auto-fix take it."],
     [/changed or created these files|changed or created files/i, "Running the tests wrote files into the project. Open the task to see which ones."],
     [/No verification commands/i, "The project has no tests set. Add them on the Projects page."],
+    [/changes that aren't committed|registered repository has user changes/i, "Your project folder has uncommitted changes, so the merge is waiting. Open the task to set them aside and merge."],
     [/target branch moved/i, "Another task merged first. Press Try again: Cerebra now brings the work up to date and merges it."],
     [/changed the same parts of/i, "The project changed the same files since this task started. Press Try again to redo it on the latest code."],
   ];
@@ -337,7 +338,11 @@
       if (ACTIVE.includes(task.state) && !task.pause_requested) actions.append(button("Pause", () => taskAction(taskId, "pause")));
       if (task.pause_requested || task.state === "BLOCKED") actions.append(button("Resume", () => taskAction(taskId, "resume")));
       if (!["CANCELLED", "COMPLETED", "FAILED"].includes(task.state)) actions.append(button("Cancel", () => taskAction(taskId, "cancel"), "button danger"));
-      if (task.state === "FAILED" || (task.state === "BLOCKED" && task.results?.error && !task.pause_requested)) actions.append(button("↻ Try again", () => taskAction(taskId, "retry"), "button primary"));
+      if (task.state === "BLOCKED" && (task.results?.blocked_reason === "repository_has_changes" || /registered repository has user changes/.test(task.results?.error || ""))) actions.append(button("Set aside my changes and merge", () => showDialog("Set aside your changes and merge?", append(el("div"),
+        el("p", "", task.results.error || "Your project folder has uncommitted changes."),
+        el("p", "", "Cerebra saves them in Git's stash with a clear label (nothing is deleted), then merges this task's tested and reviewed work. To get them back later, run git stash pop in the project folder."),
+        actionsRow(button("Cancel", closeDialog, "button ghost"), button("Set aside and merge", async () => { closeDialog(); if (await act("Merged. Your changes are saved in Git's stash.", () => mutate(`/api/tasks/${encodeURIComponent(taskId)}/set-aside-and-merge`))) { await refresh(true); taskDetail(taskId); } }, "button primary")))), "button primary"));
+      else if (task.state === "FAILED" || (task.state === "BLOCKED" && task.results?.error && !task.pause_requested)) actions.append(button("↻ Try again", () => taskAction(taskId, "retry"), "button primary"));
       if (["FAILED", "BLOCKED"].includes(task.state)) actions.append(button("Ask the Assistant to fix this", () => askAssistantToFix(task), "button"));
       const fix = task.results?.auto_fix || {};
       const fixCovered = !fix.stopped && (data.auto_fix?.scope === "all" || fix.chosen);

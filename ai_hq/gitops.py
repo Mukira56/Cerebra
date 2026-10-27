@@ -49,7 +49,7 @@ class GitManager:
     def _git(self, repo, *args, check=True, timeout=60):
         self.require()
         filters = []
-        if any(argument in {"add", "commit", "merge", "rebase", "worktree", "checkout", "diff", "status", "reset", "revert", "show"} for argument in args):
+        if any(argument in {"add", "commit", "merge", "rebase", "stash", "worktree", "checkout", "diff", "status", "reset", "revert", "show"} for argument in args):
             # Configured clean/smudge/process filters are arbitrary executables too.
             configured = self._git(repo, "config", "--name-only", "--get-regexp", r"^filter\..*\.(clean|smudge|process|required)$", check=False)
             for key in configured.stdout.splitlines():
@@ -240,6 +240,15 @@ class GitManager:
                 self._git(root, "add", "--", *paths)
                 self._git(root, "-c", "user.name=Cerebra", "-c", "user.email=ai-hq@localhost", "commit", "--no-verify", "-m", message)
             return {"commit": self._git(root, "rev-parse", "HEAD").stdout.strip(), "changed": bool(paths), "changed_paths": paths}
+
+    def set_aside(self, repo, message):
+        """Save the owner's uncommitted changes in Git's stash (nothing is lost) so an approved merge can go ahead."""
+        root = self._root(repo)
+        with self._lock(root):
+            if not self._git(root, "status", "--porcelain=v1", "--untracked-files=all").stdout:
+                return None
+            self._git(root, "-c", "user.name=Cerebra", "-c", "user.email=ai-hq@localhost", "stash", "push", "--include-untracked", "-m", message)
+            return message
 
     def catch_up(self, worktree, new_base):
         """Replay a task's commits on top of the project's latest commit (git rebase), as an engineer would before merging.

@@ -213,3 +213,36 @@ def test_try_again_after_overlapping_changes_redoes_the_work_on_the_latest_code(
     assert (repo / "shared.txt").read_text(encoding="utf-8") == f"written by {first}\n" and (repo / f"{second[:8]}.txt").is_file()
     coding = [request for name, request in supervisor.registry.requests if getattr(request, "role", "") == "implement"]
     assert "Redo this task on the project's latest code" in coding[-1].description
+
+
+def test_uncommitted_changes_in_the_project_wait_then_set_aside_and_merge(hq):
+    from ai_hq import autofix
+    supervisor, _, repo, db, _ = hq
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    (repo / "calculator.py").write_text("def add(a, b):\n    return a - b  # the owner's own edit\n", encoding="utf-8")
+    supervisor.resolve_approval(pending_approval(db, task_id).id, True)
+    task = supervisor.get(task_id)
+    assert task.state == "BLOCKED" and task.results["blocked_reason"] == "repository_has_changes"
+    assert "calculator.py" in task.results["error"] and autofix.problem(task) is None  # named, and Auto-fix leaves it alone
+    supervisor.set_aside_and_merge(task_id)
+    assert supervisor.get(task_id).state == "COMPLETED" and "return a + b" in (repo / "calculator.py").read_text()
+    stash = git(repo, "stash", "list")
+    assert supervisor.get(task_id).results["set_aside"]
+    assert f"Cerebra set these aside before merging task {task_id[:8]}" in stash  # nothing lost
+
+
+def test_a_merge_blocked_by_an_older_version_can_be_set_aside_too(hq):
+    supervisor, _, repo, db, _ = hq
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    (repo / "notes.txt").write_text("owner's scratch notes", encoding="utf-8")
+    approval = pending_approval(db, task_id)
+    with db.Session.begin() as session:  # what versions before 0.32 recorded
+        from ai_hq.models import Approval
+        session.get(Approval, approval.id).status = "approved"
+        stored = session.get(Task, task_id)
+        stored.state = "BLOCKED"
+        stored.results = {**stored.results, "error": "Integration blocked: Integration refused: registered repository has user changes", "blocked_reason": None}
+    supervisor.set_aside_and_merge(task_id)
+    assert supervisor.get(task_id).state == "COMPLETED" and not (repo / "notes.txt").exists()

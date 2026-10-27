@@ -374,6 +374,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
+    @app.post("/api/tasks/{task_id}/set-aside-and-merge")
+    def task_set_aside_and_merge(task_id: str):
+        """Keep the owner's uncommitted project changes in Git's stash, then merge the approved work."""
+        with db.Session() as session: task_or_404(session, task_id)
+        return supervisor.set_aside_and_merge(task_id)
+
     @app.post("/api/tasks/{task_id}/team")
     def task_team(task_id: str, payload: TaskTeam):
         """Change who plans, codes or reviews this task (for example when one company's usage has run out)."""

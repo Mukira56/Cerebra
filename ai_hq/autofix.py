@@ -25,7 +25,7 @@ OFF = {"enabled": False, "full_access": False, "max_attempts": 4, "council_after
 SCOPES = {"selected", "all"}
 MAX_ATTEMPTS = 10
 # Stuck states the owner or Cerebra resolves without a fix: waiting for usage, the owner's pause, a retry already queued.
-WAITING = {"waiting_for_usage", "waiting_for_network", "paused_by_user", "retry_requested", "restored_checkpoint", "interrupted_restart", "paused_on_close", "interrupted_integration", "overlapping_changes"}
+WAITING = {"waiting_for_usage", "waiting_for_network", "paused_by_user", "retry_requested", "restored_checkpoint", "interrupted_restart", "paused_on_close", "interrupted_integration", "overlapping_changes", "repository_has_changes"}
 SCAN_SECONDS = 5
 
 
