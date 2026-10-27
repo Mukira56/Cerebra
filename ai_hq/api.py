@@ -332,6 +332,16 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 return f"task:{task.id}", task.worktree_path, task.description[:60]
         raise HTTPException(404, "Unknown view target")
 
+    @app.get("/api/projects/{project_id}/settings-files")
+    def project_settings_files(project_id: str):
+        """Which local settings files (.env…) the project has, and which settings it still needs. Names only, never values."""
+        from . import envfiles
+        with db.Session() as session:
+            project = session.get(Project, project_id)
+            if project is None: raise HTTPException(404, "Project not found")
+            path = project.path
+        return {"files": envfiles.settings_files(path), "missing": envfiles.missing(path)}
+
     @app.get("/api/view/{kind}/{identifier}")
     def view_status(kind: str, identifier: str):
         key, folder, _ = view_target(kind, identifier)

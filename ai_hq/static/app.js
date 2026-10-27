@@ -138,6 +138,9 @@
     const count = pendingApprovals().length; $("#approval-count").textContent = count; $("#approval-count").classList.toggle("hidden", !count);
     const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "away mode" : "agents on") : "agents off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
     $("#version-label").textContent = `Cerebra v${data.version || ""}`;
+    // The taskbar shows the window title: say when something needs the owner, is running, or failed.
+    const waitingCount = pendingApprovals().length, workingCount = realTasks().filter(task => ACTIVE.includes(task.state)).length, failedCount = realTasks().filter(task => task.state === "FAILED").length;
+    document.title = waitingCount ? `(${waitingCount}) Cerebra — waiting for you` : workingCount ? "Cerebra — working…" : failedCount ? `Cerebra — ${failedCount} problem${failedCount === 1 ? "" : "s"}` : "Cerebra · Development command center";
     const update = data.update_progress || {}, pill = $("#update-status"), active = ["starting", "downloading", "verifying"].includes(update.phase);
     pill.classList.toggle("hidden", !(active || update.phase === "ready"));
     pill.className = `pill ${update.phase === "ready" ? "good" : ""}${active || update.phase === "ready" ? "" : " hidden"}`;
@@ -258,10 +261,12 @@
   function tasksView() {
     const node = el("div"), filters = el("div", "form-grid"), projectFilter = select([["", "All projects"], ...array(data.projects).map(project => [project.id, project.name])]), stateFilter = select([["", "All states"], ["active", "Active (working now)"], ...[...new Set([...array(data.tasks).map(task => task.state), "FAILED", "COMPLETED"])].map(state => [state, nice(state)])], taskStateFilter);
     taskStateFilter = "";
+    const search = input("Search tasks: words, a task ID, a project, an error…"); search.type = "search";
     const holder = el("div");
-    function paint() { const tasks = array(data.tasks).filter(task => (!projectFilter.value || task.project_id === projectFilter.value) && (!stateFilter.value || task.state === stateFilter.value || (stateFilter.value === "active" && ACTIVE.includes(task.state)))); holder.replaceChildren(panel("Tasks", tasks.length ? taskRows(tasks) : body(empty("No tasks here", "Create a task to get the AI team working.", button("+ New task", () => taskForm(projectFilter.value), "button primary"), "#")), null, tasks.length)); }
-    projectFilter.addEventListener("change", paint); stateFilter.addEventListener("change", paint);
-    append(filters, field("Project", projectFilter), field("State", stateFilter)); append(node, panel("Filter", body(filters)), holder); paint(); return node;
+    function paint() { const tasks = array(data.tasks).filter(task => (!projectFilter.value || task.project_id === projectFilter.value) && (!stateFilter.value || task.state === stateFilter.value || (stateFilter.value === "active" && ACTIVE.includes(task.state)))
+      && (!search.value.trim() || search.value.trim().toLowerCase().split(/\s+/).every(word => `${task.description} ${task.id} ${projectFor(task.project_id)?.name || ""} ${failureReason(task)} ${task.results?.error || ""}`.toLowerCase().includes(word)))); holder.replaceChildren(panel("Tasks", tasks.length ? taskRows(tasks) : body(empty("No tasks here", "Create a task to get the AI team working.", button("+ New task", () => taskForm(projectFilter.value), "button primary"), "#")), null, tasks.length)); }
+    projectFilter.addEventListener("change", paint); stateFilter.addEventListener("change", paint); search.addEventListener("input", paint);
+    append(filters, field("Search", search), field("Project", projectFilter), field("State", stateFilter)); append(node, panel("Filter", body(filters)), holder); paint(); return node;
   }
   const TIER_NAME = {frontier: "frontier", balanced: "balanced", fast: "fast"};
   function catalogModels() { return ["claude", "codex"].flatMap(provider => array(data?.catalog?.[provider]).map(item => ({...item, provider}))); }
@@ -471,6 +476,12 @@
       const tests = array(project.test_commands), shown = el("div", "test-commands");
       tests.forEach(command => { const line = el("code", "", shortCommand(command)); line.title = command.join(" "); shown.append(line); });
       append(card, top, kv([["Branch", project.default_branch], ["Tasks", tasks.length], ["Tests", tests.length ? shown : "none — add some"]]));
+      const needs = el("div"); card.append(needs);
+      api(`/api/projects/${encodeURIComponent(project.id)}/settings-files`).then(info => {
+        if (!info.missing) return;
+        const names = array(info.missing.names);
+        needs.replaceChildren(hint(`Its tests need local settings this laptop doesn't have yet${names.length ? `: ${names.slice(0, 6).join(", ")}${names.length > 6 ? "…" : ""}` : ""}. Copy ${info.missing.example} to a real settings file (for example .env.local) in the project folder and fill in your own values. Cerebra lends it to test runs only; the AI never sees it.`, true));
+      }).catch(() => {});
       append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), viewControls("project", project.id), button("Chat", () => newChat(project.id), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
       grid.append(card);
     });

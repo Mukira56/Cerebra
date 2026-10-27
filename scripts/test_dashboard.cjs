@@ -300,6 +300,12 @@ const path = require('node:path');
       assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('body').innerText()), `"null" is printed on the ${name} page`);
     }
     await page.evaluate(() => { location.hash = 'tasks'; }); await page.waitForTimeout(600);
+    assert.match(await page.title(), /^(\(\d+\) )?Cerebra/, 'The window title names Cerebra and what needs the owner');
+    const rowsBefore = await page.locator('.row[data-task-id]').count();
+    await page.getByPlaceholder(/Search tasks/).fill('no task is called this zzz'); await page.waitForTimeout(300);
+    assert.equal(await page.locator('.row[data-task-id]').count(), 0, 'Search hides tasks that do not match');
+    await page.getByPlaceholder(/Search tasks/).fill(''); await page.waitForTimeout(300);
+    assert.equal(await page.locator('.row[data-task-id]').count(), rowsBefore, 'Clearing the search shows every task again');
     if (await page.locator('.row[data-task-id]').count()) {
       await page.locator('.row[data-task-id]').first().click(); await page.locator('dialog[open]').waitFor(); await page.waitForTimeout(800);
       assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('dialog[open]').innerText()), '"null" is printed in a task window');

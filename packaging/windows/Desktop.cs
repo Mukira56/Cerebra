@@ -61,6 +61,12 @@ internal sealed class DesktopWindow : Form {
             view.CoreWebView2.DownloadStarting+=delegate(object sender,CoreWebView2DownloadStartingEventArgs args) { args.Cancel=true; };
             view.CoreWebView2.PermissionRequested+=delegate(object sender,CoreWebView2PermissionRequestedEventArgs args) { args.State=CoreWebView2PermissionState.Deny; };
             view.CoreWebView2.NavigationCompleted+=delegate { loading.Visible=false; };
+            // The taskbar shows whether Cerebra is waiting for the owner, working, or has a problem (set by the page).
+            view.CoreWebView2.DocumentTitleChanged+=delegate {
+                string title=view.CoreWebView2.DocumentTitle??"";
+                bool ours=title.StartsWith("Cerebra")||System.Text.RegularExpressions.Regex.IsMatch(title,@"^\(\d{1,3}\) Cerebra");
+                Text=ours&&title.Length<=120?title:"Cerebra";
+            };
             view.CoreWebView2.ProcessFailed+=delegate { loading.Text="The workspace renderer stopped. Use the tray menu to restart Cerebra.";loading.Visible=true;loading.BringToFront(); };
         }
         view.CoreWebView2.Navigate(url);

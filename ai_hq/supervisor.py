@@ -10,7 +10,7 @@ import time
 
 from sqlalchemy import select
 
-from . import evidence, packages, usage
+from . import envfiles, evidence, packages, usage
 from .agents import AgentRegistry, AgentRequest
 from .processes import CommandNotFound, ProcessRunner
 from .gitops import GitManager
@@ -1276,10 +1276,12 @@ class Supervisor:
         if failed_install:
             results.append(failed_install)
             commands = []
-        for command in commands:
-            if self._interrupted(task_id):
-                return False
-            results.append(self._run_test(task_id, command, workdir))
+        with envfiles.lent(self._project_path(task_id), workdir) as lent_files:
+            self._note_lent(task_id, lent_files)
+            for command in commands:
+                if self._interrupted(task_id):
+                    return False
+                results.append(self._run_test(task_id, command, workdir))
         if self._interrupted(task_id):
             return False
         if self.git.inspect_repository(workdir).get("dirty"):
@@ -1333,19 +1335,30 @@ class Supervisor:
                 task = self._get(session, task_id)
                 task.test_results = task.test_results + [failed_install]
                 self._event(session, task_id, "test", "Installing the project's packages failed, so the tests could not run", {"command": failed_install["command"]})
-        for command in commands:
-            if self._interrupted(task_id):
-                break
-            result = self._run_test(task_id, command, workdir)
-            results.append(result)
-            log_dir = self.settings.data_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            (log_dir / f"{task_id}-test-{uid()}.log").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-            with self.db.Session.begin() as session:
-                task = self._get(session, task_id)
-                task.test_results = task.test_results + [result]
-                self._event(session, task_id, "test", "Verification passed" if result["passed"] else "Verification failed", {"command": command, "exit_code": result["exit_code"]})
+        with envfiles.lent(self._project_path(task_id), workdir) as lent_files:  # removed again before any AI runs
+            self._note_lent(task_id, lent_files)
+            for command in commands:
+                if self._interrupted(task_id):
+                    break
+                result = self._run_test(task_id, command, workdir)
+                results.append(result)
+                log_dir = self.settings.data_dir / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                (log_dir / f"{task_id}-test-{uid()}.log").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+                with self.db.Session.begin() as session:
+                    task = self._get(session, task_id)
+                    task.test_results = task.test_results + [result]
+                    self._event(session, task_id, "test", "Verification passed" if result["passed"] else "Verification failed", {"command": command, "exit_code": result["exit_code"]})
         return results
+
+    def _project_path(self, task_id):
+        with self.db.Session() as session:
+            return session.get(Project, self._get(session, task_id).project_id).path
+
+    def _note_lent(self, task_id, files):
+        if files:
+            with self.db.Session.begin() as session:
+                self._event(session, task_id, "settings", "Lent the project's local settings files to this test run (removed again before any AI runs): " + ", ".join(files[:8]))
 
     def _record_review(self, task, result, tests):
         findings = []
