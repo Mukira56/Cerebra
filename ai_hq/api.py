@@ -212,6 +212,23 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     HEAVY_RESULTS = {"diff", "architecture", "handoff_note", "changed_paths", "disputed_findings"}
 
+    finished_cache = {}
+
+    def finished(row):
+        """Whether a stopped task's work is finished and only the merge is left (it isn't a problem, it waits for the
+        owner). It looks at Git, so the answer is kept for a minute per task version: the list refreshes every few seconds."""
+        if row.state not in {"FAILED", "BLOCKED"}:
+            return False
+        key, cached = (row.id, row.updated_at), finished_cache.get(row.id)
+        if cached and cached[0] == key and time.monotonic() - cached[1] < 60:
+            return cached[2]
+        try:
+            ready = bool(supervisor.finished_work(row, quick=True).get("ready"))
+        except Exception:
+            ready = False
+        finished_cache[row.id] = (key, time.monotonic(), ready)
+        return ready
+
     def slim_task(task):
         """The task list is refreshed every few seconds: leave out diffs, advisories and test output, which only the
         task's own window (GET /api/tasks/{id}) shows. Keeps the refresh small on slow laptops."""
@@ -226,7 +243,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def overview():
         with db.Session() as session:
             projects = [as_dict(row) for row in session.scalars(select(Project).order_by(Project.created_at.desc()))]
-            tasks = [slim_task(as_dict(row)) for row in session.scalars(select(Task).order_by(Task.created_at.desc()).limit(500))]
+            rows = list(session.scalars(select(Task).order_by(Task.created_at.desc()).limit(500)))
+            tasks = [slim_task(as_dict(row)) for row in rows]
+            for task, row in zip(tasks, rows):
+                task["finished"] = finished(row)
             waits_for = {}
             for row in session.scalars(select(Dependency)).all():
                 waits_for.setdefault(row.task_id, []).append(row.depends_on)

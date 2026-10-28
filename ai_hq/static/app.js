@@ -139,7 +139,7 @@
     const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "away mode" : "agents on") : "agents off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
     $("#version-label").textContent = `Cerebra v${data.version || ""}`;
     // The taskbar shows the window title: say when something needs the owner, is running, or failed.
-    const waitingCount = pendingApprovals().length, workingCount = realTasks().filter(task => ACTIVE.includes(task.state)).length, failedCount = realTasks().filter(task => task.state === "FAILED").length;
+    const waitingCount = pendingApprovals().length + finishedTasks().length, workingCount = realTasks().filter(task => ACTIVE.includes(task.state)).length, failedCount = realTasks().filter(task => task.state === "FAILED" && !task.finished).length;
     document.title = waitingCount ? `(${waitingCount}) Cerebra — waiting for you` : workingCount ? "Cerebra — working…" : failedCount ? `Cerebra — ${failedCount} problem${failedCount === 1 ? "" : "s"}` : "Cerebra · Development command center";
     const update = data.update_progress || {}, pill = $("#update-status"), active = ["starting", "downloading", "verifying"].includes(update.phase);
     pill.classList.toggle("hidden", !(active || update.phase === "ready"));
@@ -191,9 +191,11 @@
     [/changed or created these files|changed or created files/i, "Running the tests wrote files into the project. Open the task to see which ones."],
     [/No verification commands/i, "The project has no tests set. Add them on the Projects page."],
     [/changes that aren't committed|registered repository has user changes/i, "Your project folder has uncommitted changes, so the merge is waiting. Open the task to set them aside and merge."],
+    [/has no settings file yet/i, "Its tests need settings only you have (database address, secrets…). Open the task to see which ones; it continues by itself once you add them."],
     [/target branch moved/i, "Another task merged first. Press Try again: Cerebra now brings the work up to date and merges it."],
     [/changed the same parts of/i, "The project changed the same files since this task started. Press Try again to redo it on the latest code."],
   ];
+  function finishedTasks() { return realTasks().filter(task => task.finished); }
   function failureReason(task) {
     const error = String(task.results?.error || "");
     if (!error && task.state === "BLOCKED") {
@@ -212,9 +214,10 @@
       const row = el("div", "row"), info = el("div", "row-main"), meta = el("div", "row-meta"), models = taskModels(task);
       row.tabIndex = 0; row.setAttribute("role", "button"); row.dataset.taskId = task.id; row.addEventListener("click", () => taskDetail(task.id)); row.addEventListener("keydown", event => { if (event.key === "Enter") taskDetail(task.id); });
       append(meta, el("span", "", projectFor(task.project_id)?.name || "project"), el("span", "", "·"), el("span", "", `${models.implementer} → ${models.reviewer}`), el("span", "", "·"), el("span", "", relative(task.updated_at)), task.mode === "mock" ? badge("old demo", "muted") : null);
-      const reason = (task.state === "FAILED" || (task.state === "BLOCKED" && !task.pause_requested)) ? failureReason(task) : "";
-      const calm = task.state === "BLOCKED" && (!task.results?.error || ["waiting_for_usage", "waiting_for_network"].includes(task.results?.blocked_reason));
-      append(info, el("strong", "", task.description), meta, reason ? el("div", calm ? "row-reason waiting" : "row-reason", reason) : null); append(row, info, badge(task.pause_requested ? "PAUSED" : task.state), el("span", "chev", "›")); list.append(row);
+      const reason = task.finished ? "Finished and reviewed: only the merge is left. Open it to merge."
+        : (task.state === "FAILED" || (task.state === "BLOCKED" && !task.pause_requested)) ? failureReason(task) : "";
+      const calm = task.finished || (task.state === "BLOCKED" && (!task.results?.error || ["waiting_for_usage", "waiting_for_network", "needs_settings"].includes(task.results?.blocked_reason)));
+      append(info, el("strong", "", task.description), meta, reason ? el("div", calm ? "row-reason waiting" : "row-reason", reason) : null); append(row, info, task.finished ? badge("READY TO MERGE", "green") : badge(task.pause_requested ? "PAUSED" : task.state), el("span", "chev", "›")); list.append(row);
     });
     return list;
   }
@@ -238,7 +241,7 @@
     if (offline.length) node.append(panel("Waiting for the internet", body(el("p", "", "These tasks couldn't reach the AI because the internet or DNS was down. Nothing is lost: Cerebra tries again every 5 minutes, or press Resume in a task to try now."),
       list(offline.map(task => `${task.description.slice(0, 80)} · next try ${date(task.results.retry_after)}`)))));
     const stats = el("div", "grid stats");
-    [["Projects", array(data.projects).length, "authorized repositories", ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length, "approvals", "amber"], ["Done", tasks.filter(task => task.state === "COMPLETED").length, "finished tasks", "green"], ["Problems", tasks.filter(task => task.state === "FAILED").length, "failed tasks", "red"]]
+    [["Projects", array(data.projects).length, "authorized repositories", ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length + finishedTasks().length, finishedTasks().length ? "approvals and merges" : "approvals", "amber"], ["Done", tasks.filter(task => task.state === "COMPLETED").length, "finished tasks", "green"], ["Problems", tasks.filter(task => task.state === "FAILED" && !task.finished).length, "failed tasks", "red"]]
       .forEach(([label, value, note, style]) => {
         const card = append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note));
         const target = {"Projects": ["projects"], "Active": ["tasks", "active"], "Waiting for you": ["approvals"], "Done": ["tasks", "COMPLETED"], "Problems": ["tasks", "FAILED"]}[label];
@@ -249,8 +252,9 @@
     node.append(stats);
     const grid = el("div", "grid two"), left = el("div"), right = el("div");
     left.append(panel("Recent tasks", tasks.length ? taskRows(tasks.slice(0, 8)) : body(empty("No tasks yet", "Create a task: describe what you want, and the AI team plans, codes, tests and reviews it.", button("+ New task", () => taskForm(), "button primary"), "#")), link("All tasks →", "tasks"), tasks.length));
-    const waiting = pendingApprovals();
+    const waiting = pendingApprovals(), merges = finishedTasks();
     if (waiting.length) left.append(panel("Waiting for your decision", approvalCards(waiting.slice(0, 3)), link("All approvals →", "approvals"), waiting.length));
+    if (merges.length) left.append(panel("Finished work to merge", taskRows(merges.slice(0, 3)), link("All →", "approvals"), merges.length));
     const team = body(kv([["Planner", profileLabel(data.roles?.planner)], ["Coder", profileLabel(data.roles?.implementer)], ["Reviewer", profileLabel(data.roles?.reviewer)], ["Agents", agentsOn() ? "On · each task asks first" : "Off"],
       ...array(data.agents).filter(agent => agent.usage_until && new Date(agent.usage_until) > new Date()).map(agent => [nice(agent.name), `Out of usage until ${new Date(agent.usage_until).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}; the other model covers for it`])]), link("Change models →", "models"));
     append(right, panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
@@ -433,7 +437,9 @@
   }
   function approvalsView() {
     const node = el("div"), waiting = pendingApprovals();
-    node.append(panel("Waiting for you", waiting.length ? approvalCards(waiting) : body(empty("Nothing to decide", "When a task needs your yes, it appears here.", null, "✓")), null, waiting.length));
+    const merges = finishedTasks();
+    if (waiting.length || !merges.length) node.append(panel("Waiting for you", waiting.length ? approvalCards(waiting) : body(empty("Nothing to decide", "When a task needs your yes, it appears here.", null, "✓")), null, waiting.length));
+    if (merges.length) node.append(panel("Finished work to merge", taskRows(merges), null, merges.length));
     const history = array(data.approvals).filter(item => String(item.status).toLowerCase() !== "pending").slice(0, 60);
     if (history.length) node.append(panel("Decision history", table(["Decision", "Task", "Answer", "When"], history.map(item => [nice(item.kind), button(taskFor(item.task_id)?.description?.slice(0, 60) || item.task_id.slice(0, 8), () => taskDetail(item.task_id), "text-link"), badge(item.status), date(item.resolved_at)]))));
     return node;

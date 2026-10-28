@@ -101,3 +101,15 @@ def test_sign_out_runs_the_tools_own_logout(client):
     assert providers["claude"]["sign_in"]["signed_in"] is False and providers["claude"]["can_sign_out"]
     assert not providers["copilot"]["can_sign_out"]
     assert client.post("/api/providers/copilot/sign-out").status_code == 400
+
+
+def test_finished_work_is_listed_as_waiting_to_merge_not_as_a_problem(client, tmp_path):
+    enable_agents(client)
+    _, identifier = task_for(client, tmp_path)
+    client.put("/api/autopilot", json=AWAY)
+    supervisor = client.app.state.supervisor
+    supervisor.run_until_idle()  # tested and reviewed; the merge waits for the owner
+    merge = next(row for row in client.get(f"/api/tasks/{identifier}").json()["approvals"] if row["status"].lower() == "pending")
+    supervisor.resolve_approval(merge["id"], False)  # declined for now: the task stops, but its work is done
+    task = next(task for task in client.get("/api/overview").json()["tasks"] if task["id"] == identifier)
+    assert task["state"] == "BLOCKED" and task["finished"] is True

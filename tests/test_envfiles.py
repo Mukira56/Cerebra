@@ -69,3 +69,49 @@ def test_tests_get_the_settings_and_the_ai_never_sees_them(hq):
     assert task.state == "AWAITING_APPROVAL", task.results.get("error")
     assert supervisor.registry.saw and not any(seen for _, seen in supervisor.registry.saw)  # planner, coder, reviewer
     assert not (Path(task.worktree_path) / ".env").exists()
+
+
+def needs_settings_project(hq):
+    """A project whose tests fail without .env.local and that only ships .env.example (EstatePilot's case)."""
+    supervisor, project_id, repo, db, _ = hq
+    (repo / ".gitignore").write_text((repo / ".gitignore").read_text() + ".env.local\n", encoding="utf-8")
+    (repo / ".env.example").write_text("DATABASE_URL=\nBETTER_AUTH_SECRET=\n", encoding="utf-8")
+    git(repo, "add", "."); git(repo, "commit", "-m", "Example settings")
+    needs = "import pathlib, sys; sys.exit(0 if pathlib.Path('.env.local').exists() else 1)"
+    with db.Session.begin() as session:
+        session.get(Project, project_id).test_commands = [[sys.executable, "-c", needs], [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]]
+    supervisor.registry = SeesSettings()
+    return supervisor, repo
+
+
+def coder_runs(supervisor):
+    return sum(1 for role, _ in supervisor.registry.saw if role == "implement")
+
+
+def test_missing_settings_wait_for_the_owner_instead_of_repairs(hq):
+    supervisor, repo = needs_settings_project(hq)
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "BLOCKED" and task.results["blocked_reason"] == "needs_settings", task.results.get("error")
+    assert "DATABASE_URL" in task.results["error"] and coder_runs(supervisor) == 1 and task.retry_count == 0  # no repair spent
+    supervisor.run_until_idle()
+    assert supervisor.get(task_id).state == "BLOCKED"  # still waiting while the file is missing
+    (repo / ".env.local").write_text("DATABASE_URL=postgres://mine\n", encoding="utf-8")
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "AWAITING_APPROVAL", task.results.get("error")
+    assert coder_runs(supervisor) == 1  # the saved work was tested again, not rewritten
+    assert not any(seen for _, seen in supervisor.registry.saw)
+
+
+def test_try_again_without_settings_repairs_as_usual(hq):
+    supervisor, repo = needs_settings_project(hq)
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    assert supervisor.get(task_id).results["blocked_reason"] == "needs_settings"
+    supervisor.try_again(task_id)
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.results.get("settings_override") and task.results.get("blocked_reason") != "needs_settings"
+    assert coder_runs(supervisor) > 1  # failures went to the coder this time

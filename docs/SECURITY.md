@@ -87,7 +87,7 @@ Planning, review and chat keep their read-only flags.
 
 ## Settings files for test runs (0.31.0)
 
-A project's real settings files (`.env*`, not examples) are copied from the project folder into a task's working copy only for the duration of Cerebra's own test run, then deleted (in a `finally`, so a crash doesn't leave them). AI runs happen before or after test runs, never during them, so the models don't see these files; a test asserts this for the planner, coder and reviewer. Project cards list missing setting names from `.env.example` only, never values.
+A project's real settings files (`.env*`, not examples) are copied from the project folder into a task's working copy only for the duration of Cerebra's own test run, then deleted (in a `finally`, so a crash doesn't leave them). AI runs happen before or after test runs, never during them, so the models don't see these files; a test asserts this for the planner, coder and reviewer. Project cards list missing setting names from `.env.example` only, never values. Since 0.35.0, a task whose tests fail while the project has only an example settings file waits for the owner (`needs_settings`) instead of asking the AI to repair it; its message names the settings, never values, and the AI is never asked to invent secrets.
 
 ## About you (0.30.0)
 

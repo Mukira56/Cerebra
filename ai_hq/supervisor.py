@@ -575,6 +575,10 @@ class Supervisor:
                     if task.state == "BLOCKED" and waiting in {"waiting_for_usage", "waiting_for_network"} and not task.pause_requested and retry and retry <= now():
                         task.results = {**task.results, "queued": True, "blocked_reason": None, "retry_after": None}
                         self._state(session, task, "READY", "Trying again: checking the internet connection" if waiting == "waiting_for_network" else "Trying again: checking whether an AI model has usage available")
+                    elif task.state == "BLOCKED" and waiting == "needs_settings" and not task.pause_requested \
+                            and envfiles.missing(session.get(Project, task.project_id).path) is None:
+                        task.results = {**task.results, "queued": True, "blocked_reason": None, "error": None, "resume_stage": "review"}
+                        self._state(session, task, "READY", "The project's settings file is there now: testing the saved work again")
                 for task in candidates:
                     if not task.approved or task.pause_requested or not task.results.get("queued"):
                         continue
@@ -719,6 +723,8 @@ class Supervisor:
                 self._fail(task_id, "Running the tests changed or created these files: " + self._dirty_files(task.worktree_path) + ". "
                            "Add generated files to .gitignore, or make the tests write somewhere else, then press Resume.", blocked=True)
                 return
+            if any(not result["passed"] for result in tests) and self._wait_for_settings(task_id, project.path):
+                return
             with self._lock, self.db.Session.begin() as session:
                 stored = self._get(session, task_id)
                 self._state(session, stored, "REVIEWING", "Independent reviewer assigned a separate committed snapshot")
@@ -753,6 +759,26 @@ class Supervisor:
                 else:
                     self._prepare_merge(session, stored)
                     return
+
+    def _wait_for_settings(self, task_id, repo):
+        """Tests failed and the project has only an example settings file (.env.example), no real one: the AI can't
+        supply the owner's database URLs and secrets, so ask the owner instead of spending repair runs on it.
+        The saved work is kept and tested again as soon as the settings file appears."""
+        if self.get(task_id).results.get("settings_override"):
+            return False
+        needed = envfiles.missing(repo)
+        if not needed:
+            return False
+        names = needed["names"]
+        listed = (": " + ", ".join(names[:8]) + ("…" if len(names) > 8 else "")) if names else ""
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task_id)
+            stored.results = {**stored.results, "queued": False, "blocked_reason": "needs_settings", "resume_stage": "review", "missing_settings": needed,
+                              "error": f"The tests failed and this project has no settings file yet, only {needed['example']}. It needs your own values{listed}. "
+                                       f"Copy {needed['example']} to .env.local in the project folder and fill them in; Cerebra tests the saved work again by itself "
+                                       "once it's there (the AI never sees it). Or press Try again to repair without them."}
+            self._state(session, stored, "BLOCKED", f"Waiting for the project's settings: its tests need values only you have ({needed['example']} has no real counterpart)")
+        return True
 
     def _disputed_merge(self, task_id, project):
         """The coder made no change for the review findings. If the existing candidate still passes every registered
@@ -898,11 +924,27 @@ class Supervisor:
         error = " ".join(str((task.results or {}).get("error") or "it stopped without a recorded error").split())[:600]
         if (task.results or {}).get("blocked_reason") == "overlapping_changes":
             return self._redo_on_latest(task, error)
+        if (task.results or {}).get("blocked_reason") == "needs_settings":
+            return self._test_again(task)
         failing = [result for result in evidence.latest_attempt(task.test_results or []) if not result.get("passed")]
         found = " | ".join(f"{' '.join(map(str, result.get('command') or []))[-60:]}: " + " ".join(str(result.get("what_failed") or evidence.what_failed(
             f"{result.get('stdout') or ''}{chr(10)}{result.get('stderr') or ''}", 1500)).split())[:1500] for result in failing[:2])
         return self.retry_with_instructions(task_id, f"Try again from where it stopped. The last attempt ended with: {error}"
             + (f" These registered tests still fail; make them pass without weakening them. What failed: {found}" if found else ""), author="user")
+
+    def _test_again(self, task):
+        """Try again on a task that waited for settings: test the saved work again (no AI run). If the settings are
+        still missing, the owner chose to go on without them, so failures are repaired as usual."""
+        with self._lock, self.db.Session.begin() as session:
+            stored = self._get(session, task.id)
+            override = envfiles.missing(session.get(Project, stored.project_id).path) is not None
+            stored.results = {**stored.results, "queued": True, "blocked_reason": None, "error": None, "resume_stage": "review",
+                              **({"settings_override": True} if override else {})}
+            stored.pause_requested = False
+            self._state(session, stored, "READY", "Trying again without the project's settings: test failures will be repaired as usual" if override
+                        else "Testing the saved work again with the project's settings")
+        self._wake.set()
+        return self.get(task.id)
 
     def _redo_on_latest(self, task, error):
         """Other work changed the same files: start this task again on the project's latest code, with the earlier
@@ -1421,9 +1463,10 @@ class Supervisor:
             self._event(session, task.id, "review", "Independent review recorded", {"simulated": result.simulated, "findings": len(findings)})
         return findings
 
-    def finished_work(self, task):
+    def finished_work(self, task, quick=False):
         """Whether a stopped task's work is done and only the merge is missing: its working copy holds the candidate,
-        its most recent tests all passed and its review left nothing validated to fix. {"ready", "why", "uncommitted"}."""
+        its most recent tests all passed and its review left nothing validated to fix. {"ready", "why", "uncommitted"}.
+        quick (for the task list): two Git calls on the working copy only, without looking at the project folder."""
         if task.state not in {"FAILED", "BLOCKED"} or task.pause_requested or (task.results or {}).get("integration"):
             return {"ready": False}
         candidate = (task.results or {}).get("candidate_commit")
@@ -1435,6 +1478,10 @@ class Supervisor:
         if not (candidate and latest and all(result.get("passed") for result in latest) and reviewed and not validated
                 and task.worktree_path and Path(task.worktree_path).is_dir()):
             return {"ready": False}
+        if quick:
+            head = self.runner.run(["git", "rev-parse", "HEAD"], task.worktree_path, timeout=30)
+            status = self.runner.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], task.worktree_path, timeout=30)
+            return {"ready": head.exit_code == 0 and head.stdout.strip() == candidate and status.exit_code == 0 and not status.stdout.strip()}
         try:
             copy = self.git.inspect_repository(task.worktree_path)
             if copy["head"] != candidate or copy.get("dirty"):
