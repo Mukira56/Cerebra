@@ -697,7 +697,9 @@ class Supervisor:
                 progress_fingerprint = hashlib.sha256(snapshot.get("diff", "").encode("utf-8")).hexdigest()
                 previous = task.results.get("candidate_commit")
                 if previous == fingerprint or progress_fingerprint == task.results.get("progress_fingerprint") or fingerprint == task.base_commit or not snapshot.get("changed_paths"):
-                    if not (task.retry_count and previous and self._disputed_merge(task_id, project)):
+                    # No new change, but the existing work may already be done (a repair, or Try again on finished work):
+                    # if it still passes every test, it goes to the owner's merge decision instead of failing.
+                    if not (previous and self._disputed_merge(task_id, project)):
                         self._fail(task_id, "No meaningful progress: agent produced no new candidate changes")
                     return
                 with self._lock, self.db.Session.begin() as session:

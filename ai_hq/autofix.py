@@ -167,6 +167,11 @@ class AutoFix:
             if fix.get("status") == "council" and self.council is not None and fix.get("council") in self.council._running:
                 return False  # the Council is still working on it
             fix["last"] = fingerprint(task, reason)
+            if self.supervisor.finished_work(task).get("ready"):
+                fix.update(status="finished")
+                task.results = {**task.results, "auto_fix": fix}
+                session.add(Event(task_id=task_id, kind="auto_fix", message="Auto-fix: this task's work is finished and reviewed; only the merge is left, which is your decision."))
+                return False
             if fix.get("attempts", 0) >= policy["max_attempts"]:
                 fix["status"] = "gave_up"
                 task.results = {**task.results, "auto_fix": fix}

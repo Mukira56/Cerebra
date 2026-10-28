@@ -283,3 +283,33 @@ def test_unfinished_work_is_not_offered_for_merging(hq):
     assert task.state == "FAILED" and supervisor.finished_work(task) == {"ready": False}
     with pytest.raises(ValueError, match="isn't finished"):
         supervisor.merge_finished_work(task_id)
+
+
+def test_try_again_on_finished_work_ends_at_the_merge_not_a_failure(hq):
+    supervisor, _, repo, db, _ = hq
+    task_id = ready(hq)
+    supervisor.run_until_idle()  # finished: tested, reviewed, the merge is waiting
+    supervisor.resolve_approval(pending_approval(db, task_id).id, False)  # the owner declines for now -> BLOCKED
+    supervisor.try_again(task_id)  # then asks to try again: there is nothing left to code
+    supervisor.run_until_idle()
+    task = supervisor.get(task_id)
+    assert task.state == "AWAITING_APPROVAL" and pending_approval(db, task_id).kind == "merge"  # not "No meaningful progress"
+
+
+def test_auto_fix_leaves_finished_work_to_the_owner(hq):
+    from ai_hq import autofix
+    from ai_hq.chat import ChatService
+    supervisor, _, repo, db, settings = hq
+    task_id = ready(hq)
+    supervisor.run_until_idle()
+    with db.Session.begin() as session:
+        from ai_hq.models import Approval
+        for approval in session.query(Approval).filter(Approval.task_id == task_id, Approval.status == "pending"):
+            approval.status = "approved"
+        stored = session.get(Task, task_id)
+        stored.state, stored.results = "FAILED", {**stored.results, "error": "No meaningful progress: agent produced no new candidate changes"}
+        autofix.save(session, enabled=True, scope="all")
+    fixer = autofix.AutoFix(db, settings, supervisor, ChatService(db, settings, lambda: supervisor.registry), lambda session, task: "codex")
+    assert fixer.scan() == []  # no Assistant run spent on finished work
+    assert supervisor.get(task_id).results["auto_fix"]["status"] == "finished"
+    assert "only the merge is left" in " ".join(events(db, task_id, "auto_fix"))
