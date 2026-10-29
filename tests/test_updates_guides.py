@@ -162,3 +162,38 @@ def test_a_finished_download_is_still_ready_after_cerebra_restarts(client, tmp_p
     assert progress["phase"] == "ready" and progress["tag"] == "v99.0.0" and "Install and restart" in progress["message"]
     (tmp_path / "data" / "updates" / "pending.json").write_text(json.dumps({"tag": "v0.0.1", "installer": "x", "sha256": "y"}), encoding="utf-8")
     assert updates.Updater(Settings(data_dir=tmp_path / "data")).progress()["phase"] == "idle"  # nothing real waiting
+
+
+def test_a_dropped_download_resumes_by_itself(client):
+    """One owner's 0.43.0 download got 0 bytes from GitHub and gave up; it now resumes from where it stopped."""
+    updater = client.app.state.updater
+    updater.retry_wait = 0
+    plain, drops = updater.stream, {"count": 0}
+    def flaky(url, path, on_bytes, expected_size=0):
+        if not url.endswith("/1"):
+            return plain(url, path, on_bytes, expected_size)
+        drops["count"] += 1
+        if drops["count"] == 1:  # nothing arrives, then the connection drops
+            path.write_bytes(b""); raise ValueError("The connection to GitHub dropped. Check your internet and try again.")
+        if drops["count"] == 2:  # half arrives, then the stream ends early
+            path.write_bytes(INSTALLER[: len(INSTALLER) // 2]); return len(INSTALLER) // 2
+        with path.open("ab") as handle:  # the rest, resumed from where it stopped
+            handle.write(INSTALLER[path.stat().st_size:])
+        return len(INSTALLER)
+    updater.stream = flaky
+    progress = download(client)
+    assert progress["phase"] == "ready", progress
+    assert drops["count"] == 3
+
+
+def test_a_download_that_keeps_dropping_says_what_to_do(client):
+    updater = client.app.state.updater
+    updater.retry_wait = 0
+    plain = updater.stream
+    def dead(url, path, on_bytes, expected_size=0):
+        if not url.endswith("/1"):
+            return plain(url, path, on_bytes, expected_size)
+        raise ValueError("The connection to GitHub dropped. Check your internet and try again.")
+    updater.stream = dead
+    progress = download(client)
+    assert progress["phase"] == "failed" and "dropped" in progress["error"]

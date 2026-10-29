@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from . import __version__
@@ -97,12 +98,16 @@ finally {
 """
 
 
+DOWNLOAD_ATTEMPTS = 3
+
+
 class Updater:
     def __init__(self, settings, runner=None, spawn=None):
         self.settings = settings
         self.runner = runner or ProcessRunner()
         self.spawn = spawn or self._spawn_detached
         self.stream = self._stream
+        self.retry_wait = 5  # seconds before resuming a dropped download (longer each time)
         self.folder = settings.data_dir / "updates"
         self._lock = threading.Lock()
         self._progress = {"phase": "idle", "percent": 0, "bytes": 0, "total": 0, "message": "", "error": ""}
@@ -195,7 +200,7 @@ class Updater:
         # Resume a partial download (slow or dropped connections) instead of starting over.
         received = path.stat().st_size if path.exists() and expected_size and path.stat().st_size < expected_size else 0
         try:
-            with httpx.Client(timeout=httpx.Timeout(60, read=180), follow_redirects=False) as client:
+            with httpx.Client(timeout=httpx.Timeout(60, read=60), follow_redirects=False) as client:  # a stall is retried by download()
                 answer = client.get(api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/octet-stream"})
                 if answer.status_code in {301, 302, 303, 307, 308}:
                     request = ("GET", answer.headers["location"], {})
@@ -239,9 +244,22 @@ class Updater:
         size = int(assets[name].get("size") or 0)
         if installer.exists() and installer.stat().st_size > size:
             installer.unlink()
-        self.stream(assets[name]["apiUrl"], installer, lambda done: self._set(bytes=done), size)
+        # A dropped or stalled connection (one owner's download got 0 bytes and gave up) resumes by itself from
+        # where it stopped, a few times, before asking the owner to try again.
+        for attempt in range(DOWNLOAD_ATTEMPTS):
+            try:
+                self.stream(assets[name]["apiUrl"], installer, lambda done: self._set(bytes=done), size)
+            except ValueError as exc:
+                if "dropped" not in str(exc) or attempt == DOWNLOAD_ATTEMPTS - 1:
+                    raise
+            if not size or (installer.exists() and installer.stat().st_size == size):
+                break
+            if attempt < DOWNLOAD_ATTEMPTS - 1:
+                self._set(message=f"The connection dropped; resuming the download (try {attempt + 2} of {DOWNLOAD_ATTEMPTS})…")
+                time.sleep(self.retry_wait * (attempt + 1))
         if size and installer.stat().st_size != size:
-            raise ValueError("The download stopped early. Press Download again to continue from where it stopped.")
+            raise ValueError("The download stopped early. Press Download again to continue from where it stopped, "
+                             "or install the copy in your Downloads folder if you have one.")
         self._set(phase="verifying", percent=99, message="Checking the download against its published checksum…")
         expected = installer.with_name(installer.name + ".sha256").read_text(encoding="utf-8").split()[0].lower()
         actual = hashlib.sha256(installer.read_bytes()).hexdigest()
