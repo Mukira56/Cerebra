@@ -164,3 +164,19 @@ def test_strong_new_matches_reach_the_phone_without_details(client):
 
 def test_description_html_becomes_plain_text():
     assert freelance.text_of("<p>Hello&nbsp;<b>world</b></p><ul><li>One</li><li>Two</li></ul>") == "Hello world\nOne\nTwo"
+
+
+def test_placeholder_posts_are_not_stored_but_pasted_jobs_always_are():
+    assert freelance.placeholder({"title": "z · y", "description": "d"}) and freelance.placeholder({"title": "QA · y", "description": "d"})
+    assert not freelance.placeholder({"title": "Fix my sink · Bob", "description": "Fix pipes."})  # short, but a real job
+    assert not freelance.placeholder({"title": "AI · Acme", "description": "Build an AI assistant for our support team."})
+
+
+def test_a_placeholder_stored_before_is_hidden_when_seen_again(client):  # noqa: F811
+    lead = {"source": "remoteok", "native_id": "77", "title": "z · y", "description": "d", "url": ""}
+    with client.app.state.db.Session.begin() as session:
+        session.add(freelance.FreelanceLead(id="remoteok:77", source="remoteok", title="z · y", description="d", status="new"))
+    with client.app.state.db.Session.begin() as session:
+        assert freelance.store(session, [lead]) == 0
+    with client.app.state.db.Session() as session:
+        assert session.get(freelance.FreelanceLead, "remoteok:77").status == "hidden"

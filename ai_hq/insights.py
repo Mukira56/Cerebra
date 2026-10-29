@@ -28,7 +28,7 @@ def _pattern(key):
 
 def _service(row, services):
     """The service a job fits best: the one with the most different words in its title and description."""
-    text = f"{row.title} {row.description[:2000]}".lower()
+    text = f"{row.title} {' '.join(row.skills or [])} {row.description}".lower()  # the same text the score read, and the platform's skill tags
     best, hits = "other", 0
     for key in services:
         found = len(set(_pattern(key).findall(text)))

@@ -215,12 +215,23 @@ def _as_lead(row):
 
 
 # ---- storing ----
+def placeholder(lead):
+    """A test or placeholder post on a job board (Remote OK has listed "z · y" with the description "d"): not a real job."""
+    name = re.sub(r"\W", "", str(lead.get("title") or "").split(" · ")[0])
+    return len(name) < 2 or (len(name) < 3 and len(re.sub(r"\W", "", str(lead.get("description") or ""))) < 20)
+
+
 def store(session, leads, settings=None):
     """Add new leads and refresh known ones (bids and budget change); the owner's status and notes are kept."""
     settings = settings or profile(session)
     added = 0
     for lead in leads:
         identifier = f"{lead['source']}:{lead['native_id']}"[:200]
+        if lead["source"] != "pasted" and placeholder(lead):
+            known = session.get(FreelanceLead, identifier)
+            if known is not None and known.status == "new":
+                known.status = "hidden"  # stored before placeholders were recognised
+            continue
         points, reasons = score(lead, settings)
         row = session.get(FreelanceLead, identifier)
         extra = {key: lead[key] for key in ("bids", "company", "credit", "usd_rate", "employment") if lead.get(key) is not None}
