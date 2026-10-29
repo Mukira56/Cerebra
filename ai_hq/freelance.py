@@ -116,6 +116,13 @@ def _hits(words, text):
 WEAK = {"ai", "seo", "server", "integration", "presentation", "blog", "node", "ux", "sql", "python", "automation", "database",
         "hosting", "analytics", "html", "css", "javascript", "banner", "article", "deployment", "debug", "spreadsheet", "excel", "maintenance"}
 ACADEMIC = re.compile(r"\b(homework|assignment|thesis|dissertation|coursework|academic project|exam|quiz)\b", re.I)
+# Titles asking for another profession: a post can mention dashboards or AI and still want a lawyer or a salesperson.
+OTHER_ROLE = re.compile(r"\b(lawyer|attorney|legal (expert|advisor|counsel)|paralegal|accountant|bookkeep(er|ing)|tax (preparer|advisor)|"
+                        r"recruiter|sales (rep|representative|manager|executive|agent)|head of (partnerships|sales|growth)|partnerships|"
+                        r"business development|cold call(er|ing)|telemarket(er|ing)|appointment setter|"
+                        r"translator|transcri(ber|ption)|voice ?over|voice actor|tutor|nurse|therapist|massage|"
+                        r"structural engineer|licensed (engineer|architect)|interior design(er)?|autocad|real estate agent)\b", re.I)
+TITLE_CAP = 35  # a job whose title names none of the owner's work stays below automatic bidding (40)
 FULL_TIME = re.compile(r"\b(full[- ]?time|permanent|salaried)\b", re.I)
 FREELANCE = re.compile(r"\b(contract|contractor|freelance|freelancer|part[- ]?time|project[- ]based|gig|consultant)\b", re.I)
 
@@ -134,6 +141,10 @@ def score(lead, settings, now_ts=None):
     if not in_title and len(in_body) < 2:
         return 0, ["doesn't match what you sell" if not matched else f"only mentions {', '.join(matched[:3])} in passing"]
     points, reasons = min(45, 12 * len(in_title) + 4 * len(set(in_body) - set(in_title))), [f"matches {', '.join(matched[:5])}"]
+    role = OTHER_ROLE.search(lead["title"])
+    if role:
+        points -= 30
+        reasons.append(f"asks for {role.group(0).lower()}, not what you sell")
     employment = str(lead.get("employment") or "")
     if lead.get("kind") == "job":
         if FREELANCE.search(employment) or FREELANCE.search(title):
@@ -197,6 +208,9 @@ def score(lead, settings, now_ts=None):
             reasons.append(f"{bids} bids already")
         else:
             reasons.append(f"{bids} bids so far")
+    if not in_title and points > TITLE_CAP:
+        points = TITLE_CAP
+        reasons.append("only the description mentions your work, not the title")
     return max(1, min(100, points)), reasons
 
 
@@ -827,9 +841,11 @@ class AutoApplier:
                 if not rules["enabled"]:
                     return {"skipped": "off"}
                 room = rules["per_day"] - self.sent_today(session)
+                wanted = profile(session)  # scored again with today's rules: a lead stored under older rules may no longer qualify
                 candidates = [row.id for row in session.scalars(select(FreelanceLead).where(FreelanceLead.source == "freelancer", FreelanceLead.status == "new",
                                                                                             FreelanceLead.score >= rules["min_score"]).order_by(FreelanceLead.score.desc()).limit(50)).all()
-                              if not (row.proposal or {}).get("sent_at") and not (row.proposal or {}).get("skipped")]
+                              if not (row.proposal or {}).get("sent_at") and not (row.proposal or {}).get("skipped")
+                              and score(_as_lead(row), wanted)[0] >= rules["min_score"]]
             if not self.bidder.status()["connected"]:
                 self._note("Connect your Freelancer.com account to bid automatically", "waiting")
                 return {"skipped": "not connected"}

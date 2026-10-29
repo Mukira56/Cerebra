@@ -186,3 +186,15 @@ def test_a_posts_read_check_is_shown_to_the_owner():
     text = "Great role.\n\nPlease mention the word **SWANKY** and tag RMTAyLjIwMi4xNTQuMjUw when applying to show you read the job post completely."
     assert freelance.applicant_checks(text) == [{"word": "SWANKY", "tag": "RMTAyLjIwMi4xNTQuMjUw"}]
     assert freelance.applicant_checks("Build a website for my bakery.") == []
+
+
+def test_other_professions_and_title_less_matches_stay_below_automatic_bidding():
+    settings = {"services": ["web", "mobile_ai", "design", "data"], "keywords": [], "exclude": [], "min_budget": 0}
+    fresh = {"kind": "fixed", "budget_min": 250, "budget_max": 750, "currency": "USD", "bids": 5}
+    lawyer, why = freelance.score({**fresh, "title": "IP Lawyer / Legal Expert Wanted: Software Copyright",
+                                   "description": "Review our SaaS dashboard, scraping tool and UI design terms."}, settings)
+    assert lawyer < 40 and any("asks for lawyer" in reason for reason in why)
+    vague, why = freelance.score({**fresh, "title": "Knowledge booster", "description": "React front-end, mobile app for android and ios."}, settings)
+    assert vague == freelance.TITLE_CAP and "not the title" in why[-1]
+    real, _ = freelance.score({**fresh, "title": "React landing page for a bakery", "description": "A fast React landing page."}, settings)
+    assert real >= 40

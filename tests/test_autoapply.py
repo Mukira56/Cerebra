@@ -150,3 +150,13 @@ def test_a_won_job_becomes_work_cerebra_plans_and_starts_itself_but_never_delive
         merges = session.scalars(select(Approval).where(Approval.task_id == task.id, Approval.kind == "merge")).all()
         assert task.approved and task.state != "COMPLETED"  # planned and run by itself; delivery (the merge) waits for the owner
         assert all(approval.status.lower() == "pending" for approval in merges)
+
+
+def test_a_lead_scored_under_older_rules_is_checked_again_before_a_bid(client):  # noqa: F811
+    site = setup(client, min_score=40)
+    with client.app.state.db.Session.begin() as session:
+        from ai_hq.models import FreelanceLead
+        session.add(FreelanceLead(id="freelancer:77", source="freelancer", title="IP Lawyer Wanted for our SaaS", status="new", score=49,
+                                  description="Review our dashboard and UI design terms.", budget_min=250, budget_max=750, currency="USD", kind="fixed"))
+    client.app.state.applier.tick()
+    assert 77 not in {bid["project_id"] for bid in site.bids}
