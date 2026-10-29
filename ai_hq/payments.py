@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -184,7 +184,7 @@ class Payments:
         self.request("POST", f"/payment_links/{stripe['payment_link']}", data={"active": "true" if active else "false"})
         with self.db.Session.begin() as session:
             product = products._get(session, product_id)
-            product.stripe = {**product.stripe, "active": bool(active)}
+            product.stripe = {**product.stripe, "active": bool(active), **({} if active else {"paused_at": now()})}
             product.status, product.updated_at = ("selling" if active else "paused"), now()
             return products.public(product)
 
@@ -201,8 +201,10 @@ class Payments:
         is recorded once (its ID is the payment reference). A paid invoice's link is switched off."""
         with self._lock:
             with self.db.Session() as session:
+                # A paid invoice whose link is already switched off can't take more payments: don't ask Stripe again.
                 docs = [doc for doc in session.query(MoneyDocument).filter(MoneyDocument.kind == "invoice", MoneyDocument.status.in_(["sent", "paid"])).all()
-                        if (doc.provider or {}).get("stripe") and (doc_id is None or doc.id == doc_id)]
+                        if (doc.provider or {}).get("stripe") and (doc_id is None or doc.id == doc_id)
+                        and (doc.status == "sent" or doc.provider["stripe"].get("active"))]
                 links = [(doc.id, doc.currency, [doc.provider["stripe"]["payment_link"], *doc.provider["stripe"].get("retired", [])], doc.provider["stripe"].get("active"))
                          for doc in docs]
             found = 0
@@ -219,7 +221,7 @@ class Payments:
                             money.record_payment(session, identifier, major(int(checkout.get("amount_total") or 0), currency), day, "Stripe", checkout["id"], source="stripe")
                             if len(doc.payments or []) > before:
                                 found += 1
-                                session.add(Event(kind="money", message=f"Stripe payment received for invoice {doc.number}", data={"document": identifier}))
+                                session.add(Event(kind="money", message=f"Stripe payment received for invoice {doc.number}", data={"document": identifier, "notify": "paid", "number": doc.number}))
                 with self.db.Session() as session:
                     paid = money._get(session, identifier).status == "paid"
                 if paid and active and self._deactivate(link_ids[0]):
@@ -234,7 +236,10 @@ class Payments:
         from . import products
         from .models import Product
         with self.db.Session() as session:
-            listed = [(product.id, product.name, list((product.stripe or {}).get("links", []))) for product in session.query(Product).all() if (product.stripe or {}).get("links")]
+            # On sale, or paused in the last two days (a buyer may finish a checkout they started just before the pause).
+            recent = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+            listed = [(product.id, product.name, list((product.stripe or {}).get("links", []))) for product in session.query(Product).all()
+                      if (product.stripe or {}).get("links") and (product.stripe.get("active") or (product.stripe.get("paused_at") or "") >= recent)]
         sold = 0
         for product_id, name, link_ids in listed:
             for link_id in link_ids:
@@ -244,7 +249,7 @@ class Payments:
                     with self.db.Session.begin() as session:
                         if products.record_sale(session, product_id, checkout):
                             sold += 1
-                            session.add(Event(kind="money", message=f"Sold {name} through Stripe", data={"product": product_id}))
+                            session.add(Event(kind="money", message=f"Sold {name} through Stripe", data={"product": product_id, "notify": "sold"}))
         return sold
 
     # ---- background check ----

@@ -1073,7 +1073,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             made = money.run_plans(session)
             if made:
                 session.add(Event(kind="money", message=f"Recurring plans: {len(made)} invoice(s) ready for "
-                                  + ", ".join(sorted({doc.client for doc in made}))[:200] + ". Open Money to send them."))
+                                  + ", ".join(sorted({doc.client for doc in made}))[:200] + ". Open Money to send them.", data={"notify": "plans", "count": len(made)}))
         return made
     payments.slow_jobs.append(bill_due_plans)
 

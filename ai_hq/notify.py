@@ -143,11 +143,21 @@ class Notifier:
             if since is None:  # first start: don't replay history
                 session.add(Metadata(key=CURSOR, value={"at": now()}))
                 return settings, []
-            events = session.scalars(select(Event).where(Event.created_at > since, Event.kind.in_(["state", "order"])).order_by(Event.created_at).limit(50)).all()
+            events = session.scalars(select(Event).where(Event.created_at > since, Event.kind.in_(["state", "order", "money"])).order_by(Event.created_at).limit(50)).all()
             messages = []
             for event in events:
                 task = session.get(Task, event.task_id) if event.task_id else None
                 if settings["only_orders"] and event.kind == "state" and not (task and task.results.get("order")):
+                    continue
+                if event.kind == "money":
+                    # Money news, kept generic: ntfy topics travel through a public server, so no client names or amounts.
+                    kind = (event.data or {}).get("notify")
+                    if kind == "paid":
+                        messages.append(("Cerebra · payment received", f"Invoice {str(event.data.get('number', ''))[:20]} was paid through Stripe. Open Money in Cerebra for details.", "moneybag"))
+                    elif kind == "sold":
+                        messages.append(("Cerebra · you made a sale", "A product sold through your Stripe link. Open Money in Cerebra for details.", "moneybag"))
+                    elif kind == "plans":
+                        messages.append(("Cerebra · invoices to send", f"{int(event.data.get('count') or 0)} recurring invoice(s) are ready. Open Money in Cerebra to send them.", "receipt"))
                     continue
                 if event.kind == "order":
                     messages.append(("Cerebra · new order", "New intake recorded. Open Cerebra on your laptop to read it.", "package"))

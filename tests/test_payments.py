@@ -122,3 +122,40 @@ def test_zero_decimal_currencies():
     from ai_hq.payments import major, minor
     assert minor(1500, "UGX") == 1500 and minor(12.34, "usd") == 1234 and minor(2500, "KES") == 250000
     assert major(1500, "JPY") == 1500 and major(1234, "USD") == 12.34
+
+
+def test_stripe_is_not_asked_again_about_finished_invoices_or_long_paused_products(client, stripe):  # noqa: F811
+    from datetime import datetime, timedelta, timezone
+    from ai_hq.models import Product
+    invoice = step(client, new(client, "invoice"), "issue")
+    client.post(f"/api/money/documents/{invoice['id']}/stripe-link", json={"confirmed": True})
+    stripe.pay("plink_1", 90000)
+    client.post("/api/money/stripe/sync")  # paid: the link is switched off
+    before = len(stripe.calls)
+    client.post("/api/money/stripe/sync")
+    assert len(stripe.calls) == before  # nothing left to ask about
+    item = client.post("/api/money/products", json={"name": "Template", "price": 10, "download_url": "https://drive.google.com/x"}).json()
+    client.post(f"/api/money/products/{item['id']}/stripe-link", json={"confirmed": True})
+    client.post(f"/api/money/products/{item['id']}/selling", json={"active": False})
+    before = len(stripe.calls); client.post("/api/money/stripe/sync")
+    assert len(stripe.calls) == before + 1  # just paused: late checkouts are still collected
+    with client.app.state.db.Session.begin() as session:
+        row = session.get(Product, item["id"])
+        row.stripe = {**row.stripe, "paused_at": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()}
+    before = len(stripe.calls); client.post("/api/money/stripe/sync")
+    assert len(stripe.calls) == before
+
+
+def test_money_news_reaches_the_phone_without_client_names_or_amounts(client, stripe):  # noqa: F811
+    notifier = client.app.state.notifier
+    client.put("/api/business/notifications", json={"ntfy_enabled": True})
+    notifier.pending_messages()  # first run sets the starting point
+    invoice = step(client, new(client, "invoice"), "issue")
+    client.post(f"/api/money/documents/{invoice['id']}/stripe-link", json={"confirmed": True})
+    stripe.pay("plink_1", 90000)
+    client.post("/api/money/stripe/sync")
+    _, messages = notifier.pending_messages()
+    assert [title for title, _, _ in messages] == ["Cerebra · payment received"]
+    text = " ".join(title + " " + body for title, body, _ in messages)
+    assert "INV-0001" in text and "Ama" not in text and "900" not in text
+    assert notifier.pending_messages()[1] == []  # told once
