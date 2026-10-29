@@ -469,3 +469,8 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .start-step p { margin: 2px 0 0; color: var(--soft); font-size: 13px; }
 .start-step.done { opacity: .6; } .start-step.done .start-mark { color: var(--green); }
 .start-mark { font: 600 16px/1.4 var(--mono); color: var(--muted); }
+.lead-row { align-items: flex-start; }
+.lead-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.lead-description { white-space: pre-wrap; font: 13px/1.55 var(--sans); max-height: 40vh; overflow: auto; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.check-list { display: grid; gap: 6px; margin-bottom: 12px; }
+.source-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }

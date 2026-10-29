@@ -236,6 +236,29 @@ class RecurringPlan(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class FreelanceLead(Base):
+    """A piece of paid work found for the owner (or pasted by them), scored against what they sell."""
+    __tablename__ = "freelance_leads"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # "<source>:<the source's own id>"
+    source: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(String, default="")
+    url: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    budget_min: Mapped[float] = mapped_column(default=0.0)
+    budget_max: Mapped[float] = mapped_column(default=0.0)
+    currency: Mapped[str] = mapped_column(String, default="")
+    kind: Mapped[str] = mapped_column(String, default="job")  # fixed | hourly | job
+    skills: Mapped[list] = mapped_column(JSON, default=list)
+    posted_at: Mapped[str] = mapped_column(String, default="")
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="new")  # new | saved | hidden | applied | interview | won | lost
+    notes: Mapped[str] = mapped_column(Text, default="")
+    proposal: Mapped[dict] = mapped_column(JSON, default=dict)
+    extra: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

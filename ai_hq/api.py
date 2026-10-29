@@ -73,6 +73,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     commerce = Commerce(db)
     from .payments import Payments
     payments = Payments(db)
+    from . import freelance
+    finder = freelance.Finder(db)
     mailbox = gmail.Gmail(db, f"http://127.0.0.1:{settings.port}/oauth/gmail/callback")
     notifier = notify.Notifier(db)
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
@@ -88,14 +90,17 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             autofix.start()
             notifier.start()
             payments.start()
+            finder.start()
         yield
         payments.stop()
+        finder.stop()
         autofix.stop()
         viewer.stop_all()
         supervisor.shutdown()
         notifier.stop()
         commerce.close()
         payments.client.close()
+        finder.client.close()
         mailbox.client.close()
         notifier.client.close()
         db.close()
@@ -108,6 +113,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.open_document = lambda path: os.startfile(path) if sys.platform == "win32" else None  # noqa: S606 - a page Cerebra just wrote
     app.state.edit_file = lambda path: __import__("subprocess").Popen(["notepad.exe", path]) if sys.platform == "win32" else None  # noqa: S603,S607
     app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
+    app.state.finder = finder
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -1056,6 +1062,64 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def business_or_404(call, *args):
         try: return call(*args)
         except LookupError as exc: raise HTTPException(404, str(exc))
+
+    # ---- Freelance: leads found for the owner (freelance.py) ----
+    def freelance_call(work, write=True):
+        try:
+            with (db.Session.begin() if write else db.Session()) as session:
+                return work(session)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/freelance")
+    def freelance_overview(hidden: bool = False):
+        def read(session):
+            settings = freelance.profile(session)
+            return {"profile": {key: value for key, value in settings.items() if key != "checked"}, "summary": freelance.summary(session),
+                    "leads": freelance.leads(session, include_hidden=hidden),
+                    "services": {key: label for key, (label, _) in freelance.SERVICES.items()},
+                    "sources": [{"id": name, **{key: value for key, value in info.items() if key != "every"}, "enabled": settings["sources"].get(name, True),
+                                 "every_minutes": info["every"] // 60, "last": {key: value for key, value in ((settings.get("checked") or {}).get(name) or {}).items() if key != "at_ts"}}
+                                for name, info in freelance.SOURCES.items()]}
+        return freelance_call(read, write=False)
+
+    @app.put("/api/freelance/profile")
+    def freelance_profile(payload: dict):
+        def write(session):
+            saved = freelance.save_profile(session, payload)
+            freelance.rescore(session)
+            return {key: value for key, value in saved.items() if key != "checked"}
+        return freelance_call(write)
+
+    @app.post("/api/freelance/check")
+    def freelance_check(payload: dict | None = None):
+        only = (payload or {}).get("source")
+        if only and only not in freelance.SOURCES:
+            raise HTTPException(404, "Unknown source")
+        return finder.check(only=only, force=True)
+
+    @app.post("/api/freelance/leads", status_code=201)
+    def freelance_paste(payload: dict):
+        return freelance_call(lambda session: freelance.public(freelance.paste(session, payload)))
+
+    @app.patch("/api/freelance/leads/{lead_id:path}")
+    def freelance_update(lead_id: str, payload: dict):
+        return freelance_call(lambda session: freelance.public(freelance.update(session, lead_id, payload)))
+
+    @app.post("/api/freelance/open")
+    def freelance_open(payload: dict):
+        """Open a lead's page in the owner's own browser (to read it in full or to apply there)."""
+        def find(session):
+            from .models import FreelanceLead
+            row = session.get(FreelanceLead, str(payload.get("id") or ""))
+            if row is None:
+                raise LookupError("Lead not found")
+            if not row.url.startswith(("https://", "http://")):
+                raise ValueError("This lead has no web page")
+            return row.url
+        url = freelance_call(find, write=False)
+        app.state.open_document(url)
+        return {"opened": url}
 
     # ---- Money center: quotes, invoices, earnings (money.py) ----
     from . import money

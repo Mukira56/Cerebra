@@ -13,6 +13,7 @@
     overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
+    freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. You apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
     connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
@@ -161,7 +162,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, freelance: freelanceView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1040,6 +1041,111 @@
     load(); return root;
   }
 
+  // ---------- freelance: work found for the owner ----------
+  const LEAD_STYLE = {new: "blue", saved: "amber", applied: "purple", interview: "cyan", won: "green", lost: "muted", hidden: "muted"};
+  let leadFilter = "open";
+  function scoreBadge(score) { return el("span", `badge ${score >= 50 ? "green" : score >= 25 ? "amber" : "muted"}`, String(score)); }
+  function leadMoney(lead) {
+    const low = lead.budget_min, high = lead.budget_max;
+    if (!low && !high) return "";
+    const range = `${lead.currency || ""} ${Number(low || high).toLocaleString()}${high && high !== low ? `–${Number(high).toLocaleString()}` : ""}`.trim();
+    return lead.kind === "hourly" ? `${range}/hour` : lead.kind === "job" ? `salary ${range}` : range;
+  }
+  function freelanceView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading freelance work…")));
+    (async () => {
+      let state; try { state = await api("/api/freelance"); } catch (issue) { root.replaceChildren(body(empty("Freelance unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const counts = state.summary, stats = el("div", "grid stats");
+      [["Strong matches", counts.good_matches, "new work that fits what you sell", "green"], ["Applied", counts.applied, "waiting for the client", "amber"],
+       ["Interviews", counts.interview, "talking with clients", "cyan"], ["Won", counts.won, "jobs you got", ""]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const filters = {open: ["Best matches", lead => ["new", "saved"].includes(lead.status) && lead.score > 0], saved: ["Saved", lead => lead.status === "saved"],
+        applied: ["In progress", lead => ["applied", "interview"].includes(lead.status)], done: ["Won & lost", lead => ["won", "lost"].includes(lead.status)], all: ["Everything", () => true]};
+      const pick = select(Object.entries(filters).map(([key, [label]]) => [key, label]), leadFilter);
+      pick.addEventListener("change", () => { leadFilter = pick.value; render(); });
+      const shown = array(state.leads).filter(filters[leadFilter]?.[1] || (() => true)).slice(0, 120);
+      const list = el("div", "row-list");
+      shown.forEach(lead => list.append(leadRow(lead, state)));
+      const left = append(el("div"), panel("Work for you", append(el("div"), body(append(el("div", "actions"), pick,
+        button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary"),
+        button("+ Paste a job", () => pasteLeadDialog(state), "button"))),
+        shown.length ? list : body(empty(leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? "Press “Check for new work now”: Cerebra reads Freelancer.com, Remote OK, Remotive, Himalayas and Hacker News for work that fits what you sell. Paste jobs from Upwork or Fiverr too." : "Leads you mark appear here.", null, "⌕"))), null, shown.length));
+      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))),
+        panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. It never applies for you: open a job, then apply in your own name. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  const SOURCE_NAMES = {freelancer: "Freelancer.com", remoteok: "Remote OK", remotive: "Remotive", himalayas: "Himalayas", hn: "Hacker News"};
+  function checkWords(result) {
+    const parts = Object.entries(result || {}).map(([name, item]) => `${SOURCE_NAMES[name] || name}: ${item.error ? "couldn't read it" : `${item.added} new`}`);
+    return parts.length ? `Checked. ${parts.join(" · ")}` : "Nothing to check: all sources are switched off.";
+  }
+  function leadRow(lead, state) {
+    const row = el("div", "row lead-row"), info = el("div", "row-main");
+    row.tabIndex = 0; row.setAttribute("role", "button"); row.dataset.leadId = lead.id;
+    const meta = [lead.source_label, leadMoney(lead), lead.posted_at ? relative(lead.posted_at) : "", lead.bids != null ? `${lead.bids} bids` : ""].filter(Boolean).join(" · ");
+    append(info, el("strong", "", lead.title), el("div", "row-meta", meta), el("div", "row-reason waiting", array(lead.reasons).join(" · ")));
+    const actions = append(el("div", "lead-actions"), scoreBadge(lead.score), lead.status !== "new" ? badge(lead.status, LEAD_STYLE[lead.status]) : null);
+    append(row, info, actions);
+    row.addEventListener("click", () => leadDialog(lead, state)); row.addEventListener("keydown", event => { if (event.key === "Enter") leadDialog(lead, state); });
+    return row;
+  }
+  function setLead(lead, changes, message) { return act(message, () => mutate(`/api/freelance/leads/${encodeURIComponent(lead.id)}`, changes, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }); }
+  function leadDialog(lead, state) {
+    const root = el("div"), notes = textarea("Your notes: what you offered, the client's name, next step…", lead.notes || "");
+    append(root, append(el("div", "detail-top"), scoreBadge(lead.score), badge(lead.status, LEAD_STYLE[lead.status]), el("span", "row-meta", [lead.source_label, leadMoney(lead), lead.posted_at ? relative(lead.posted_at) : ""].filter(Boolean).join(" · "))),
+      hint(array(lead.reasons).join(" · ")), el("pre", "lead-description", lead.description || "No description."),
+      lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null, field("Notes", notes));
+    const actions = el("div", "actions");
+    if (lead.url) actions.append(button("Open the job page", () => act("Opened in your browser.", () => mutate("/api/freelance/open", {id: lead.id})), "button primary"));
+    if (lead.status === "new") actions.append(button("Save for later", () => setLead(lead, {status: "saved", notes: notes.value}, "Saved."), "button"));
+    if (["new", "saved"].includes(lead.status)) actions.append(button("I applied", () => setLead(lead, {status: "applied", notes: notes.value}, "Marked as applied. Good luck!"), "button"));
+    if (lead.status === "applied") actions.append(button("Client replied", () => setLead(lead, {status: "interview", notes: notes.value}, "Marked as talking with the client."), "button"));
+    if (["applied", "interview"].includes(lead.status)) actions.append(button("I won it", () => setLead(lead, {status: "won", notes: notes.value}, "Congratulations! Quote or invoice it from the Money page."), "button primary"), button("Didn't get it", () => setLead(lead, {status: "lost", notes: notes.value}, "Noted."), "button ghost"));
+    if (lead.status !== "hidden") actions.append(button("Hide", () => setLead(lead, {status: "hidden", notes: notes.value}, "Hidden."), "button ghost"));
+    else actions.append(button("Show again", () => setLead(lead, {status: "new"}, "Back in the list."), "button"));
+    actions.append(button("Save notes", () => setLead(lead, {notes: notes.value}, "Notes saved."), "button ghost"));
+    root.append(actions);
+    showDialog(lead.title.slice(0, 90), root);
+  }
+  function pasteLeadDialog(state) {
+    const form = el("form"), save = submitButton("Add and score it");
+    const platform = select([["Upwork", "Upwork"], ["Fiverr", "Fiverr"], ["LinkedIn", "LinkedIn"], ["Facebook", "Facebook group"], ["WhatsApp", "WhatsApp or referral"], ["Other", "Somewhere else"]], "Upwork");
+    const title = input("The job's title"), link = input("https://www.upwork.com/jobs/… (optional)"), budget = input("Budget (optional)", "", "number"), description = textarea("Paste the full job description");
+    const hourly = check("The budget is per hour"); title.required = true; description.required = true; description.rows = 10; budget.min = 0; budget.step = "any";
+    append(form, append(el("div", "form-grid"), field("Where it's from", platform), field("Budget", budget)), hourly.wrap, field("Title", title), field("Job link", link), field("Description", description), actionsRow(button("Cancel", closeDialog, "button ghost"), save));
+    wireForm(form, save, async () => {
+      const lead = await mutate("/api/freelance/leads", {platform: platform.value, title: title.value, url: link.value.trim(), budget: Number(budget.value || 0), hourly: hourly.control.checked, description: description.value});
+      closeDialog(); toast(`Scored ${lead.score}/100.`); render(); leadDialog(lead, state);
+    });
+    showDialog("Paste a job", form);
+  }
+  function freelanceProfileForm(state) {
+    const settings = state.profile, form = el("form"), save = submitButton("Save and re-score");
+    const services = Object.entries(state.services).map(([key, label]) => { const item = check(label, array(settings.services).includes(key)); item.key = key; return item; });
+    const words = textarea("Extra skills or tools, one per line (e.g. Supabase, Tailwind)", array(settings.keywords).join("\n")), exclude = textarea("Words that rule a job out, one per line (e.g. unpaid, crypto)", array(settings.exclude).join("\n"));
+    const minimum = input("0", settings.min_budget || 0, "number"); minimum.min = 0; minimum.step = "any";
+    append(form, append(el("div", "check-list"), ...services.map(item => item.wrap)), field("Extra skills", words), field("Rule out jobs that mention", exclude), field("Smallest budget you take (USD)", minimum, "Jobs below it sink to the bottom."), actionsRow(save));
+    wireForm(form, save, async () => {
+      const lines = value => value.split("\n").map(item => item.trim()).filter(Boolean);
+      await mutate("/api/freelance/profile", {services: services.filter(item => item.control.checked).map(item => item.key), keywords: lines(words.value), exclude: lines(exclude.value), min_budget: Number(minimum.value || 0)}, "PUT");
+      toast("Saved. Every open lead was scored again."); render();
+    });
+    return form;
+  }
+  function sourcesList(state) {
+    const root = el("div");
+    array(state.sources).forEach(source => {
+      const toggle = check(source.label, source.enabled), last = source.last || {};
+      toggle.control.addEventListener("change", () => act(toggle.control.checked ? `${source.label} switched on.` : `${source.label} switched off.`, () => mutate("/api/freelance/profile", {sources: {[source.id]: toggle.control.checked}}, "PUT")));
+      append(root, append(el("div", "source-row"), toggle.wrap, el("span", "row-meta", last.at ? (last.error ? `couldn't read it ${relative(last.at)}` : `${last.added} new ${relative(last.at)}`) : `checked every ${source.every_minutes >= 60 ? `${source.every_minutes / 60} h` : `${source.every_minutes} min`}`)));
+    });
+    root.append(hint("Upwork, Fiverr, LinkedIn: paste their jobs with “+ Paste a job”. Upwork and Fiverr ban automated bidding, so Cerebra never applies on them; it finds, scores and (next) drafts, and you send."));
+    return root;
+  }
   // ---------- money: quotes, invoices, earnings ----------
   const DOC_STYLE = {draft: "muted", sent: "blue", accepted: "green", declined: "red", paid: "green", void: "muted"};
   function cash(amount, currency) { return `${currency} ${Number(amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`; }

@@ -95,6 +95,8 @@ Quotes, invoices and payments are the owner's own records in Cerebra's database.
 
 **Recurring plans and exports.** Recurring plans only create invoices in Cerebra's own database (drafts, or issued if the owner chose that) and never send them. The year export is written inside the business output folder with formula-like cells escaped (`'=`), so a client-supplied name can't run as a spreadsheet formula.
 
+**Freelance leads.** The finder makes read-only GET requests to public job APIs (Freelancer.com project search, Remote OK, Remotive, Himalayas, HN Algolia). Each request carries a User-Agent naming Cerebra, sends no credentials, and keeps to each source's interval. Leads are stored locally. "Open the job page" opens only http(s) addresses, in the owner's default browser. Cerebra never bids, applies or messages anyone. Upwork and Fiverr forbid automated bidding, so jobs from them are only pasted in by the owner.
+
 **Products.** Packages are built only from a registered project or business job. They always leave out `.git`, `node_modules` and other installed or cached folders, `.env*` settings files (examples are kept), `*.key`, `*.pem`, `*.p12`, `*.pfx` and databases. They are capped at 200 MB and 5,000 files and written only inside the business output folder. The download link must be `https://`, and Cerebra never uploads the package anywhere: the owner does. Buyer emails reported by Stripe are stored locally with the sale and never sent anywhere by Cerebra.
 
 ## Settings files for test runs (0.31.0)
