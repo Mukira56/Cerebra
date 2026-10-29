@@ -91,6 +91,8 @@ Quotes, invoices and payments are the owner's own records in Cerebra's database.
 
 **Stripe.** The owner's key is stored with DPAPI (a restricted key is recommended: Products, Prices and Payment Links: write; Checkout Sessions: read) and never returned by the API. Creating a payment link requires `confirmed: true` from the owner's dialog for each invoice, and Stripe idempotency keys (`cerebra-<invoice>-<amount>`) prevent duplicates. Otherwise Cerebra only reads completed checkouts on links it created, and switches a link off once its invoice is paid or superseded. It never charges, refunds or transfers money. Error messages show Stripe's own text, redacted, never the key.
 
+**Marketplace imports.** Etsy (scope `transactions_r`, through the existing authorized connection) and Printify are read with GET requests only: shop receipts and orders. Each order is stored as an amount, date and order number, with no buyer names or addresses. Nothing is created, changed, bought or fulfilled.
+
 **Products.** Packages are built only from a registered project or business job. They always leave out `.git`, `node_modules` and other installed or cached folders, `.env*` settings files (examples are kept), `*.key`, `*.pem`, `*.p12`, `*.pfx` and databases. They are capped at 200 MB and 5,000 files and written only inside the business output folder. The download link must be `https://`, and Cerebra never uploads the package anywhere: the owner does. Buyer emails reported by Stripe are stored locally with the sale and never sent anywhere by Cerebra.
 
 ## Settings files for test runs (0.31.0)

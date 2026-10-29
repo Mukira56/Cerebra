@@ -204,6 +204,19 @@ class Product(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class ChannelEntry(Base):
+    """Money from or to a marketplace the owner sells through: an Etsy order (a sale) or a Printify order (a cost).
+    Imported from the service, read-only; the ID is the service's own, so importing again only updates it."""
+    __tablename__ = "channel_entries"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # e.g. "etsy:1234567890"
+    source: Mapped[str] = mapped_column(String)  # etsy | printify
+    kind: Mapped[str] = mapped_column(String)  # sale | cost
+    amount: Mapped[float] = mapped_column(default=0.0)
+    currency: Mapped[str] = mapped_column(String, default="USD")
+    date: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

@@ -115,3 +115,10 @@ def test_the_in_app_preview_is_sandboxed(client):
     assert response.status_code == 200 and "Invoice (draft)" in response.text
     policy = response.headers["Content-Security-Policy"]
     assert policy.startswith("sandbox") and "script-src" not in policy and "default-src 'none'" in policy and "form-action 'none'" in policy
+
+
+def test_the_overview_shows_the_money_at_a_glance(client):
+    invoice = step(client, new(client, "invoice"), "issue")
+    step(client, invoice, "payments", amount=100)
+    glance = client.get("/api/overview").json()["money"]
+    assert glance["currency"] == "USD" and glance["by_currency"]["USD"]["earned_month"] == 100 and glance["by_currency"]["USD"]["owed"] == 800

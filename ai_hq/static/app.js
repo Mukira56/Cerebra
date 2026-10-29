@@ -258,7 +258,10 @@
     if (merges.length) left.append(panel("Finished work to merge", taskRows(merges.slice(0, 3)), link("All →", "approvals"), merges.length));
     const team = body(kv([["Planner", profileLabel(data.roles?.planner)], ["Coder", profileLabel(data.roles?.implementer)], ["Reviewer", profileLabel(data.roles?.reviewer)], ["Agents", agentsOn() ? "On · each task asks first" : "Off"],
       ...array(data.agents).filter(agent => agent.usage_until && new Date(agent.usage_until) > new Date()).map(agent => [nice(agent.name), `Out of usage until ${new Date(agent.usage_until).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}; the other model covers for it`])]), link("Change models →", "models"));
-    append(right, panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
+    const glance = data.money?.by_currency?.[data.money?.currency] || {}, main = data.money?.currency || "USD";
+    const moneyCard = body(kv([["Earned this month", cash(glance.earned_month, main)], ["Owed to you", glance.overdue_count ? `${cash(glance.owed, main)} · ${glance.overdue_count} overdue` : cash(glance.owed, main)],
+      ["Quotes out", cash(glance.pipeline, main)], ...(glance.won_unbilled ? [["Won, not invoiced", cash(glance.won_unbilled, main)]] : [])]), link("Open Money →", "money"));
+    append(right, panel("Money", moneyCard), panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
     append(grid, left, right); node.append(grid); return node;
   }
 
@@ -1026,7 +1029,7 @@
 
   // ---------- money: quotes, invoices, earnings ----------
   const DOC_STYLE = {draft: "muted", sent: "blue", accepted: "green", declined: "red", paid: "green", void: "muted"};
-  const cash = (amount, currency) => `${currency} ${Number(amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  function cash(amount, currency) { return `${currency} ${Number(amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`; }
   function moneyView() {
     const root = el("div"), token = renderToken;
     root.append(body(el("p", "", "Loading your money…")));
@@ -1035,7 +1038,7 @@
       if (token !== renderToken) return;
       const main = state.summary.currency, figures = state.summary.by_currency[main] || {};
       const stats = el("div", "grid stats");
-      [["Earned this month", cash(figures.earned_month, main), `${cash(figures.earned_year, main)} this year`, "green"],
+      [["Earned this month", cash(figures.earned_month, main), `${cash(figures.earned_year, main)} this year${figures.spent_month ? ` · ${cash(figures.spent_month, main)} spent this month` : ""}`, "green"],
        ["Owed to you", cash(figures.owed, main), figures.overdue_count ? `${figures.overdue_count} overdue · ${cash(figures.overdue, main)}` : "nothing overdue", figures.overdue_count ? "red" : "amber"],
        ["Quotes out", cash(figures.pipeline, main), "waiting for the client's yes", "cyan"],
        ["Won, not invoiced", cash(figures.won_unbilled, main), "accepted quotes to bill", ""]]
@@ -1053,7 +1056,7 @@
         : body(empty("No quotes or invoices yet", "Quote a client, get their yes, invoice a deposit and the rest, and record what they pay. Cerebra numbers and lays out each one; you send it.", null, "$"))), null, docs.length));
       left.append(productsPanel(state));
       if (others.length) left.append(panel("Other currencies", table(["Currency", "Earned this month", "Owed", "Quotes out"], others.map(([currency, values]) => [currency, cash(values.earned_month, currency), cash(values.owed, currency), cash(values.pipeline, currency)]))));
-      side.append(panel("Get paid with Stripe", body(stripePanel(state.stripe))), panel("Your business", body(moneySettingsForm(state.settings))),
+      side.append(panel("Get paid with Stripe", body(stripePanel(state.stripe))), panel("Marketplace sales", body(channelsPanel(state.channels))), panel("Your business", body(moneySettingsForm(state.settings))),
         panel("Getting paid", body(hint("Each invoice can carry a payment link, shown on it as “Pay online”: a Stripe link Cerebra creates, or one you paste (PayPal, Paystack…). Record other payments you receive (M-Pesa, bank) from the invoice. Payments on a business job's invoice also go into that job's money record."),
           hint(state.summary.note))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
@@ -1103,6 +1106,20 @@
       if (array(item.sales).length) root.append(panel("Sales", table(["Date", "Amount", "Buyer"], item.sales.map(sale => [sale.date, cash(sale.amount, item.currency), sale.email || "—"])), null, item.sales.length));
     }
     showDialog(item.id ? item.name : "New product", root);
+  }
+  function channelsPanel(channels) {
+    const root = el("div"), names = {etsy: ["Etsy", "orders count as sales (before Etsy's fees; tax left out)"], printify: ["Printify", "orders count as costs"]};
+    Object.entries(names).forEach(([source, [label, meaning]]) => {
+      const info = channels?.[source] || {}, totals = Object.entries(info.totals || {}).map(([currency, amount]) => cash(amount, currency)).join(", ") || "nothing yet";
+      append(root, append(el("div", "action-card"), append(el("div", "row-meta"), badge(info.connected ? "connected" : "not connected", info.connected ? "green" : "muted"), el("strong", "", label)),
+        el("p", "", `${info.count || 0} order(s): ${totals}. ${label} ${meaning}.${info.last_import ? ` Last import ${date(info.last_import)}.` : ""}`),
+        info.connected ? button(`Import ${label} orders`, () => act(result => result.message, () => mutate(`/api/money/channels/${source}/import`, {}, "POST", 180000)).then(() => render()), "button small")
+          : link(`Connect ${label} →`, "connections")));
+    });
+    const recent = array(channels?.recent);
+    if (recent.length) root.append(table(["Date", "From", "Amount"], recent.slice(0, 8).map(entry => [entry.date, entry.note, `${entry.kind === "cost" ? "−" : ""}${cash(entry.amount, entry.currency)}`])));
+    root.append(hint("Read-only: Cerebra lists your orders every 6 hours (or when you press Import) and never creates or changes anything in your shops."));
+    return root;
   }
   function stripePanel(stripe) {
     const root = el("div");

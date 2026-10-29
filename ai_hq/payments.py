@@ -23,6 +23,7 @@ API = "https://api.stripe.com/v1"
 # Currencies Stripe counts in whole units (no cents): https://docs.stripe.com/currencies#zero-decimal
 ZERO_DECIMAL = {"BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"}
 SYNC_SECONDS = 600
+SLOW_EVERY = 36  # every 6 hours
 PERMISSIONS = "Products: Write, Prices: Write, Payment Links: Write, Checkout Sessions: Read"
 
 
@@ -51,6 +52,7 @@ class Payments:
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
+        self.slow_jobs = []  # run every SLOW_EVERY checks (marketplace imports), each failure recorded and skipped
 
     # ---- connection ----
     def save_key(self, key):
@@ -256,7 +258,15 @@ class Payments:
         self._stop.set()
 
     def _loop(self):
+        ticks = 0
         while not self._stop.wait(SYNC_SECONDS):
+            ticks += 1
+            if ticks % SLOW_EVERY == 1:
+                for job in self.slow_jobs:
+                    try:
+                        job()
+                    except Exception:  # not connected, or the service is down: the next round tries again
+                        pass
             try:
                 with self.db.Session() as session:
                     if not status(session)["connected"]:

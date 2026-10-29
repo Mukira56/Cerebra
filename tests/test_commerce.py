@@ -134,7 +134,7 @@ def test_etsy_pkce_state_binding_and_draft_fields(client):
     service=client.app.state.commerce
     parameters=parse_qs(urlparse(service.authorize_etsy()).query)
     assert parameters["code_challenge_method"]==["S256"]
-    assert parameters["scope"]==["shops_r listings_r listings_w"]
+    assert parameters["scope"]==["shops_r listings_r listings_w transactions_r"]
     calls=[]
     def handle(request):
         calls.append(request)

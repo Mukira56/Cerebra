@@ -292,7 +292,7 @@ def summary(session, today=None):
     sums = {}
 
     def bucket(currency):
-        return sums.setdefault(currency, {"earned_month": 0.0, "earned_year": 0.0, "owed": 0.0, "overdue": 0.0, "overdue_count": 0, "pipeline": 0.0, "won_unbilled": 0.0})
+        return sums.setdefault(currency, {"earned_month": 0.0, "earned_year": 0.0, "spent_month": 0.0, "spent_year": 0.0, "owed": 0.0, "overdue": 0.0, "overdue_count": 0, "pipeline": 0.0, "won_unbilled": 0.0})
 
     docs = session.scalars(select(MoneyDocument)).all()
     for doc in docs:
@@ -312,7 +312,11 @@ def summary(session, today=None):
         elif doc.kind == "quote" and doc.status == "accepted":
             invoiced = sum(totals(other)["total"] for other in docs if other.source_id == doc.id and other.status != "void")
             entry["won_unbilled"] += max(0.0, figures["total"] - invoiced)
-    from .models import Product
+    from .models import ChannelEntry, Product
+    for row in session.scalars(select(ChannelEntry)).all():
+        entry, prefix = bucket(row.currency), "earned" if row.kind == "sale" else "spent"
+        entry[prefix + "_month"] += row.amount if row.date[:7] == month else 0
+        entry[prefix + "_year"] += row.amount if row.date[:4] == year else 0
     for product in session.scalars(select(Product)).all():
         entry = bucket(product.currency)
         for sale in product.sales or []:
@@ -320,14 +324,14 @@ def summary(session, today=None):
             entry["earned_year"] += sale["amount"] if sale["date"][:4] == year else 0
     for record in session.scalars(select(BusinessRecord)).all():
         for item in record.ledger or []:
-            if item.get("kind") == "payment":
-                entry = bucket(main)
-                entry["earned_month"] += item["amount"] if str(item.get("date", ""))[:7] == month else 0
-                entry["earned_year"] += item["amount"] if str(item.get("date", ""))[:4] == year else 0
+            if item.get("kind") in {"payment", "expense"}:
+                entry, prefix = bucket(main), "earned" if item["kind"] == "payment" else "spent"
+                entry[prefix + "_month"] += item["amount"] if str(item.get("date", ""))[:7] == month else 0
+                entry[prefix + "_year"] += item["amount"] if str(item.get("date", ""))[:4] == year else 0
     bucket(main)
     return {"currency": main, "today": today, "by_currency": {currency: {key: round(value, 2) if isinstance(value, float) else value for key, value in entry.items()}
                                                               for currency, entry in sums.items()},
-            "note": "From your own quotes, invoices, recorded payments and product sales Stripe reported. Nothing is estimated."}
+            "note": "From your own quotes, invoices and recorded payments, product sales Stripe reported, and Etsy and Printify orders you imported. Etsy sales are before Etsy's fees. Nothing is estimated."}
 
 
 def _money(amount, currency):

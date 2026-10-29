@@ -138,7 +138,7 @@ class Commerce:
             self.pending[state] = (verifier, time.monotonic(), item["redirect_uri"], item["api_key"])
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         return "https://www.etsy.com/oauth/connect?" + urlencode({"response_type": "code", "client_id": vault.unprotect(item["api_key"]),
-                   "redirect_uri": item["redirect_uri"], "scope": "shops_r listings_r listings_w", "state": state,
+                   "redirect_uri": item["redirect_uri"], "scope": "shops_r listings_r listings_w transactions_r", "state": state,
                    "code_challenge": challenge, "code_challenge_method": "S256"})
 
     def finish_etsy(self, redirected_url):

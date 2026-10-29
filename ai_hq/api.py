@@ -274,10 +274,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             from .capabilities import assistant_grant
             assistant_access = assistant_grant(session)
             route_policy = routing.load(session)
+            from . import money as money_module
+            money_glance = money_module.summary(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -1071,7 +1073,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             jobs = [{"id": job.id, "title": job.title, "client": job.client} for job in session.scalars(select(BusinessJob).order_by(BusinessJob.created_at.desc()).limit(200))]
             from . import payments as payments_module
             return {"settings": money.settings(session), "summary": money.summary(session), "documents": money.documents(session), "jobs": jobs,
-                    "stripe": payments_module.status(session), "products": products.products(session), "sources": products.sources(session)}
+                    "stripe": payments_module.status(session), "products": products.products(session), "sources": products.sources(session),
+                    "channels": channels.status(session)}
         return money_call(read, write=False)
 
     @app.put("/api/money/settings")
@@ -1090,7 +1093,23 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def money_update(doc_id: str, payload: dict):
         return money_call(lambda session: money.public(money.update(session, doc_id, payload)))
 
-    from . import products
+    from . import products, channels
+
+    def import_connected():
+        with db.Session() as session:
+            linked = channels.status(session)
+        for source, importer in (("etsy", channels.import_etsy), ("printify", channels.import_printify)):
+            if linked[source]["connected"]:
+                importer(commerce)
+    payments.slow_jobs.append(import_connected)
+
+    @app.post("/api/money/channels/{source}/import")
+    def channel_import(source: str):
+        importers = {"etsy": channels.import_etsy, "printify": channels.import_printify}
+        if source not in importers:
+            raise HTTPException(404, "Unknown marketplace")
+        counts = importers[source](commerce)
+        return {**counts, "message": f"{source.capitalize()}: {counts['added']} new, {counts['changed']} updated, {counts['removed']} removed (cancelled or refunded)."}
 
     @app.post("/api/money/products", status_code=201)
     def product_create(payload: dict):
