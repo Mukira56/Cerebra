@@ -12,11 +12,12 @@ import html
 import re
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from sqlalchemy import select
 
-from .models import Event, FreelanceLead, Metadata, now
+from .models import Event, FreelanceLead, Metadata, Project, Task, now
 from .security import redact
 
 KEY = "freelance_profile"
@@ -483,6 +484,18 @@ How winning proposals read:
 Reply with ONLY one JSON object: {"proposal": "...", "price": number, "days": whole number, "fit": "one honest sentence on fit and risks"}"""
 
 
+def finished_tasks(session, limit=8):
+    """The owner's finished tasks, newest first, with their project names (Cerebra's own test projects left out)."""
+    projects = {project.id: project for project in session.scalars(select(Project)).all()}
+    rows = session.scalars(select(Task).where(Task.state == "COMPLETED").order_by(Task.updated_at.desc()).limit(200)).all()
+    return [(task, projects[task.project_id]) for task in rows if task.project_id in projects and own_project(projects[task.project_id])][:limit]
+
+
+def own_project(project):
+    parts = [part.lower() for part in Path(project.path).parts]
+    return "readiness" not in parts and not Path(project.path).name.lower().startswith("demo-")
+
+
 def context(session):
     """What a proposal may rely on: the owner's own details, services and prices, finished work. Facts only."""
     from . import money, owner
@@ -502,10 +515,9 @@ def context(session):
     parts.append("Kinds of work offered: " + ", ".join(SERVICES[key][0] for key in details["services"]))
     if details.get("keywords"):
         parts.append("Extra skills and tools: " + ", ".join(details["keywords"]))
-    done = session.scalars(select(Task).where(Task.state == "COMPLETED").order_by(Task.updated_at.desc()).limit(8)).all()
-    names = {project.id: project.name for project in session.scalars(select(Project)).all()}
+    done = finished_tasks(session)
     if done:
-        parts.append("Finished work (built with Cerebra, real):\n" + "\n".join(f"- {names.get(task.project_id, 'project')}: {' '.join(task.description.split())[:160]}" for task in done))
+        parts.append("Finished work (built with Cerebra, real):\n" + "\n".join(f"- {project.name}: {' '.join(task.description.split())[:160]}" for task, project in done))
     sold = [product.name for product in session.scalars(select(Product)).all()][:6]
     if sold:
         parts.append("Products for sale: " + ", ".join(sold))

@@ -1172,7 +1172,7 @@
         button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary"),
         button("+ Paste a job", () => pasteLeadDialog(state), "button"))),
         shown.length ? list : body(empty(leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? "Press “Check for new work now”: Cerebra reads Freelancer.com, Remote OK, Remotive, Himalayas and Hacker News for work that fits what you sell. Paste jobs from Upwork or Fiverr too." : "Leads you mark appear here.", null, "⌕"))), null, shown.length));
-      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))),
+      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
         panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. It never applies for you: open a job, then apply in your own name. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
@@ -1258,6 +1258,55 @@
     append(form, hint("To bid from Cerebra: create an app at accounts.freelancer.com › Settings › Developer, give it the bidding scope, and paste its OAuth access token. Stored encrypted on this Windows account."), field("Access token", token), actionsRow(save));
     wireForm(form, save, async () => { const result = await mutate("/api/freelance/freelancer-account", {token: token.value.trim()}, "PUT"); toast(result.message); render(); });
     return append(root, form);
+  }
+  // Phase 4: profiles, gigs and case studies, written from the owner's real details; the owner copies them in.
+  function pitchesPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/pitches").then(state => {
+      root.replaceChildren();
+      if (!state.agents_on) root.append(hint("Switch AI agents on in Settings to have these written for you.", true));
+      Object.entries(state.kinds).forEach(([kind, piece]) => root.append(pitchRow(kind, piece.label, piece, state)));
+      const finished = array(state.finished);
+      root.append(el("strong", "", "Portfolio from your finished work"));
+      if (!finished.length) root.append(el("p", "row-meta", "Case studies appear here for tasks you finish with Cerebra."));
+      finished.slice(0, 6).forEach(task => root.append(pitchRow("case", `${task.project}: ${task.description.slice(0, 60)}`, state.cases[task.id] || {}, state, task.id)));
+      root.append(hint("Upwork, Fiverr and LinkedIn don't let apps edit profiles, so copy each piece into the site yourself. Everything is written from your About you, services and finished work only."));
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
+  function pitchRow(kind, label, piece, state, taskId) {
+    const row = append(el("div", "source-row"), el("span", "", label));
+    const start = () => act("Writing it with your AI model (about a minute)…", () => mutate("/api/pitches/write", {kind, task_id: taskId})).then(result => { if (result) setTimeout(() => render(), 1500); });
+    const status = piece.status === "writing" ? el("span", "row-meta", "writing…") : piece.status === "failed" ? el("span", "row-meta", `couldn't write it: ${piece.error}`) : null;
+    const actions = append(el("span", "actions"), status,
+      piece.status === "ready" ? button("Open", () => pitchDialog(kind, label, piece, taskId), "button small primary") : null,
+      state.agents_on && piece.status !== "writing" ? button(piece.status === "ready" ? "Rewrite" : kind === "case" ? "Case study" : "Write", start, "button small") : null);
+    row.append(actions);
+    return row;
+  }
+  function pitchDialog(kind, label, piece, taskId) {
+    const root = el("div"), data = piece.data || {}, key = kind === "case" ? `case:${taskId}` : kind, inputs = {};
+    const textField = (name, value, limit) => {
+      const control = String(value || "").length > 90 || name === "solution" || name === "overview" || name === "description" || name === "summary" || name === "about" ? textarea("", value || "") : input("", value || "");
+      if (control.tagName === "TEXTAREA") control.rows = 8;
+      inputs[name] = control;
+      const counter = el("small", "row-meta", limit ? `${String(value || "").length} / ${limit}` : "");
+      control.addEventListener("input", () => { counter.textContent = limit ? `${control.value.length} / ${limit}` : ""; counter.style.color = limit && control.value.length > limit ? "var(--red)" : ""; });
+      return field(name[0].toUpperCase() + name.slice(1), append(el("div"), control, append(el("div", "actions"), counter, button("Copy", () => navigator.clipboard.writeText(control.value).then(() => toast("Copied."), () => toast("Couldn't copy; select the text.", true)), "button small ghost"))));
+    };
+    const limits = {upwork: {title: 70, overview: 5000}, fiverr: {title: 80, description: 1200}, freelancer: {headline: 50, summary: 1600}, linkedin: {headline: 220, about: 2600}}[kind] || {};
+    Object.entries(data).forEach(([name, value]) => {
+      if (typeof value === "string") root.append(textField(name, value, limits[name] || (name === "post" ? 280 : 0)));
+    });
+    if (array(data.packages).length) root.append(field("Packages", table(["Package", "Price", "Days", "Includes"], data.packages.map(item => [item.name, String(item.price), String(item.days), item.includes]))));
+    if (array(data.tags).length) root.append(field("Tags", el("code", "", data.tags.join(", "))));
+    if (array(data.faq).length) root.append(field("FAQ", append(el("div"), ...data.faq.map(item => append(el("p"), el("strong", "", item.q), el("br"), document.createTextNode(item.a))))));
+    if (array(data.skills).length) root.append(field("Skills", el("code", "", data.skills.join(", "))));
+    const actions = append(el("div", "actions"), button("Save edits", () => act("Saved.", () => mutate("/api/pitches/piece", {key, data: Object.fromEntries(Object.entries(inputs).map(([name, control]) => [name, control.value]))}, "PUT")), "button"),
+      kind === "case" && data.post ? button("Make a post from this", () => act("Added to Marketing as a draft. Approve it there to post it.", () => mutate("/api/pitches/case-post", {task_id: taskId})), "button primary") : null);
+    root.append(actions, hint(piece.edited ? "Edited by you." : `Written by ${piece.model || "your AI model"} ${piece.written_at ? relative(piece.written_at) : ""}. Read it before you use it.`));
+    showDialog(label, root);
   }
   function pasteLeadDialog(state) {
     const form = el("form"), save = submitButton("Add and score it");

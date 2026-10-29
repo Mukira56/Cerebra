@@ -80,6 +80,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from . import social
     publisher = social.Publisher(db)
     post_writer = social.Writer(db, settings, chat_registry)
+    from . import pitches
+    pitch_writer = pitches.Writer(db, settings, chat_registry)
     mailbox = gmail.Gmail(db, f"http://127.0.0.1:{settings.port}/oauth/gmail/callback")
     notifier = notify.Notifier(db)
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
@@ -123,7 +125,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.edit_file = lambda path: __import__("subprocess").Popen(["notepad.exe", path]) if sys.platform == "win32" else None  # noqa: S603,S607
     app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
     app.state.finder, app.state.drafter, app.state.bidder = finder, drafter, bidder
-    app.state.publisher, app.state.post_writer = publisher, post_writer
+    app.state.publisher, app.state.post_writer, app.state.pitch_writer = publisher, post_writer, pitch_writer
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -1163,6 +1165,37 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         url = freelance_call(find, write=False)
         app.state.open_document(url)
         return {"opened": url}
+
+    # ---- Profiles, gigs and case studies (pitches.py) ----
+    @app.get("/api/pitches")
+    def pitches_overview():
+        with db.Session() as session:
+            return {**pitches.overview(session), "agents_on": bool(settings.live_enabled and settings.cli_confinement_accepted)}
+
+    @app.post("/api/pitches/write")
+    def pitches_write(payload: dict):
+        try:
+            return pitch_writer.start(str(payload.get("kind") or ""), payload.get("task_id"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.put("/api/pitches/piece")
+    def pitches_edit(payload: dict):
+        try:
+            with db.Session.begin() as session:
+                return pitches.edit(session, str(payload.get("key") or ""), payload.get("data") or {})
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/pitches/case-post")
+    def pitches_case_post(payload: dict):
+        """Turn a case study's post into a Marketing draft (still needs the owner's approval to go out)."""
+        with db.Session.begin() as session:
+            entry = pitches.load(session).get(f"case:{payload.get('task_id')}") or {}
+            text = (entry.get("data") or {}).get("post")
+            if not text:
+                raise HTTPException(404, "Write the case study first")
+            return social.public(social.create(session, {"text": text, "channels": ["x", "facebook"]}, origin="ai"))
 
     # ---- Marketing: the owner's X, Facebook Page and Instagram posts (social.py) ----
     def social_call(work, write=True):
