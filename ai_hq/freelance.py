@@ -42,7 +42,7 @@ SOURCES = {
     "himalayas": {"label": "Himalayas", "every": 60 * 60, "url": "https://himalayas.app"},
     "hn": {"label": "Hacker News hiring threads", "every": 3 * 60 * 60, "url": "https://news.ycombinator.com"},
 }
-STATUSES = {"new", "saved", "hidden", "applied", "interview", "won", "lost"}
+STATUSES = {"new", "saved", "hidden", "applied", "interview", "awarded", "won", "lost"}  # awarded: the client chose you; won: the work is on
 DEFAULTS = {"services": list(SERVICES), "keywords": [], "exclude": [], "min_budget": 0.0, "currency": "USD",
             "sources": {name: True for name in SOURCES}, "checked": {}}
 MAX_DESCRIPTION = 6000
@@ -275,7 +275,8 @@ def public(row):
             "title": row.title, "url": row.url, "description": row.description, "budget_min": row.budget_min, "budget_max": row.budget_max,
             "currency": row.currency, "kind": row.kind, "skills": row.skills or [], "posted_at": row.posted_at, "score": row.score,
             "reasons": row.reasons or [], "status": row.status, "notes": row.notes, "company": extra.get("company", ""), "bids": extra.get("bids"),
-            "credit": extra.get("credit", ""), "proposal": row.proposal or {}, "created_at": row.created_at}
+            "credit": extra.get("credit", ""), "proposal": row.proposal or {}, "created_at": row.created_at,
+            "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", "")}
 
 
 def leads(session, include_hidden=False, limit=300):
@@ -481,7 +482,8 @@ How winning proposals read:
 - Plain, warm, professional. No emojis, no hype words ("guaranteed", "best in the world"), no placeholders like [Name].
 - If the job is a poor fit (outside the freelancer's skills, illegal, academic cheating, unpaid, spam), say so in "fit" and keep the
   proposal honest.
-Reply with ONLY one JSON object: {"proposal": "...", "price": number, "days": whole number, "fit": "one honest sentence on fit and risks"}"""
+Reply with ONLY one JSON object: {"proposal": "...", "price": number, "days": whole number, "fit": "one honest sentence on fit and risks",
+"apply": true or false (false when the job is a poor fit, outside the freelancer's skills, unpaid, illegal, academic cheating or spam)}"""
 
 
 def finished_tasks(session, limit=8):
@@ -552,7 +554,7 @@ def parse_proposal(text):
                 price = data.get("price")
                 return {"text": proposal[:6000], "price": round(float(price), 2) if isinstance(price, (int, float)) and price > 0 else 0,
                         "days": int(data["days"]) if isinstance(data.get("days"), (int, float)) and 0 < data["days"] <= 365 else 0,
-                        "fit": " ".join(str(data.get("fit") or "").split())[:400]}
+                        "fit": " ".join(str(data.get("fit") or "").split())[:400], "apply": data.get("apply") is not False}
         except (ValueError, TypeError):
             pass
     if not raw:
@@ -682,9 +684,9 @@ class Bidder:
             raise ValueError("Connect your Freelancer.com account first")
         return {"Freelancer-OAuth-V1": vault.unprotect(item["token"])}
 
-    def _call(self, method, path, **kwargs):
+    def _call(self, method, path, headers_extra=None, **kwargs):
         try:
-            response = self.client.request(method, FREELANCER_API + path, headers=self._headers(), **kwargs)
+            response = self.client.request(method, FREELANCER_API + path, headers={**self._headers(), **(headers_extra or {})}, **kwargs)
         except httpx.HTTPError:
             raise ValueError("Freelancer.com could not be reached. Nothing was sent; try again.") from None
         try:
@@ -733,3 +735,311 @@ class Bidder:
             row.status = "applied"
             session.add(Event(kind="freelance", message=f"Bid sent on Freelancer.com: {row.title[:80]}", data={"lead": lead_id}))
         return {"bid_id": result.get("id"), "message": "Bid sent on Freelancer.com. Cerebra marked it as applied."}
+
+
+# ---- Phase 4b: applying by itself (Freelancer.com only: Upwork and Fiverr ban automated proposals) ----
+AUTO_KEY = "freelance_auto"
+AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False}
+
+
+def auto_settings(session):
+    row = session.get(Metadata, AUTO_KEY)
+    return {**AUTO_DEFAULTS, **(row.value if row else {})}
+
+
+def save_auto(session, changes):
+    value = auto_settings(session)
+    if "enabled" in changes:
+        value["enabled"] = bool(changes["enabled"])
+    if "accept_awards" in changes:
+        value["accept_awards"] = bool(changes["accept_awards"])
+    for key, low, high in (("min_score", 1, 100), ("per_day", 1, 50)):
+        if key in changes:
+            number = int(changes[key])
+            if not low <= number <= high:
+                raise ValueError(f"{key.replace('_', ' ').capitalize()} must be between {low} and {high}")
+            value[key] = number
+    row = session.get(Metadata, AUTO_KEY)
+    if row:
+        row.value = value
+    else:
+        session.add(Metadata(key=AUTO_KEY, value=value))
+    return value
+
+
+def fit_price(price, days, low, high):
+    """A bid inside the client's budget (Freelancer.com bids are judged against it), and a real delivery time."""
+    price = float(price or 0)
+    if high or low:
+        floor, ceiling = float(low or high), float(high or low)
+        price = min(max(price or ceiling, floor), ceiling)
+    return round(price, 2), int(days) if days and int(days) > 0 else 7
+
+
+class AutoApplier:
+    """After each search: for every new Freelancer.com match above the owner's score, up to the owner's daily number,
+    the owner's model writes a tailored proposal; if the model judges the job a fit, the bid is placed. Every bid is
+    recorded on the lead, and one account problem stops the round (nothing is retried blindly)."""
+    def __init__(self, db, drafter, bidder):
+        self.db, self.drafter, self.bidder = db, drafter, bidder
+        self.status = {"state": "idle", "message": "", "at": ""}
+        self._lock = threading.Lock()
+
+    def _note(self, message, state="idle"):
+        self.status = {"state": state, "message": message, "at": now()}
+
+    def sent_today(self, session):
+        since = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - 86400, timezone.utc).isoformat()
+        return sum(1 for row in session.scalars(select(FreelanceLead).where(FreelanceLead.source == "freelancer")).all()
+                   if str((row.proposal or {}).get("sent_at") or "") >= since)
+
+    def tick(self):
+        if not self._lock.acquire(blocking=False):
+            return {"skipped": "already running"}
+        try:
+            with self.db.Session() as session:
+                rules = auto_settings(session)
+                if not rules["enabled"]:
+                    return {"skipped": "off"}
+                room = rules["per_day"] - self.sent_today(session)
+                candidates = [row.id for row in session.scalars(select(FreelanceLead).where(FreelanceLead.source == "freelancer", FreelanceLead.status == "new",
+                                                                                            FreelanceLead.score >= rules["min_score"]).order_by(FreelanceLead.score.desc()).limit(50)).all()
+                              if not (row.proposal or {}).get("sent_at") and not (row.proposal or {}).get("skipped")]
+            if not self.bidder.status()["connected"]:
+                self._note("Connect your Freelancer.com account to bid automatically", "waiting")
+                return {"skipped": "not connected"}
+            if room <= 0:
+                self._note(f"Today's {rules['per_day']} automatic bids are sent; more tomorrow", "waiting")
+                return {"skipped": "daily limit"}
+            sent, passed = 0, 0
+            for lead_id in candidates[:room]:
+                self._note(f"Writing a proposal ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
+                try:
+                    self.drafter.start(lead_id, wait=True)
+                except ValueError as exc:  # AI agents switched off, or already being written
+                    self._note(str(exc), "waiting")
+                    break
+                with self.db.Session.begin() as session:
+                    row = session.get(FreelanceLead, lead_id)
+                    proposal = dict(row.proposal or {})
+                    if proposal.get("status") != "ready":
+                        continue
+                    if not proposal.get("apply", True):
+                        proposal["skipped"] = proposal.get("fit") or "Your model judged it a poor fit"
+                        row.proposal = proposal
+                        passed += 1
+                        continue
+                    proposal["price"], proposal["days"] = fit_price(proposal.get("price"), proposal.get("days"), row.budget_min, row.budget_max)
+                    proposal["auto"] = True
+                    row.proposal = proposal
+                try:
+                    self.bidder.bid(lead_id, confirmed=True)
+                    sent += 1
+                except ValueError as exc:
+                    with self.db.Session.begin() as session:
+                        row = session.get(FreelanceLead, lead_id)
+                        row.proposal = {**(row.proposal or {}), "bid_error": str(exc)[:300]}
+                    code = re.search(r"HTTP (\d{3})", str(exc))
+                    if code and code.group(1) not in {"401", "403", "429"}:
+                        continue  # this project refused the bid (already closed, amount outside its rules): try the next one
+                    self._note(f"Stopped: {str(exc)[:200]}", "waiting")  # an account, limit or connection problem: don't push on
+                    break
+            if sent or passed:
+                with self.db.Session.begin() as session:
+                    session.add(Event(kind="freelance", message=f"Automatic bidding: {sent} bid(s) sent on Freelancer.com, {passed} job(s) passed over as a poor fit",
+                                      data={"sent": sent, "passed": passed}))
+            if self.status["state"] == "working":
+                self._note(f"Sent {sent} bid(s), passed over {passed} poor fit(s)")
+            return {"sent": sent, "passed": passed}
+        finally:
+            self._lock.release()
+
+
+# ---- Phase 4b: knowing what was won, and starting the work ----
+MAIL_SEEN = "freelance_mail_seen"
+PLATFORM_MAIL = {"upwork.com": "Upwork", "fiverr.com": "Fiverr", "freelancer.com": "Freelancer.com"}
+MAIL_QUERY = "from:(upwork.com OR fiverr.com OR freelancer.com) newer_than:14d"
+STARTED = re.compile(r"contract (has )?started|you('ve| have) been hired|hired you|new order|(got|received) an order|order (has been )?placed|"
+                     r"accepted your (offer|bid|proposal)|project (has been )?accepted", re.I)
+OFFER = re.compile(r"\boffer\b|\bawarded\b|\baward(ed)? (you|the project)\b|wants to hire you|invited you to (a )?contract", re.I)
+NOISE = re.compile(r"job (alert|recommendation)s?|jobs for you|newsletter|weekly digest|tips for|webinar|\bsale\b|promo", re.I)
+KINDS_FOR_WORK = (("svg", re.compile(r"\b(logo|icon|illustration|branding|brand identity|vector)\b", re.I)),
+                  ("website", re.compile(r"\b(website|web site|landing page|wordpress|shopify|webflow|wix|web app|frontend|html)\b", re.I)))
+
+
+def mail_platform(sender):
+    sender = str(sender or "").lower()
+    return next((name for domain, name in PLATFORM_MAIL.items() if re.search(r"[@.]" + re.escape(domain) + r"\b", sender)), None)
+
+
+def classify_mail(subject, text):
+    """'started' (the work is on), 'offer' (the client chose you; accept it on the site) or None (not about a win)."""
+    head = f"{subject}\n{text[:1500]}"
+    if NOISE.search(subject or ""):
+        return None
+    if STARTED.search(head):
+        return "started"
+    if OFFER.search(head):
+        return "offer"
+    return None
+
+
+def _tokens(text):
+    return {word for word in re.findall(r"[a-z0-9]{4,}", str(text or "").lower())} - {"with", "that", "this", "your", "from", "have", "will", "need", "looking"}
+
+
+def match_lead(session, platform, subject, text):
+    """The lead this email is about: same platform, and most of the job title's words appear in the email."""
+    wanted = {"Freelancer.com": lambda row: row.source == "freelancer"}.get(platform, lambda row: str((row.extra or {}).get("company") or "").lower() == platform.lower())
+    words, best, best_share = _tokens(f"{subject} {text[:4000]}"), None, 0.0
+    for row in session.scalars(select(FreelanceLead).where(FreelanceLead.status.in_(["applied", "interview", "awarded", "saved", "new"]))).all():
+        title = _tokens(row.title)
+        if not title or not wanted(row):
+            continue
+        share = len(title & words) / len(title)
+        if share > best_share:
+            best, best_share = row, share
+    return best if best_share >= 0.5 else None
+
+
+def kind_for_work(text):
+    return next((kind for kind, pattern in KINDS_FOR_WORK if pattern.search(text)), "document")
+
+
+class WinWatcher:
+    """Finds the owner's wins: awarded bids on Freelancer.com (its API) and hire, offer and order emails from Upwork,
+    Fiverr and Freelancer.com (Gmail, read-only). A won job becomes work: a Business Studio job that Cerebra plans,
+    builds, tests and reviews by itself; nothing is delivered to the client without the owner."""
+    def __init__(self, db, bidder, mailbox=None, start_work=None):
+        self.db, self.bidder, self.mailbox, self.start_work = db, bidder, mailbox, start_work
+        self.status = {"message": "", "at": ""}
+        self._lock = threading.Lock()
+
+    def _mark(self, session, row, status, how, note=""):
+        if row.status == "won" or (row.status == "awarded" and status == "awarded"):
+            return False
+        row.status, row.updated_at = status, now()
+        row.proposal = {**(row.proposal or {}), f"{status}_at": now(), f"{status}_via": how}
+        if note:
+            row.notes = (row.notes + "\n" if row.notes else "") + note[:500]
+        words = "You won" if status == "won" else "A client chose you for"
+        session.add(Event(kind="freelance", message=f"{words}: {row.title[:90]} ({how})", data={"notify": status, "lead": row.id}))
+        return True
+
+    def check_freelancer(self):
+        """Ask Freelancer.com about every bid the owner placed that isn't settled yet."""
+        if not self.bidder.status()["connected"]:
+            return 0
+        with self.db.Session() as session:
+            open_bids = {str((row.proposal or {}).get("bid_id")): row.id for row in session.scalars(select(FreelanceLead).where(
+                FreelanceLead.source == "freelancer", FreelanceLead.status.in_(["applied", "interview", "awarded"]))).all() if (row.proposal or {}).get("bid_id")}
+        if not open_bids:
+            return 0
+        found = 0
+        ids = list(open_bids)
+        for start in range(0, len(ids), 50):
+            result = self.bidder._call("GET", "/projects/0.1/bids/", params=[("bids[]", item) for item in ids[start:start + 50]] + [("limit", 50)])
+            for bid in result.get("bids") or []:
+                state = str(bid.get("award_status") or bid.get("frontend_bid_status") or "").lower()
+                lead_id = open_bids.get(str(bid.get("id")))
+                if not lead_id or state not in {"awarded", "accepted"}:
+                    continue
+                with self.db.Session.begin() as session:
+                    row = session.get(FreelanceLead, lead_id)
+                    found += self._mark(session, row, "won" if state == "accepted" else "awarded", "Freelancer.com")
+        return found
+
+    def accept_award(self, lead_id):
+        """Accept a Freelancer.com award: a commitment to the client at the bid's price and time."""
+        with self.db.Session() as session:
+            row = session.get(FreelanceLead, lead_id)
+            if row is None:
+                raise LookupError("Lead not found")
+            bid_id = (row.proposal or {}).get("bid_id")
+            if row.source != "freelancer" or row.status != "awarded" or not bid_id:
+                raise ValueError("Only an awarded Freelancer.com bid can be accepted here; accept other offers on their own site")
+        self.bidder._call("PUT", f"/projects/0.1/bids/{bid_id}/", params={"action": "accept"}, headers_extra={"Content-Type": "application/x-www-form-urlencoded"})
+        with self.db.Session.begin() as session:
+            self._mark(session, session.get(FreelanceLead, lead_id), "won", "accepted on Freelancer.com")
+        return {"message": "Award accepted on Freelancer.com. Cerebra is starting the work."}
+
+    def check_mail(self):
+        if self.mailbox is None:
+            return 0
+        try:
+            ids = self.mailbox.search(MAIL_QUERY, 30)
+        except ValueError:
+            return 0  # Gmail isn't connected (or the token expired): nothing to read
+        with self.db.Session() as session:
+            row = session.get(Metadata, MAIL_SEEN)
+            seen = set((row.value or {}).get("ids", [])) if row else set()
+        found, fresh = 0, [item for item in ids if item not in seen]
+        for identifier in fresh:
+            message = self.mailbox.message(identifier)
+            platform, kind = mail_platform(message["from"]), classify_mail(message["subject"], message["body"] or message["snippet"])
+            with self.db.Session.begin() as session:
+                if platform and kind:
+                    lead = match_lead(session, platform, message["subject"], message["body"])
+                    if lead is None:  # a job Cerebra didn't see (an invitation, a Fiverr order): it becomes a lead
+                        title = " ".join(str(message["subject"]).split())[:300] or f"{platform} job"
+                        lead = FreelanceLead(id=f"mail:{identifier}"[:200], source="pasted", title=title, url="", description=text_of(message["body"] or message["snippet"]),
+                                             currency="", kind="fixed", skills=[], posted_at=now(), score=0, reasons=["from your email"], status="new",
+                                             extra={"company": platform}, proposal={})
+                        session.add(lead)
+                        session.flush()
+                    found += self._mark(session, lead, "won" if kind == "started" else "awarded", f"email from {platform}",
+                                        f"{message['date']}: {message['subject']}")
+                value = sorted(seen | {identifier})[-500:]
+                seen.add(identifier)
+                stored = session.get(Metadata, MAIL_SEEN)
+                if stored:
+                    stored.value = {"ids": value}
+                else:
+                    session.add(Metadata(key=MAIL_SEEN, value={"ids": value}))
+        return found
+
+    def start_won(self):
+        """Start the work on every won job that has none yet (and, when the owner allows it, accept awards first)."""
+        started = 0
+        with self.db.Session() as session:
+            rules = auto_settings(session)
+            awarded = [row.id for row in session.scalars(select(FreelanceLead).where(FreelanceLead.status == "awarded", FreelanceLead.source == "freelancer")).all()]
+            won = [row.id for row in session.scalars(select(FreelanceLead).where(FreelanceLead.status == "won")).all() if not (row.extra or {}).get("job_id")]
+        if rules["accept_awards"]:
+            for lead_id in awarded:
+                try:
+                    self.accept_award(lead_id)
+                    won.append(lead_id)
+                except ValueError:
+                    continue
+        if self.start_work is None:
+            return 0
+        for lead_id in won:
+            try:
+                job_id = self.start_work(lead_id)
+            except ValueError as exc:
+                with self.db.Session.begin() as session:
+                    row = session.get(FreelanceLead, lead_id)
+                    row.extra = {**(row.extra or {}), "work_error": str(exc)[:300]}
+                continue
+            with self.db.Session.begin() as session:
+                row = session.get(FreelanceLead, lead_id)
+                row.extra = {**(row.extra or {}), "job_id": job_id, "work_error": ""}
+                session.add(Event(kind="freelance", message=f"Started the work on {row.title[:90]}", data={"lead": lead_id, "job_id": job_id}))
+            started += 1
+        return started
+
+    def tick(self):
+        if not self._lock.acquire(blocking=False):
+            return {}
+        try:
+            result = {}
+            for name, step in (("freelancer", self.check_freelancer), ("email", self.check_mail), ("started", self.start_won)):
+                try:
+                    result[name] = step()
+                except Exception as exc:  # one source failing never stops the others
+                    result[name] = {"error": redact(str(exc))[:200]}
+            self.status = {"message": f"Checked {now()[:16]} UTC", "at": now(), **result}
+            return result
+        finally:
+            self._lock.release()

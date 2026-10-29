@@ -1142,7 +1142,7 @@
     return form;
   }
   // ---------- freelance: work found for the owner ----------
-  const LEAD_STYLE = {new: "blue", saved: "amber", applied: "purple", interview: "cyan", won: "green", lost: "muted", hidden: "muted"};
+  const LEAD_STYLE = {new: "blue", saved: "amber", applied: "purple", interview: "cyan", awarded: "green", won: "green", lost: "muted", hidden: "muted"};
   let leadFilter = "open";
   function scoreBadge(score) { return el("span", `badge ${score >= 50 ? "green" : score >= 25 ? "amber" : "muted"}`, String(score)); }
   function leadMoney(lead) {
@@ -1162,7 +1162,7 @@
        ["Interviews", counts.interview, "talking with clients", "cyan"], ["Won", counts.won, "jobs you got", ""]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
       const filters = {open: ["Best matches", lead => ["new", "saved"].includes(lead.status) && lead.score > 0], saved: ["Saved", lead => lead.status === "saved"],
-        applied: ["In progress", lead => ["applied", "interview"].includes(lead.status)], done: ["Won & lost", lead => ["won", "lost"].includes(lead.status)], all: ["Everything", () => true]};
+        applied: ["In progress", lead => ["applied", "interview", "awarded"].includes(lead.status)], done: ["Won & lost", lead => ["won", "lost"].includes(lead.status)], all: ["Everything", () => true]};
       const pick = select(Object.entries(filters).map(([key, [label]]) => [key, label]), leadFilter);
       pick.addEventListener("change", () => { leadFilter = pick.value; render(); });
       const shown = array(state.leads).filter(filters[leadFilter]?.[1] || (() => true)).slice(0, 120);
@@ -1172,7 +1172,7 @@
         button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary"),
         button("+ Paste a job", () => pasteLeadDialog(state), "button"))),
         shown.length ? list : body(empty(leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? "Press “Check for new work now”: Cerebra reads Freelancer.com, Remote OK, Remotive, Himalayas and Hacker News for work that fits what you sell. Paste jobs from Upwork or Fiverr too." : "Leads you mark appear here.", null, "⌕"))), null, shown.length));
-      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
+      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("Apply automatically", body(autoApplyPanel())), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
         panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. It never applies for you: open a job, then apply in your own name. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
@@ -1204,6 +1204,12 @@
     if (lead.status === "new") actions.append(button("Save for later", () => setLead(lead, {status: "saved", notes: notes.value}, "Saved."), "button"));
     if (["new", "saved"].includes(lead.status)) actions.append(button("I applied", () => setLead(lead, {status: "applied", notes: notes.value}, "Marked as applied. Good luck!"), "button"));
     if (lead.status === "applied") actions.append(button("Client replied", () => setLead(lead, {status: "interview", notes: notes.value}, "Marked as talking with the client."), "button"));
+    if (lead.status === "awarded" && lead.source === "freelancer") actions.append(button("Accept the award", () => showDialog("Accept this award?", append(el("div"),
+      el("p", "", `Accepting commits you to “${lead.title}” at your bid (${lead.currency || "USD"} ${lead.proposal?.price || "?"}, ${lead.proposal?.days || "?"} day(s)). Cerebra then starts the work.`),
+      actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Accept", () => act(result => result.message, () => mutate("/api/freelance/accept-award", {id: lead.id})).then(result => { if (result) { closeDialog(); render(); } }), "button primary")))), "button primary"));
+    if (lead.status === "awarded" && lead.source !== "freelancer") root.append(hint(`The client chose you. Accept the offer on ${lead.source_label}; when the contract starts, Cerebra sees it in your email and starts the work.`));
+    if (lead.status === "won") root.append(lead.job_id ? append(hint("Won. Cerebra is building this job by itself; you review it before anything goes to the client."), link("Open the job →", `job/${lead.job_id}`))
+      : hint(lead.work_error ? `Won, but the work couldn't start: ${lead.work_error}` : "Won. Cerebra starts the work in its next round (every 10 minutes).", !!lead.work_error));
     if (["applied", "interview"].includes(lead.status)) actions.append(button("I won it", () => setLead(lead, {status: "won", notes: notes.value}, "Congratulations! Quote or invoice it from the Money page."), "button primary"), button("Didn't get it", () => setLead(lead, {status: "lost", notes: notes.value}, "Noted."), "button ghost"));
     if (lead.status !== "hidden") actions.append(button("Hide", () => setLead(lead, {status: "hidden", notes: notes.value}, "Hidden."), "button ghost"));
     else actions.append(button("Show again", () => setLead(lead, {status: "new"}, "Back in the list."), "button"));
@@ -1260,6 +1266,26 @@
     return append(root, form);
   }
   // Phase 4: profiles, gigs and case studies, written from the owner's real details; the owner copies them in.
+  // Phase 4b: applying by itself on Freelancer.com, and noticing what was won.
+  function autoApplyPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/freelance/auto").then(state => {
+      const rules = state.settings, form = el("form"), save = submitButton("Save");
+      const on = check("Bid by myself on Freelancer.com", rules.enabled), accept = check("Also accept awards by myself (a commitment to the client's job at your bid)", rules.accept_awards);
+      const score = input("40", rules.min_score, "number"), perDay = input("15", rules.per_day, "number"); score.min = 1; score.max = 100; perDay.min = 1; perDay.max = 50;
+      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), accept.wrap, actionsRow(save));
+      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
+      const connected = state.freelancer_account?.connected, gmail = state.gmail || {};
+      root.replaceChildren(form,
+        !connected ? hint("Connect your Freelancer.com account (panel above) so Cerebra can bid.", true) : null,
+        hint(`Bidding: ${state.applier?.message || "waiting for the next round"}`),
+        hint(gmail.connected || gmail.authorized ? "Gmail (read-only): Cerebra reads messages from Upwork, Fiverr and Freelancer.com to see what you've won." : "Connect Gmail (read-only) in Business connections, so Cerebra can see hires, offers and orders from Upwork and Fiverr in your email.", !(gmail.connected || gmail.authorized)),
+        append(el("div", "actions"), button("Run a round now", () => act(result => `Done: ${result.bids?.sent || 0} bid(s) sent, ${Number(result.wins?.freelancer || 0) + Number(result.wins?.email || 0)} win(s) found, ${result.work || 0} work step(s) moved on.`, () => mutate("/api/freelance/auto/run", {}, "POST", 900000)).then(() => render()), "button small"), link("Connect Gmail →", "connections")),
+        hint("Only Freelancer.com is bid on by itself: Upwork and Fiverr ban automated proposals and suspend accounts that use them, so for them Cerebra writes the proposal and you paste it. When a job is won (on Freelancer.com, or in your email), Cerebra creates the work and builds it by itself; you review it before anything is delivered."));
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
   function pitchesPanel() {
     const root = el("div");
     root.append(el("p", "row-meta", "Loading…"));
