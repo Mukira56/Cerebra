@@ -278,7 +278,8 @@ def add_ledger(session, job_id, entry):
     if kind in {"time", "support"} and not hours:
         raise ValueError("Enter the hours")
     item = {"id": uid()[:12], "kind": kind, "amount": amount if kind in {"payment", "expense"} else 0, "hours": hours if kind in {"time", "support"} else 0,
-            "date": str(entry.get("date") or now()[:10])[:10], "note": " ".join(str(entry.get("note") or "").split())[:200]}
+            "date": str(entry.get("date") or now()[:10])[:10], "note": " ".join(str(entry.get("note") or "").split())[:200],
+            **({"invoice": str(entry["invoice"])[:40]} if entry.get("invoice") else {})}  # paid through a Money invoice (counted there)
     row.ledger = list(row.ledger or []) + [item]
     return item
 

@@ -79,7 +79,13 @@ def update(session, product_id, fields):
     product = _get(session, product_id)
     if (product.stripe or {}).get("active") and {"price", "currency", "download_url"} & set(fields):
         raise ValueError("Pause selling first: the live Stripe link has the old price and download link. Then create a new link.")
+    before = (product.price, product.currency, product.download_url)
     _apply(product, fields)
+    if (product.stripe or {}).get("payment_link") and (product.price, product.currency, product.download_url) != before:
+        # The paused link sells the old price or download: retire it, so selling again makes a new one. Its sales stay
+        # in the record and its link stays in "links", so a late checkout on it is still collected.
+        product.stripe = {**product.stripe, "payment_link": None, "url": "", "active": False}
+        product.status = "draft"
     return product
 
 

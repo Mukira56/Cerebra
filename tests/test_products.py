@@ -89,3 +89,16 @@ def test_a_product_without_a_download_sells_a_service_and_collects_the_phone(cli
     client.post("/api/money/stripe/sync")
     sale = client.get("/api/money").json()["products"][0]["sales"][0]
     assert sale["email"] == "client@example.com" and sale["phone"] == "+254700000000" and sale["amount"] == 300
+
+
+def test_a_paused_product_with_a_new_price_gets_a_new_link_not_the_old_one(client, stripe):  # noqa: F811
+    item = product(client, download_url="https://drive.google.com/a")
+    client.post(f"/api/money/products/{item['id']}/stripe-link", json={"confirmed": True})
+    client.post(f"/api/money/products/{item['id']}/selling", json={"active": False})
+    changed = client.patch(f"/api/money/products/{item['id']}", json={"price": 39}).json()
+    assert changed["link"] == "" and changed["status"] == "draft"  # the old link sold USD 29
+    again = client.post(f"/api/money/products/{item['id']}/stripe-link", json={"confirmed": True}).json()
+    assert again["url"] == "https://buy.stripe.com/test_2" and stripe.prices["price_2"]["unit_amount"] == "3900"
+    assert stripe.links["plink_1"]["active"] is False  # never switched back on
+    stripe.pay("plink_1", 2900)  # someone finished an old checkout just before the pause
+    assert client.post("/api/money/stripe/sync").json()["new_sales"] == 1  # still collected

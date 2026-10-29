@@ -231,7 +231,7 @@ def test_the_year_export_lists_everything_once_and_is_safe_in_excel(client, tmp_
     with open(result["path"], encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     kinds = sorted((row["What"], float(row["Amount"]), row["Type"]) for row in rows)
-    assert kinds == sorted([("invoice payment", 900, "income"), ("business job payment", 600, "income"), ("product sale (Stripe)", 29, "income"),
+    assert kinds == sorted([("invoice payment", 900, "income"), ("invoice payment", 600, "income"), ("product sale (Stripe)", 29, "income"),
                             ("etsy order", 30, "income"), ("printify order", 17, "cost")])
     assert len(rows) == 5 and result["rows"] == 5  # the job's invoice payment is listed once, the 2025 order not at all
     assert next(row for row in rows if row["What"] == "invoice payment")["Client or buyer"].startswith("'=")  # not a formula
@@ -239,3 +239,31 @@ def test_the_year_export_lists_everything_once_and_is_safe_in_excel(client, tmp_
     again = client.post("/api/money/export", json={"year": 2026}).json()
     assert again["path"] != result["path"]  # never overwrites
     assert client.post("/api/money/export", json={"year": "soon"}).status_code == 400
+
+
+def test_a_job_invoice_in_another_currency_counts_in_that_currency_once(client, tmp_path):
+    from ai_hq.models import BusinessJob, BusinessRecord
+    with client.app.state.db.Session.begin() as session:
+        session.add(BusinessJob(id="job2", title="Salon site", kind="website", client="Wanjiku Salon", output_dir=str(tmp_path / "job2")))
+        session.add(BusinessRecord(job_id="job2", scope={"price": 40000, "currency": "KES", "client": "Wanjiku Salon"}))
+    invoice = step(client, step(client, step(client, client.post("/api/money/documents/from-job/job2").json(), "issue"), "accept"), "issue")
+    assert invoice["currency"] == "KES"
+    step(client, invoice, "payments", amount=40000, method="M-Pesa")
+    money_by = client.get("/api/money").json()["summary"]["by_currency"]
+    assert money_by["KES"]["earned_month"] == 40000 and money_by["USD"]["earned_month"] == 0  # not counted as 40,000 dollars
+    ledger = client.get("/api/business/jobs/job2/delivery").json()["money"]["entries"]
+    assert [entry["amount"] for entry in ledger] == [40000] and ledger[0]["invoice"] == invoice["id"]  # the job still shows it
+
+
+def test_ledger_copies_from_before_the_mark_are_not_counted_twice(client, tmp_path):
+    from ai_hq.models import BusinessJob, BusinessRecord
+    with client.app.state.db.Session.begin() as session:
+        session.add(BusinessJob(id="job3", title="Old site", kind="website", client="Old client", output_dir=str(tmp_path / "job3")))
+        session.add(BusinessRecord(job_id="job3", scope={"price": 300, "client": "Old client"}))
+    invoice = step(client, step(client, step(client, client.post("/api/money/documents/from-job/job3").json(), "issue"), "accept"), "issue")
+    step(client, invoice, "payments", amount=300)
+    with client.app.state.db.Session.begin() as session:  # as 0.36-0.42 wrote it: no "invoice" mark, plus a payment recorded by hand
+        record = session.get(BusinessRecord, "job3")
+        record.ledger = [{key: value for key, value in item.items() if key != "invoice"} for item in record.ledger] + [
+            {"id": "x1", "kind": "payment", "amount": 50, "hours": 0, "date": invoice["issued_at"], "note": "Tip in cash"}]
+    assert client.get("/api/money").json()["summary"]["by_currency"]["USD"]["earned_month"] == 350

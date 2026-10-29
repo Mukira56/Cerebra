@@ -267,7 +267,8 @@ def record_payment(session, doc_id, amount, day=None, method="", reference="", s
     doc.updated_at = now()
     if doc.job_id:
         from . import business
-        business.add_ledger(session, doc.job_id, {"kind": "payment", "amount": amount, "date": day, "note": f"Invoice {doc.number}" + (f" ({payment['method']})" if payment["method"] else "")})
+        business.add_ledger(session, doc.job_id, {"kind": "payment", "amount": amount, "date": day, "invoice": doc.id,
+                                                  "note": f"Invoice {doc.number}" + (f" ({payment['method']})" if payment["method"] else "")})
     return doc
 
 
@@ -318,10 +319,9 @@ def summary(session, today=None):
     for doc in docs:
         figures, entry = totals(doc), bucket(doc.currency)
         if doc.kind == "invoice" and doc.status in {"sent", "paid"}:
-            if not doc.job_id:  # a job's payments are counted from its ledger below
-                for payment in doc.payments or []:
-                    entry["earned_month"] += payment["amount"] if payment["date"][:7] == month else 0
-                    entry["earned_year"] += payment["amount"] if payment["date"][:4] == year else 0
+            for payment in doc.payments or []:  # in the invoice's own currency; the job ledger's copy (marked "invoice") is skipped below
+                entry["earned_month"] += payment["amount"] if payment["date"][:7] == month else 0
+                entry["earned_year"] += payment["amount"] if payment["date"][:4] == year else 0
             if doc.status == "sent":
                 entry["owed"] += figures["balance"]
                 if overdue(doc, today):
@@ -342,9 +342,10 @@ def summary(session, today=None):
         for sale in product.sales or []:
             entry["earned_month"] += sale["amount"] if sale["date"][:7] == month else 0
             entry["earned_year"] += sale["amount"] if sale["date"][:4] == year else 0
+    copies = _invoice_copies(session)
     for record in session.scalars(select(BusinessRecord)).all():
         for item in record.ledger or []:
-            if item.get("kind") in {"payment", "expense"}:
+            if item.get("kind") in {"payment", "expense"} and not _is_invoice_copy(record.job_id, item, copies):
                 entry, prefix = bucket(main), "earned" if item["kind"] == "payment" else "spent"
                 entry[prefix + "_month"] += item["amount"] if str(item.get("date", ""))[:7] == month else 0
                 entry[prefix + "_year"] += item["amount"] if str(item.get("date", ""))[:4] == year else 0
@@ -352,6 +353,20 @@ def summary(session, today=None):
     return {"currency": main, "today": today, "by_currency": {currency: {key: round(value, 2) if isinstance(value, float) else value for key, value in entry.items()}
                                                               for currency, entry in sums.items()},
             "note": "From your own quotes, invoices and recorded payments, product sales Stripe reported, and Etsy and Printify orders you imported. Etsy sales are before Etsy's fees. Nothing is estimated."}
+
+
+def _invoice_copies(session):
+    """(job, invoice number) of every Money invoice on a business job: the job ledger's payment entries for these are
+    copies of the invoice's payments. Entries written before 0.43 carry no "invoice" mark, only the note "Invoice <number>"."""
+    rows = session.scalars(select(MoneyDocument).where(MoneyDocument.kind == "invoice", MoneyDocument.job_id.is_not(None))).all()
+    return {(doc.job_id, doc.number) for doc in rows if doc.number}
+
+
+def _is_invoice_copy(job_id, item, copies):
+    if item.get("invoice"):
+        return True
+    note = str(item.get("note") or "")
+    return item.get("kind") == "payment" and note.startswith("Invoice ") and (job_id, note.split(" ")[1]) in copies
 
 
 def _money(amount, currency):
@@ -530,15 +545,14 @@ def year_rows(session, year):
     from .models import BusinessJob, BusinessRecord, ChannelEntry, Product
     year, main, rows = str(year), _currency(session), []
     for doc in session.scalars(select(MoneyDocument).where(MoneyDocument.kind == "invoice")).all():
-        if doc.job_id:
-            continue
         for payment in doc.payments or []:
             if payment["date"][:4] == year:
                 rows.append([payment["date"], "income", "invoice payment", doc.client, doc.number, payment.get("method", ""), payment["amount"], doc.currency])
+    copies = _invoice_copies(session)
     for record in session.scalars(select(BusinessRecord)).all():
         job = session.get(BusinessJob, record.job_id)
         for item in record.ledger or []:
-            if item.get("kind") in {"payment", "expense"} and str(item.get("date", ""))[:4] == year:
+            if item.get("kind") in {"payment", "expense"} and not _is_invoice_copy(record.job_id, item, copies) and str(item.get("date", ""))[:4] == year:
                 rows.append([item["date"], "income" if item["kind"] == "payment" else "cost", "business job " + item["kind"], job.client if job else "",
                              job.title if job else "", item.get("note", ""), item["amount"], main])
     for product in session.scalars(select(Product)).all():
