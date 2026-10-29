@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import secrets
-import sys
 import time
 from urllib.parse import urlparse
 
@@ -124,8 +123,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.integrations, app.state.chats, app.state.council, app.state.work = integrations, chats, council, work
     app.state.autofix = autofix
     app.state.viewer = viewer
-    app.state.open_document = lambda path: os.startfile(path) if sys.platform == "win32" else None  # noqa: S606 - a page Cerebra just wrote
-    app.state.edit_file = lambda path: __import__("subprocess").Popen(["notepad.exe", path]) if sys.platform == "win32" else None  # noqa: S603,S607
+    from . import desktop
+    app.state.open_document = desktop.open_path  # a page Cerebra just wrote
+    app.state.edit_file = desktop.edit_text
     app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
     app.state.finder, app.state.drafter, app.state.bidder = finder, drafter, bidder
     app.state.publisher, app.state.post_writer, app.state.pitch_writer = publisher, post_writer, pitch_writer

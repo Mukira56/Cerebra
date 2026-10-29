@@ -73,7 +73,8 @@ def which(names):
 def open_terminal(args, title, cwd=None, keep_open=True):
     """Run a fixed command in a new, visible console window the user controls."""
     if os.name != "nt":
-        raise RuntimeError("Visible terminal windows are only supported on Windows")
+        from .desktop import open_terminal_elsewhere
+        return open_terminal_elsewhere(args, title, cwd, keep_open)
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"  # PowerShell literal; @, $ and ; stay inert
     shown = subprocess.list2cmdline([Path(str(args[0])).name, *map(str, args[1:])])
     script = f"$Host.UI.RawUI.WindowTitle = {quote(title)}; Write-Host {quote('Cerebra opened this window to run: ' + shown)} -ForegroundColor Cyan; & {' '.join(quote(arg) for arg in args)}"

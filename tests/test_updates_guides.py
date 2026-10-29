@@ -197,3 +197,11 @@ def test_a_download_that_keeps_dropping_says_what_to_do(client):
     updater.stream = dead
     progress = download(client)
     assert progress["phase"] == "failed" and "dropped" in progress["error"]
+
+
+def test_on_macos_and_linux_an_update_is_a_pull_not_a_windows_installer(client, monkeypatch):
+    from ai_hq import desktop
+    monkeypatch.setattr(desktop, "platform", lambda: "mac")
+    info = client.get("/api/updates").json()
+    assert not info["available"] and info["newer"] and info["latest"] == "99.0.0" and "git pull && ./scripts/setup.sh" in info["message"]
+    assert "git pull" in client.post("/api/updates/download", json={"tag": "v99.0.0"}).json()["detail"]

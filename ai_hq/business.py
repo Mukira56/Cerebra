@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
 import sys
@@ -464,9 +463,8 @@ def open_location(session_factory, job_id, what="folder"):
     target = folder if what == "folder" else _within(Path(export_folder or folder) / main, folder)
     if not target.exists():
         raise ValueError("That file does not exist yet")
-    if os.name != "nt":
-        raise RuntimeError("Opening files is only available in the Windows app")
-    os.startfile(str(target))  # noqa: S606 - a confined, existing local path chosen by the user
+    from .desktop import open_path
+    open_path(target)  # a confined, existing local path chosen by the user
     return {"opened": str(target)}
 
 

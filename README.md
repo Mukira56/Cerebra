@@ -36,6 +36,17 @@ Then follow the *Get started* checklist on the Overview page, or read [docs/USER
 
 Python 3.13+ and Git are required.
 
+## macOS and Linux
+
+```bash
+git clone https://github.com/Mukira56/Cerebra.git && cd Cerebra
+./scripts/setup.sh           # creates .venv and checks the computer
+./scripts/start.sh           # opens the dashboard in your browser with a private one-time session link
+./scripts/stop.sh
+```
+
+Cerebra runs in your browser there (no installer yet). Secrets go into the macOS Keychain, or into the Secret Service (GNOME Keyring, KWallet) on Linux through `secret-tool`. See [docs/MAC_LINUX.md](docs/MAC_LINUX.md).
+
 ## Build the installer
 
 ```powershell

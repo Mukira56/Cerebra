@@ -21,7 +21,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import __version__
+from . import __version__, desktop
 from .config import ROOT
 from .processes import ProcessRunner
 from .security import redact
@@ -147,8 +147,14 @@ class Updater:
             return {**base, "available": False, "message": f"The newest release tag ({tag}) is not a Cerebra version."}
         assets = [asset.get("name", "") for asset in release.get("assets", [])]
         installer = next((name for name in assets if INSTALLER.match(name)), None)
-        available = version_tuple(tag) > version_tuple(current) and installer is not None and f"{installer}.sha256" in assets
-        message = (f"Cerebra {tag[1:]} is available." if available else "You have the latest version." if version_tuple(tag) <= version_tuple(current)
+        newer = version_tuple(tag) > version_tuple(current)
+        if desktop.platform() != "windows":  # macOS and Linux run Cerebra from its folder: an update is a pull and a fresh setup, done by the owner
+            return {**base, "available": False, "newer": newer, "latest": tag[1:], "tag": tag, "title": release.get("name") or tag,
+                    "notes": redact(release.get("body") or "")[:6000], "published_at": release.get("publishedAt"), "installer": None, "downloaded": False,
+                    "message": (f"Cerebra {tag[1:]} is available. To update, stop Cerebra and run in its folder: git pull && ./scripts/setup.sh && ./scripts/start.sh"
+                                if newer else "You have the latest version.")}
+        available = newer and installer is not None and f"{installer}.sha256" in assets
+        message = (f"Cerebra {tag[1:]} is available." if available else "You have the latest version." if not newer
                    else f"Release {tag} has no Windows installer and checksum attached.")
         return {**base, "available": available, "latest": tag[1:], "tag": tag, "title": release.get("name") or tag, "notes": redact(release.get("body") or "")[:6000],
                 "published_at": release.get("publishedAt"), "installer": installer, "message": message,
@@ -168,6 +174,8 @@ class Updater:
 
     def start_download(self, tag):
         """Download in the background; progress() reports real bytes received out of the installer's size."""
+        if desktop.platform() != "windows":
+            raise ValueError("Updates download as a Windows installer. On macOS and Linux, run: git pull && ./scripts/setup.sh")
         if not TAG.match(tag or ""):
             raise ValueError("Choose a release version to download")
         if version_tuple(tag) <= version_tuple(__version__):

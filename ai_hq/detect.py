@@ -92,7 +92,8 @@ def pick_folder():
     import os
     import subprocess
     if os.name != "nt":
-        raise ValueError("The folder picker is only available in the Windows app; type the folder instead")
+        from .desktop import pick_folder_elsewhere
+        return pick_folder_elsewhere()
     powershell = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     result = subprocess.run([str(powershell), "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", PICK_SCRIPT],
                             capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

@@ -1,0 +1,2 @@
+# Shell scripts run on macOS and Linux, where a Windows line ending breaks bash.
+*.sh text eol=lf

@@ -15,10 +15,19 @@ from .config import ROOT, Settings
 
 STARTUP_TIMEOUT=60  # seconds to wait for /health after spawning the server
 
+def started_at(pid):
+    """When a process started, so a reused PID is never mistaken for Cerebra: /proc on Linux, ps on macOS."""
+    stat=Path(f"/proc/{pid}/stat")
+    if stat.is_file():
+        return stat.read_text().rsplit(")",1)[1].split()[19]  # field 22; the name before ")" may hold spaces
+    result=subprocess.run(["/bin/ps","-o","lstart=","-p",str(int(pid))],capture_output=True,text=True,timeout=10,env={**os.environ,"LC_ALL":"C"})
+    if result.returncode or not result.stdout.strip(): raise ProcessLookupError(pid)
+    return result.stdout.strip()
+
 def process_identity(pid):
     if os.name != "nt":
         os.kill(pid,0)
-        return {"pid":pid,"image":str(Path(sys.executable).resolve()),"created":Path(f"/proc/{pid}/stat").read_text().split()[21]}
+        return {"pid":pid,"image":str(Path(sys.executable).resolve()),"created":started_at(pid)}
     from ctypes import wintypes
     api=ctypes.WinDLL("kernel32",use_last_error=True)
     api.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD];api.OpenProcess.restype=wintypes.HANDLE
@@ -165,7 +174,7 @@ def serve(settings):
         import fcntl
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     key=os.environ.pop("AIHQ_BOOTSTRAP_KEY",None)
-    if not key: raise RuntimeError("Use scripts/start.ps1 to create a private local browser session")
+    if not key: raise RuntimeError("Use scripts/start.ps1 (Windows) or scripts/start.sh (macOS, Linux) to create a private local browser session")
     from .api import create_app
     import uvicorn
     app=create_app(settings,bootstrap_key=key)
