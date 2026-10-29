@@ -1176,6 +1176,24 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
+    @app.get("/api/money/documents/{doc_id}/reminder")
+    def money_reminder(doc_id: str):
+        return money_call(lambda session: money.reminder(money._get(session, doc_id), money.settings(session)), write=False)
+
+    @app.post("/api/money/documents/{doc_id}/reminder")
+    def money_reminder_action(doc_id: str, payload: dict):
+        """open: show the reminder in the owner's own email app to send; sent: record that the owner sent it."""
+        if payload.get("action") == "open":
+            text = money_call(lambda session: money.reminder(money._get(session, doc_id), money.settings(session)), write=False)
+            try:
+                app.state.open_document(text["mailto"])
+            except Exception:
+                raise ValueError("Couldn't open your email app. Copy the text instead.") from None
+            return {"opened": True}
+        if payload.get("action") == "sent":
+            return money_call(lambda session: money.public(money.mark_reminded(session, doc_id, payload.get("tone") or "")))
+        raise HTTPException(400, "Choose open or sent")
+
     @app.post("/api/money/documents/{doc_id}/save")
     def money_save(doc_id: str):
         """Save the printable page in the business folder and open it in the default browser (print or save as PDF there)."""

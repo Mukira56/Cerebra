@@ -122,3 +122,39 @@ def test_the_overview_shows_the_money_at_a_glance(client):
     step(client, invoice, "payments", amount=100)
     glance = client.get("/api/overview").json()["money"]
     assert glance["currency"] == "USD" and glance["by_currency"]["USD"]["earned_month"] == 100 and glance["by_currency"]["USD"]["owed"] == 800
+
+
+def test_reminders_get_firmer_as_an_invoice_gets_later_and_are_sent_by_the_owner(client):
+    from datetime import date, timedelta
+    from urllib.parse import unquote
+    from ai_hq import money
+    client.put("/api/money/settings", json={"business_name": "Mukira Studio", "payment_instructions": "M-Pesa till 123456"})
+    invoice = step(client, new(client, "invoice"), "issue")
+    client.patch(f"/api/money/documents/{invoice['id']}", json={"payment_url": "https://buy.stripe.com/test_1"})
+    step(client, invoice, "payments", amount=100)
+    text = client.get(f"/api/money/documents/{invoice['id']}/reminder").json()
+    assert text["tone"] == "friendly" and "USD 800.00" in text["subject"] and "https://buy.stripe.com/test_1" in text["body"]
+    assert "M-Pesa till 123456" in text["body"] and text["body"].startswith("Hello Ama's Bakery,") and text["body"].endswith("Mukira Studio")
+    assert text["to"] == "ama@example.com" and unquote(text["mailto"]).startswith("mailto:ama@example.com?subject=Invoice INV-0001")
+    tones = []
+    for late in (3, 12, 45):
+        with client.app.state.db.Session.begin() as session:
+            session.get(money.MoneyDocument, invoice["id"]).due_date = (date.today() - timedelta(days=late)).isoformat()
+        reply = client.get(f"/api/money/documents/{invoice['id']}/reminder").json()
+        tones.append((reply["tone"], reply["days_late"]))
+    assert tones == [("friendly", 3), ("firm", 12), ("final", 45)]
+    assert client.post(f"/api/money/documents/{invoice['id']}/reminder", json={"action": "open"}).json() == {"opened": True}
+    assert client.app.state.opened[-1].startswith("mailto:ama@example.com?subject=Final%20reminder")  # the owner's email app, never sent by Cerebra
+    marked = client.post(f"/api/money/documents/{invoice['id']}/reminder", json={"action": "sent", "tone": "final"}).json()
+    assert marked["provider"]["reminders"][0]["tone"] == "final"
+    assert client.get(f"/api/money/documents/{invoice['id']}/reminder").json()["sent"][0]["tone"] == "final"
+    draft = new(client, "invoice")
+    assert client.get(f"/api/money/documents/{draft['id']}/reminder").status_code == 400  # not issued yet
+
+
+def test_saved_services_and_their_checks(client):
+    saved = client.put("/api/money/settings", json={"services": [{"name": "5-page website", "price": 600}, {"name": " Logo  design ", "price": "150"}]}).json()
+    assert saved["services"] == [{"name": "5-page website", "price": 600.0}, {"name": "Logo design", "price": 150.0}]
+    assert client.put("/api/money/settings", json={"services": [{"name": "", "price": 5}]}).status_code == 400
+    assert client.put("/api/money/settings", json={"services": [{"name": "X", "price": -1}]}).status_code == 400
+    assert client.get("/api/money").json()["settings"]["services"][1]["name"] == "Logo design"

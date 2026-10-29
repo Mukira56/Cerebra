@@ -18,7 +18,8 @@ from .models import BusinessJob, Metadata, MoneyDocument, now, uid
 KEY = "money_settings"
 KINDS = {"quote", "invoice"}
 DEFAULTS = {"business_name": "", "email": "", "phone": "", "address": "", "tax_id": "", "payment_terms_days": 14, "quote_valid_days": 30,
-            "payment_instructions": "", "quote_prefix": "Q-", "invoice_prefix": "INV-", "next_quote": 1, "next_invoice": 1}
+            "payment_instructions": "", "quote_prefix": "Q-", "invoice_prefix": "INV-", "next_quote": 1, "next_invoice": 1, "services": []}
+MAX_SERVICES = 40
 TEXT_FIELDS = {"business_name": 120, "email": 120, "phone": 40, "address": 300, "tax_id": 60, "payment_instructions": 600, "quote_prefix": 10, "invoice_prefix": 10}
 EMAIL = re.compile(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$")
 MAX_ITEMS = 50
@@ -40,6 +41,8 @@ def save_settings(session, changes):
             value[key] = str(changes[key] or "").strip()[:size] if key in {"address", "payment_instructions"} else _clean(changes[key], size)
     if value["email"] and not EMAIL.match(value["email"]):
         raise ValueError("Enter a valid email address for your business")
+    if "services" in changes:
+        value["services"] = _services(changes["services"])
     for key, low, high in (("payment_terms_days", 0, 365), ("quote_valid_days", 1, 365)):
         if key in changes:
             number = int(changes[key])
@@ -52,6 +55,23 @@ def save_settings(session, changes):
     else:
         session.add(Metadata(key=KEY, value=value))
     return value
+
+
+def _services(raw):
+    """The owner's usual services and prices, for one-click quote lines: [{"name", "price"}]."""
+    if not isinstance(raw, list) or len(raw) > MAX_SERVICES:
+        raise ValueError(f"Save at most {MAX_SERVICES} services")
+    services = []
+    for item in raw:
+        name = _clean((item or {}).get("name"), 120)
+        try:
+            price = round(float(item.get("price") or 0), 2)
+        except (TypeError, ValueError):
+            raise ValueError("Each service needs a number as its price") from None
+        if not name or not 0 <= price <= 10_000_000:
+            raise ValueError("Each service needs a name and a price that isn't negative")
+        services.append({"name": name, "price": price})
+    return services
 
 
 def _currency(session):
@@ -367,3 +387,52 @@ th,td{{padding:8px;border-bottom:1px solid #ddd;text-align:left;vertical-align:t
 <table><thead><tr><th>Description</th><th class=n>Qty</th><th class=n>Price</th><th class=n>Amount</th></tr></thead><tbody>{rows}{paid}</tbody>
 <tfoot><tr><td colspan=3>{'Total' if doc.kind == 'quote' else 'Balance due' if doc.payments else 'Total due'}</td><td class=n>{e(_money(figures['total'] if doc.kind == 'quote' else figures['balance'], doc.currency))}</td></tr></tfoot></table>
 {pay}{notes}</body></html>"""
+
+
+def reminder(doc, config, today=None):
+    """Ready-to-send wording asking the client to pay an issued invoice: friendly, then firm, then final, by how
+    late it is. Written from the invoice's own facts (no AI, no invented terms); the owner sends it themselves."""
+    from urllib.parse import quote
+    if doc.kind != "invoice" or doc.status != "sent":
+        raise ValueError("Only an issued, unpaid invoice needs a reminder")
+    figures, today = totals(doc), today or _today()
+    late = (date.fromisoformat(today) - date.fromisoformat(doc.due_date)).days if doc.due_date else 0
+    owed, sender = _money(figures["balance"], doc.currency), config.get("business_name") or ""
+    pay = []
+    if doc.payment_url:
+        pay.append(f"You can pay online here: {doc.payment_url}")
+    if config.get("payment_instructions"):
+        pay.append("Payment details:\n" + config["payment_instructions"].strip())
+    how = ("\n\n" + "\n\n".join(pay)) if pay else ""
+    if late <= 7:
+        tone = "friendly"
+        subject = f"Invoice {doc.number}: {owed} " + ("due " + doc.due_date if late <= 0 else "now due")
+        opening = (f"I hope all is well. This is a quick reminder that invoice {doc.number} for {owed} is due on {doc.due_date}."
+                   if late <= 0 else f"I hope all is well. Invoice {doc.number} for {owed} was due on {doc.due_date}; perhaps it slipped through.")
+        closing = "If you've already paid, thank you, and please ignore this message."
+    elif late <= 30:
+        tone = "firm"
+        subject = f"Overdue: invoice {doc.number} ({owed})"
+        opening = f"Invoice {doc.number} for {owed} was due on {doc.due_date} and is now {late} days overdue. Please arrange payment this week."
+        closing = "If something is holding up payment, reply and let me know, and we can sort it out."
+    else:
+        tone = "final"
+        subject = f"Final reminder: invoice {doc.number} ({owed}) is {late} days overdue"
+        opening = (f"Invoice {doc.number} for {owed} was due on {doc.due_date} and is now {late} days overdue. "
+                   "I've sent earlier reminders and haven't received payment yet. Please pay the outstanding amount or contact me within 7 days.")
+        closing = "If you've already paid, please send me the payment reference so I can match it."
+    greeting = f"Hello {doc.client}," if doc.client else "Hello,"
+    body = f"{greeting}\n\n{opening}{how}\n\n{closing}\n\nThank you," + (f"\n{sender}" if sender else "")
+    link = "mailto:" + quote(doc.client_email or "", safe="@") + "?subject=" + quote(subject) + "&body=" + quote(body)
+    return {"tone": tone, "days_late": late, "subject": subject, "body": body, "to": doc.client_email, "mailto": link,
+            "sent": list((doc.provider or {}).get("reminders", []))}
+
+
+def mark_reminded(session, doc_id, tone, today=None):
+    doc = _get(session, doc_id)
+    if doc.kind != "invoice" or doc.status != "sent":
+        raise ValueError("Only an issued, unpaid invoice needs a reminder")
+    provider = dict(doc.provider or {})
+    provider["reminders"] = list(provider.get("reminders", [])) + [{"date": today or _today(), "tone": _clean(tone, 20)}]
+    doc.provider, doc.updated_at = provider, now()
+    return doc

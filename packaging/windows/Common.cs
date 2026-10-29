@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.37.0";
+    internal const string Version = "0.38.0";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
     // Product name. Internal ids (AppId, registry key, AIHQ.exe, install/data folders) keep their pre-rename
     // values so upgrades from "AI HQ" replace the same installation and keep the same data.

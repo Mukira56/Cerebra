@@ -1052,6 +1052,9 @@
       fromJob.addEventListener("change", async () => { if (!fromJob.value) return; const doc = await act("Quote drafted from the job's agreed scope. Check the price, then issue it.", () => mutate(`/api/money/documents/from-job/${encodeURIComponent(fromJob.value)}`)); if (doc) { render(); moneyDocDialog(doc, state); } });
       const tools = append(el("div", "actions"), button("+ New quote", () => moneyDocDialog({kind: "quote", items: [], currency: main, status: "draft"}, state), "button primary"),
         button("+ New invoice", () => moneyDocDialog({kind: "invoice", items: [], currency: main, status: "draft"}, state), "button"), state.jobs.length ? fromJob : null);
+      const late = docs.filter(doc => doc.overdue);
+      if (late.length) left.append(panel("Needs chasing", table(["Invoice", "Client", "Still owed", "Due", "Reminders", ""], late.map(doc => [el("strong", "nowrap", doc.number), doc.client, cash(doc.balance, doc.currency), doc.due_date,
+        String(array(doc.provider?.reminders).length), button("Remind", () => reminderDialog(doc, state), "button small primary")])), null, late.length));
       left.append(panel("Quotes & invoices", append(el("div"), body(tools), docs.length ? table(["Number", "Client", "Kind", "Total", "Still owed", "Status", "Due / valid until", ""], rows)
         : body(empty("No quotes or invoices yet", "Quote a client, get their yes, invoice a deposit and the rest, and record what they pay. Cerebra numbers and lays out each one; you send it.", null, "$"))), null, docs.length));
       left.append(productsPanel(state));
@@ -1137,15 +1140,36 @@
         button("Disconnect", () => act(result => result.message, () => api("/api/money/stripe", {method: "DELETE"})).then(() => render()), "button small ghost")));
     return root;
   }
+  async function reminderDialog(doc, state) {
+    const text = await act("", () => api(`/api/money/documents/${doc.id}/reminder`)); if (!text) return;
+    const subject = input("", text.subject), message = textarea("", text.body); subject.readOnly = true; message.readOnly = true; message.rows = 14;
+    const sent = array(text.sent), tone = {friendly: "Friendly", firm: "Firm", final: "Final"}[text.tone] || text.tone;
+    const root = append(el("div"), hint(`${tone} reminder${text.days_late > 0 ? ` · ${text.days_late} day(s) overdue` : ""}. Cerebra never sends it: copy it into WhatsApp or email, or open it in your email app, and send it yourself.${state.settings?.business_name ? "" : " Add your business name under Your business so reminders are signed."}${sent.length ? ` Reminders you sent: ${sent.map(item => `${item.date} (${item.tone})`).join(", ")}.` : ""}`),
+      field("To", el("div", "", text.to || "No email saved on this invoice: copy the text instead.")), field("Subject", subject), field("Message", message),
+      actionsRow(button("Back", () => moneyDocDialog(doc, state), "button ghost"),
+        button("Copy text", () => navigator.clipboard.writeText(`${text.subject}\n\n${text.body}`).then(() => toast("Copied. Paste it into your email or WhatsApp."), () => toast("Couldn't copy; select the text and copy it.", true)), "button"),
+        text.to ? button("Open in my email app", () => act("Opened in your email app. Check it, then send.", () => mutate(`/api/money/documents/${doc.id}/reminder`, {action: "open"})), "button") : null,
+        button("I sent it", () => act("Noted. The next reminder will be firmer if it's still unpaid.", () => mutate(`/api/money/documents/${doc.id}/reminder`, {action: "sent", tone: text.tone})).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+    showDialog(`Reminder for ${doc.number} · ${doc.client}`, root);
+  }
+  function servicePicker(state, addLine) {
+    const saved = array(state.settings?.services);
+    if (!saved.length) return null;
+    const picker = select([["", "+ Add a saved service…"], ...saved.map((item, index) => [String(index), `${item.name} · ${cash(item.price, state.summary?.currency || "USD")}`])]);
+    picker.addEventListener("change", () => { const item = saved[Number(picker.value)]; if (item) addLine({description: item.name, quantity: 1, unit_price: item.price}); picker.value = ""; });
+    return picker;
+  }
   function moneySettingsForm(settings) {
     const form = el("form"), save = submitButton("Save");
     const name = input("Your name or business name", settings.business_name), email = input("you@example.com", settings.email, "email"), phone = input("Phone", settings.phone);
     const address = textarea("Address (optional)", settings.address), tax = input("Optional", settings.tax_id), terms = input("14", settings.payment_terms_days, "number"), valid = input("30", settings.quote_valid_days, "number");
     const how = textarea("How clients can pay you: bank details, M-Pesa till or paybill, PayPal…", settings.payment_instructions);
+    const services = textarea("One per line, name | price. For example:\n5-page website | 600\nLogo design | 150", array(settings.services).map(item => `${item.name} | ${item.price}`).join("\n"));
     append(form, field("Business name", name), append(el("div", "form-grid"), field("Email", email), field("Phone", phone)), field("Address", address),
-      append(el("div", "form-grid"), field("Invoices due after (days)", terms), field("Quotes valid for (days)", valid)), field("Tax ID", tax), field("How to pay you", how, "Printed on every invoice."), actionsRow(save));
+      append(el("div", "form-grid"), field("Invoices due after (days)", terms), field("Quotes valid for (days)", valid)), field("Tax ID", tax), field("How to pay you", how, "Printed on every invoice."), field("Your services and prices", services, "Pick them when you write a quote or invoice, so each line fills itself in."), actionsRow(save));
     wireForm(form, save, async () => { await mutate("/api/money/settings", {business_name: name.value, email: email.value.trim(), phone: phone.value, address: address.value, tax_id: tax.value,
-      payment_terms_days: Number(terms.value || 0), quote_valid_days: Number(valid.value || 1), payment_instructions: how.value}, "PUT"); toast("Business details saved. They appear on your quotes and invoices."); });
+      payment_terms_days: Number(terms.value || 0), quote_valid_days: Number(valid.value || 1), payment_instructions: how.value,
+      services: services.value.split("\n").map(line => line.trim()).filter(Boolean).map(line => { const at = line.lastIndexOf("|"); return at < 0 ? {name: line, price: 0} : {name: line.slice(0, at).trim(), price: Number(line.slice(at + 1).replace(/[^0-9.]/g, "") || 0)}; })}, "PUT"); toast("Business details saved. They appear on your quotes and invoices."); });
     return form;
   }
   function moneyDocDialog(doc, state) {
@@ -1166,7 +1190,7 @@
       (array(doc.items).length ? doc.items : [undefined]).forEach(item => addLine(item));
       const form = el("form"), save = submitButton(doc.id ? "Save draft" : `Create ${word}`);
       append(form, append(el("div", "form-grid"), field("Client", client), field("Client email", email)), append(el("div", "form-grid"), field("Business job", job), field("Currency", currency)),
-        field("Lines", append(el("div"), lines, button("+ Add a line", () => addLine(), "button small ghost")), "Description, quantity and price for each piece of work. You set every price."),
+        field("Lines", append(el("div"), lines, append(el("div", "actions"), button("+ Add a line", () => addLine(), "button small ghost"), servicePicker(state, item => { [...lines.children].filter(row => { const line = row._read(); return !line.description && !line.unit_price; }).forEach(row => row.remove()); addLine(item); }))), "Description, quantity and price for each piece of work. You set every price."),
         field("Notes", notes), doc.kind === "invoice" ? field("Payment link", link, "Shown on the invoice as “Pay online”.") : null, actionsRow(button("Cancel", closeDialog, "button ghost"), save));
       wireForm(form, save, async () => {
         const payload = {client: client.value, client_email: email.value.trim(), job_id: job.value || null, currency: currency.value.trim().toUpperCase(), notes: notes.value,
@@ -1198,6 +1222,7 @@
         actionsRow(button("Cancel", () => moneyDocDialog(doc, state), "button ghost"), button("Create link", () => reopen(mutate(`/api/money/documents/${doc.id}/stripe-link`, {confirmed: true}, "POST", 60000).then(() => api("/api/money")).then(fresh => fresh.documents.find(item => item.id === doc.id)), "Payment link added to the invoice as “Pay online”. Send the invoice to your client."), "button primary")))), stripeLink?.active ? "button" : "button primary"));
       if (stripeLink) actions.append(button("Check Stripe for payment", () => reopen(mutate("/api/money/stripe/sync", {document_id: doc.id}, "POST", 60000).then(() => api("/api/money")).then(fresh => fresh.documents.find(item => item.id === doc.id)), "Checked Stripe."), "button"));
     }
+    if (doc.kind === "invoice" && doc.status === "sent") actions.append(button(doc.overdue ? "Payment reminder (overdue)" : "Payment reminder", () => reminderDialog(doc, state), doc.overdue ? "button primary" : "button"));
     if (doc.kind === "invoice" && doc.status === "sent") {
       const amount = input("Amount", doc.balance, "number"), method = input("e.g. M-Pesa, bank, Stripe", ""); amount.step = "any";
       actions.append(append(el("span", "inline-field"), el("span", "", "Received"), amount, method), button("Record payment", () => reopen(mutate(`/api/money/documents/${doc.id}/payments`, {amount: Number(amount.value || 0), method: method.value}), "Payment recorded."), "button primary"));
