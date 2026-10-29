@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from .config import Settings, apply_stored_policies
 from .db import Database
-from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, as_dict, uid, now
+from .models import Project, Task, Run, Review, Approval, Event, Dependency, Metadata, Agent, BusinessJob, as_dict, uid, now
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
                       RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete, TaskTeam, AssistantAccess, OwnerProfile,
                       BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
@@ -71,6 +71,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from .commerce import Commerce, public as connection_public
     from . import gmail, notify
     commerce = Commerce(db)
+    from .payments import Payments
+    payments = Payments(db)
     mailbox = gmail.Gmail(db, f"http://127.0.0.1:{settings.port}/oauth/gmail/callback")
     notifier = notify.Notifier(db)
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
@@ -85,12 +87,15 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             supervisor.startup()
             autofix.start()
             notifier.start()
+            payments.start()
         yield
+        payments.stop()
         autofix.stop()
         viewer.stop_all()
         supervisor.shutdown()
         notifier.stop()
         commerce.close()
+        payments.client.close()
         mailbox.client.close()
         notifier.client.close()
         db.close()
@@ -100,7 +105,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.integrations, app.state.chats, app.state.council, app.state.work = integrations, chats, council, work
     app.state.autofix = autofix
     app.state.viewer = viewer
-    app.state.commerce, app.state.mailbox, app.state.notifier = commerce, mailbox, notifier
+    app.state.open_document = lambda path: os.startfile(path) if sys.platform == "win32" else None  # noqa: S606 - a page Cerebra just wrote
+    app.state.edit_file = lambda path: __import__("subprocess").Popen(["notepad.exe", path]) if sys.platform == "win32" else None  # noqa: S603,S607
+    app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -147,7 +154,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         response.headers.update({"X-Content-Type-Options":"nosniff", "Referrer-Policy":"no-referrer", "X-Frame-Options":"DENY", "Cache-Control":"no-store",
             "Cross-Origin-Opener-Policy":"same-origin", "Cross-Origin-Resource-Policy":"same-origin",
             "Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), clipboard-read=()", "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
-        if request.url.path.startswith("/api/business/jobs/") and "/preview/" in request.url.path and response.status_code == 200:
+        if response.status_code == 200 and ((request.url.path.startswith("/api/business/jobs/") and "/preview/" in request.url.path)
+                                             or (request.url.path.startswith("/api/money/documents/") and request.url.path.endswith("/print"))):
             # Previews of generated files: shown only inside Cerebra's own window, with scripts, forms and
             # outside connections all blocked, so a generated page can display but never act. Same origin is kept
             # (safe without scripts) so the page's own stylesheet and images load with the session.
@@ -362,6 +370,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             path = project.path
         return {"files": envfiles.settings_files(path), "missing": envfiles.missing(path)}
 
+    @app.post("/api/projects/{project_id}/settings-file")
+    def project_create_settings_file(project_id: str):
+        """Create the project's settings file from its example and open it for the owner to fill in."""
+        from . import envfiles
+        with db.Session() as session:
+            project = session.get(Project, project_id)
+            if project is None: raise HTTPException(404, "Project not found")
+            path = project.path
+        created = envfiles.create(path)
+        try:
+            app.state.edit_file(str(Path(path) / created))
+        except Exception:
+            pass  # created either way; the owner can open it from the project folder
+        return {"created": created}
+
     @app.get("/api/view/{kind}/{identifier}")
     def view_status(kind: str, identifier: str):
         key, folder, _ = view_target(kind, identifier)
@@ -421,7 +444,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.get("/api/auto-fix/tasks")
     def auto_fix_tasks():
         """Failed and stuck tasks, each marked with whether Auto-fix works on it."""
-        with db.Session() as session: return autofix_module.candidates(session, autofix_module.load(session))
+        with db.Session() as session: return autofix_module.candidates(session, autofix_module.load(session), chats._busy)
 
     @app.post("/api/auto-fix/tasks")
     def auto_fix_choose(payload: AutoFixChoice):
@@ -430,7 +453,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             for task_id in payload.task_ids: task_or_404(session, task_id)
         for task_id in payload.task_ids: autofix.set_task(task_id, payload.enabled)
         if payload.enabled: autofix.scan()
-        with db.Session() as session: return autofix_module.candidates(session, autofix_module.load(session))
+        with db.Session() as session: return autofix_module.candidates(session, autofix_module.load(session), chats._busy)
 
     @app.get("/api/auto-fix")
     def auto_fix_settings():
@@ -472,6 +495,14 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 result[name] = [as_dict(row) for row in session.scalars(select(model).where(model.task_id==task_id))]
             result["dependencies"] = list(session.scalars(select(Dependency.depends_on).where(Dependency.task_id==task_id)))
             result["finished_work"] = supervisor.finished_work(task) if task.state in {"FAILED", "BLOCKED"} else {"ready": False}
+            if (task.results or {}).get("auto_fix"):
+                result["results"] = {**result["results"], "auto_fix": autofix_module.shown(task.results["auto_fix"], chats._busy)}
+            from . import evidence
+            result["missing_settings"] = None
+            if task.state in {"FAILED", "BLOCKED"} and not result["finished_work"].get("ready") \
+                    and any(not run.get("passed") for run in evidence.latest_attempt(task.test_results or [])):
+                from . import envfiles
+                result["missing_settings"] = envfiles.missing(session.get(Project, task.project_id).path)
             result["diff"] = ""
             if task.worktree_path and Path(task.worktree_path).is_dir():
                 try:
@@ -1023,6 +1054,152 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def business_or_404(call, *args):
         try: return call(*args)
         except LookupError as exc: raise HTTPException(404, str(exc))
+
+    # ---- Money center: quotes, invoices, earnings (money.py) ----
+    from . import money
+
+    def money_call(work, write=True):
+        try:
+            with (db.Session.begin() if write else db.Session()) as session:
+                return work(session)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/money")
+    def money_overview():
+        def read(session):
+            jobs = [{"id": job.id, "title": job.title, "client": job.client} for job in session.scalars(select(BusinessJob).order_by(BusinessJob.created_at.desc()).limit(200))]
+            from . import payments as payments_module
+            return {"settings": money.settings(session), "summary": money.summary(session), "documents": money.documents(session), "jobs": jobs,
+                    "stripe": payments_module.status(session), "products": products.products(session), "sources": products.sources(session)}
+        return money_call(read, write=False)
+
+    @app.put("/api/money/settings")
+    def money_settings(payload: dict):
+        return money_call(lambda session: money.save_settings(session, payload))
+
+    @app.post("/api/money/documents", status_code=201)
+    def money_create(payload: dict):
+        return money_call(lambda session: money.public(money.create(session, payload.get("kind"), payload)))
+
+    @app.post("/api/money/documents/from-job/{job_id}", status_code=201)
+    def money_from_job(job_id: str):
+        return money_call(lambda session: money.public(money.quote_from_job(session, job_id)))
+
+    @app.patch("/api/money/documents/{doc_id}")
+    def money_update(doc_id: str, payload: dict):
+        return money_call(lambda session: money.public(money.update(session, doc_id, payload)))
+
+    from . import products
+
+    @app.post("/api/money/products", status_code=201)
+    def product_create(payload: dict):
+        return money_call(lambda session: products.public(products.create(session, payload)))
+
+    @app.patch("/api/money/products/{product_id}")
+    def product_update(product_id: str, payload: dict):
+        return money_call(lambda session: products.public(products.update(session, product_id, payload)))
+
+    @app.delete("/api/money/products/{product_id}")
+    def product_delete(product_id: str):
+        money_call(lambda session: products.delete(session, product_id))
+        return {"deleted": True}
+
+    @app.post("/api/money/products/{product_id}/package")
+    def product_package(product_id: str, payload: dict):
+        try:
+            info = products.package(db.Session, product_id, payload.get("kind"), payload.get("id"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        try:
+            app.state.open_document(str(Path(info["zip"]).parent))  # show the ZIP, ready to upload
+        except Exception:
+            pass
+        return info
+
+    @app.post("/api/money/products/{product_id}/stripe-link")
+    def product_stripe_link(product_id: str, payload: dict):
+        try:
+            return payments.create_product_link(product_id, payload.get("confirmed"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/money/products/{product_id}/selling")
+    def product_selling(product_id: str, payload: dict):
+        try:
+            return payments.set_selling(product_id, bool(payload.get("active")))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.put("/api/money/stripe")
+    def money_stripe_key(payload: dict):
+        return payments.save_key(payload.get("key"))
+
+    @app.post("/api/money/stripe/check")
+    def money_stripe_check():
+        return payments.check()
+
+    @app.delete("/api/money/stripe")
+    def money_stripe_disconnect():
+        return payments.disconnect()
+
+    @app.post("/api/money/stripe/sync")
+    def money_stripe_sync(payload: dict | None = None):
+        try:
+            return payments.sync((payload or {}).get("document_id"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/money/documents/{doc_id}/stripe-link")
+    def money_stripe_link(doc_id: str, payload: dict):
+        try:
+            return payments.create_link(doc_id, payload.get("confirmed"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/money/documents/{doc_id}/save")
+    def money_save(doc_id: str):
+        """Save the printable page in the business folder and open it in the default browser (print or save as PDF there)."""
+        def write(session):
+            doc = money._get(session, doc_id)
+            folder = Path(business.load(session)["output_root"]) / "Quotes and invoices"
+            name = f"{doc.number or ('draft-' + doc.kind + '-' + doc.id[:8])} {business.slug(doc.client)}".strip() + ".html"
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / name
+            target.write_text(money.render(doc, money.settings(session)), encoding="utf-8")
+            return target
+        target = money_call(write, write=False)
+        try:
+            app.state.open_document(str(target))
+        except Exception:
+            pass
+        return {"path": str(target)}
+
+    @app.post("/api/money/documents/{doc_id}/{step}")
+    def money_step(doc_id: str, step: str, payload: dict | None = None):
+        payload = payload or {}
+        steps = {"issue": lambda session: money.issue(session, doc_id),
+                 "accept": lambda session: money.accept(session, doc_id, payload.get("deposit_percent") or 0),
+                 "balance": lambda session: money.balance_invoice(session, doc_id),
+                 "decline": lambda session: money.decline(session, doc_id),
+                 "payments": lambda session: money.record_payment(session, doc_id, payload.get("amount") or 0, payload.get("date"), payload.get("method") or "")}
+        if step not in steps:
+            raise HTTPException(404, "Unknown step")
+        return money_call(lambda session: money.public(steps[step](session)))
+
+    @app.delete("/api/money/documents/{doc_id}")
+    def money_void(doc_id: str):
+        return money_call(lambda session: (lambda doc: {"deleted": doc is None, **(money.public(doc) if doc else {})})(money.void(session, doc_id)))
+
+    @app.get("/api/money/documents/{doc_id}/print")
+    def money_print(doc_id: str):
+        """The printable page itself, for the in-app preview (sandboxed like Business Studio previews)."""
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(money_call(lambda session: money.render(money._get(session, doc_id), money.settings(session)), write=False))
+
+    @app.get("/api/money/documents/{doc_id}/page")
+    def money_page(doc_id: str):
+        return money_call(lambda session: {"html": money.render(money._get(session, doc_id), money.settings(session))}, write=False)
 
     @app.get("/api/business")
     def business_overview():

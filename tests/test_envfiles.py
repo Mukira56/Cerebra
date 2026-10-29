@@ -22,7 +22,7 @@ def test_settings_files_are_found_and_missing_ones_are_named(tmp_path):
                                   "node_modules/x/.env": "A=1", "apps/web/.gitkeep": ""})
     assert envfiles.settings_files(root) == []
     missing = envfiles.missing(root)
-    assert missing == {"example": ".env.example", "names": ["DATABASE_URL", "BETTER_AUTH_SECRET"]}
+    assert missing == {"example": ".env.example", "names": ["DATABASE_URL", "BETTER_AUTH_SECRET"], "target": ".env"}
     write(root, {"apps/web/.env.local": "DATABASE_URL=secret"})
     assert envfiles.settings_files(root) == ["apps/web/.env.local"] and envfiles.missing(root) is None
     assert envfiles.missing(write(tmp_path / "plain", {"README.md": ""})) is None
@@ -115,3 +115,22 @@ def test_try_again_without_settings_repairs_as_usual(hq):
     task = supervisor.get(task_id)
     assert task.results.get("settings_override") and task.results.get("blocked_reason") != "needs_settings"
     assert coder_runs(supervisor) > 1  # failures went to the coder this time
+
+
+def test_the_settings_file_goes_where_the_example_says_and_only_when_git_ignores_it(tmp_path):
+    import pytest
+    root = write(tmp_path / "estate", {".env.example": "# Copy to apps/web/.env.local; use synthetic data.\nDATABASE_URL=\n", "apps/web/page.ts": ""})
+    git(root, "init", "-q")
+    assert envfiles.missing(root)["target"] == "apps/web/.env.local"
+    with pytest.raises(ValueError, match="doesn't ignore"):
+        envfiles.create(root)  # secrets could be committed
+    assert not (root / "apps/web/.env.local").exists()
+    (root / ".gitignore").write_text(".env.*\n!.env.example\n", encoding="utf-8")
+    assert envfiles.create(root) == "apps/web/.env.local"
+    assert (root / "apps/web/.env.local").read_text(encoding="utf-8").endswith("DATABASE_URL=\n")
+    assert envfiles.missing(root) is None
+    with pytest.raises(ValueError):
+        envfiles.create(root)  # never overwrites the owner's file
+    plain = write(tmp_path / "plain", {"server/.env.sample": "TOKEN=\n", "notes": "copy to ../../.env.evil\n"})
+    assert envfiles.missing(plain)["target"] == "server/.env"
+    assert envfiles._target(".env.example", "# Copy to ../.env\n") == ".env"  # never outside the project

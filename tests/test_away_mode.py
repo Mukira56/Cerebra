@@ -113,3 +113,17 @@ def test_finished_work_is_listed_as_waiting_to_merge_not_as_a_problem(client, tm
     supervisor.resolve_approval(merge["id"], False)  # declined for now: the task stops, but its work is done
     task = next(task for task in client.get("/api/overview").json()["tasks"] if task["id"] == identifier)
     assert task["state"] == "BLOCKED" and task["finished"] is True
+
+
+def test_a_failed_task_names_the_settings_its_project_is_missing(client, tmp_path):
+    from test_supervisor import StagnantAgentRegistry
+    enable_agents(client)
+    _, identifier = task_for(client, tmp_path)
+    client.app.state.supervisor.registry = StagnantAgentRegistry()  # its tests keep failing
+    client.put("/api/autopilot", json=AWAY)
+    client.app.state.supervisor.run_until_idle()
+    assert client.get(f"/api/tasks/{identifier}").json()["state"] == "FAILED"
+    assert client.get(f"/api/tasks/{identifier}").json()["missing_settings"] is None
+    (tmp_path / "calc" / ".env.example").write_text("DATABASE_URL=\n", encoding="utf-8")
+    detail = client.get(f"/api/tasks/{identifier}").json()
+    assert detail["missing_settings"] == {"example": ".env.example", "names": ["DATABASE_URL"], "target": ".env"}

@@ -13,6 +13,7 @@
     overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
+    money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
     connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
     job: ["WORK", "Business result", ""],
@@ -160,7 +161,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -328,9 +329,11 @@
       const pending = array(task.approvals).filter(item => String(item.status).toLowerCase() === "pending");
       const progress = el("div", "progress-card"), story = task.state === "COMPLETED" ? ["Finished", "The work was tested, reviewed and merged into your project."] : pending.length ? ["Your decision is needed", `Approve or reject: ${pending.map(item => nice(item.kind)).join(", ")}.`] : task.finished_work?.ready ? ["Finished and reviewed: only the merge is left", `${task.finished_work.why} Press ✓ Merge the finished work. Try again would spend AI usage on work that's already done.`] : task.state === "FAILED" ? ["Stopped with a problem", task.results?.error || "See Runs & logs."] : task.state === "READY" ? ["Ready", "Press Start to let the AI team work."] : [nice(task.state), "This window updates automatically."];
       append(progress, el("strong", "", story[0]), el("p", "", story[1])); root.append(progress);
+      const needs = task.missing_settings;
+      if (needs && task.results?.blocked_reason !== "needs_settings") root.append(hint(`Its tests may need settings only you have${array(needs.names).length ? `: ${array(needs.names).slice(0, 8).join(", ")}${needs.names.length > 8 ? "…" : ""}` : ""}. This project has ${needs.example} but no ${needs.target || ".env"}, and no AI can supply your database or secrets. Create it from the Projects page (or copy ${needs.example} to ${needs.target || ".env"}), fill in your values, then press ↻ Try again. Cerebra lends it to test runs only; the AI never sees it.`, true));
       const fixing = task.results?.auto_fix;
       if (fixing && (fixing.attempts || fixing.stopped)) {
-        const words = {fixing: "the Assistant is fixing it", council: "the Council is working out a solution", applying: "the Assistant is applying the Council's solution", gave_up: "it stopped trying; this task needs you", finished: "nothing to fix: the work is finished and only needs your merge", stopped: "you stopped it for this task", error: fixing.error || "it couldn't start", waiting: "waiting for the next failure"};
+        const words = {fixing: "the Assistant is fixing it", council: "the Council is working out a solution", applying: "the Assistant is applying the Council's solution", gave_up: "it stopped trying; this task needs you", finished: "nothing to fix: the work is finished and only needs your merge", stopped: "you stopped it for this task", error: fixing.error || "it couldn't start", waiting: "waiting for the next failure", ended: "the Assistant's last attempt ended without fixing it. It tries again only if the failure changes; open the fix chat to see what it found."};
         root.append(append(el("div", "progress-card auto-fix-card"), el("strong", "", `Auto-fix · attempt ${fixing.attempts || 0} of ${data.auto_fix?.max_attempts ?? "?"}`), el("p", "", words[fixing.status] || nice(fixing.status || "")),
           append(el("div", "actions"), fixing.chat ? button("Open the fix chat", () => { closeDialog(); chatId = fixing.chat; cache.chats = null; location.hash = "chat"; render(); }, "button small") : null,
             fixing.council ? button("Open the Council meeting", () => { closeDialog(); councilId = fixing.council; location.hash = "council"; render(); }, "button small") : null)));
@@ -482,6 +485,19 @@
   function shortCommand(command) {
     return array(command).map((part, index) => /[\\/]/.test(part) && (index === 0 || /\.(m?js|cjs|py|exe|cmd)$/i.test(part)) ? part.split(/[\\/]/).pop().replace(/\.(exe|mjs|cjs|js|cmd)$/i, "") : part).join(" ");
   }
+  // Ready-made, well-scoped tasks that let the owner's own apps take payments with Stripe (built, tested and
+  // reviewed like any task; keys come from the project's settings file, never from code).
+  const PAYMENT_TASKS = {
+    checkout: ["One-time payments", "Customers pay once for a product, service or booking (Stripe Checkout).",
+      "Add one-time payments with Stripe Checkout. On the server, create a Checkout Session for the item being bought (price and currency decided on the server, never trusted from the browser) and redirect the customer to Stripe's hosted page; add success and cancelled pages. Add a webhook endpoint that verifies the Stripe-Signature header with STRIPE_WEBHOOK_SECRET and marks the order paid only on checkout.session.completed with payment_status 'paid', idempotently (a repeated event changes nothing). Read STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET from environment variables only; never put keys in code, the browser or logs. Add both names, with empty values, to the example settings file (.env.example). Write automated tests that mock Stripe (no network): session creation uses the server's price, a valid signed webhook marks the order paid once, an invalid signature is rejected. Document in the README how to create test keys in Stripe and run the Stripe CLI to forward webhooks locally. Use Stripe test mode only; do not deploy."],
+    subscription: ["Subscriptions", "Customers pay monthly or yearly for access (Stripe Billing + customer portal).",
+      "Add subscriptions with Stripe Billing. On the server, create a Checkout Session in subscription mode for a plan whose Price ID comes from configuration (STRIPE_PRICE_MONTHLY, optionally STRIPE_PRICE_YEARLY), linked to the signed-in user. Add a webhook endpoint that verifies the Stripe-Signature header with STRIPE_WEBHOOK_SECRET and keeps each user's subscription status in the database from customer.subscription.created/updated/deleted and invoice.paid/payment_failed, idempotently. Gate the paid features on an active or trialing status, checked on the server. Add a 'Manage billing' button that opens the Stripe customer portal. Read STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and the price IDs from environment variables only; never put keys in code, the browser or logs; add the names, with empty values, to the example settings file (.env.example). Write automated tests that mock Stripe (no network) for the webhook status changes, the server-side gate and signature rejection. Document in the README how to create the product, prices and test keys in Stripe and forward webhooks with the Stripe CLI. Use Stripe test mode only; do not deploy."]};
+  function paymentsTaskChooser(project) {
+    const root = el("div");
+    root.append(hint(`Let ${project.name} take payments through your Stripe account. Cerebra plans, codes, tests and reviews it like any task, and you approve every step. It uses test mode and keeps keys in the project's settings file (lent to tests, never shown to the AI).`));
+    Object.values(PAYMENT_TASKS).forEach(([title, detail, text]) => root.append(append(el("div", "action-card"), el("strong", "", title), el("p", "", detail), button("Use this", () => { closeDialog(); taskForm(project.id, text); }, "button small primary"))));
+    showDialog(`Get paid in ${project.name}`, root);
+  }
   function projectsView() {
     if (!array(data.projects).length) return panel("Projects", body(empty("No projects yet", "Add an existing folder, start a new project, or clone one from GitHub.", button("+ Add project", () => projectForm(), "button primary"), "{}")));
     const grid = el("div", "grid cards");
@@ -495,10 +511,11 @@
       const needs = el("div"); card.append(needs);
       api(`/api/projects/${encodeURIComponent(project.id)}/settings-files`).then(info => {
         if (!info.missing) return;
-        const names = array(info.missing.names);
-        needs.replaceChildren(hint(`Its tests need local settings this laptop doesn't have yet${names.length ? `: ${names.slice(0, 6).join(", ")}${names.length > 6 ? "…" : ""}` : ""}. Copy ${info.missing.example} to a real settings file (for example .env.local) in the project folder and fill in your own values. Cerebra lends it to test runs only; the AI never sees it.`, true));
+        const names = array(info.missing.names), target = info.missing.target || ".env";
+        needs.replaceChildren(append(hint(`Its tests need local settings this laptop doesn't have yet${names.length ? `: ${names.slice(0, 6).join(", ")}${names.length > 6 ? "…" : ""}` : ""}. They belong in ${target}, which doesn't exist yet. Cerebra lends it to test runs only; the AI never sees it.`, true),
+          append(el("div", "actions"), button(`Create ${target} and open it`, async () => { if (await act(result => `Created ${result.created} from ${info.missing.example}. Fill in your own values and save; tasks waiting for these settings continue by themselves.`, () => mutate(`/api/projects/${encodeURIComponent(project.id)}/settings-file`, {}))) render(); }, "button small"))));
       }).catch(() => {});
-      append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), viewControls("project", project.id), button("Chat", () => newChat(project.id), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
+      append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), viewControls("project", project.id), button("Chat", () => newChat(project.id), "button small"), button("Get paid…", () => paymentsTaskChooser(project), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
       grid.append(card);
     });
     return grid;
@@ -1007,6 +1024,171 @@
     load(); return root;
   }
 
+  // ---------- money: quotes, invoices, earnings ----------
+  const DOC_STYLE = {draft: "muted", sent: "blue", accepted: "green", declined: "red", paid: "green", void: "muted"};
+  const cash = (amount, currency) => `${currency} ${Number(amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  function moneyView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading your money…")));
+    (async () => {
+      let state; try { state = await api("/api/money"); } catch (issue) { root.replaceChildren(body(empty("Money unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const main = state.summary.currency, figures = state.summary.by_currency[main] || {};
+      const stats = el("div", "grid stats");
+      [["Earned this month", cash(figures.earned_month, main), `${cash(figures.earned_year, main)} this year`, "green"],
+       ["Owed to you", cash(figures.owed, main), figures.overdue_count ? `${figures.overdue_count} overdue · ${cash(figures.overdue, main)}` : "nothing overdue", figures.overdue_count ? "red" : "amber"],
+       ["Quotes out", cash(figures.pipeline, main), "waiting for the client's yes", "cyan"],
+       ["Won, not invoiced", cash(figures.won_unbilled, main), "accepted quotes to bill", ""]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value money-value", value), el("div", "stat-note", note))));
+      const others = Object.entries(state.summary.by_currency).filter(([currency]) => currency !== main);
+      const left = el("div"), side = el("div");
+      const docs = array(state.documents), rows = docs.map(doc => [el("strong", "nowrap", doc.number || "Draft"), doc.client, doc.kind === "quote" ? "Quote" : "Invoice", cash(doc.total, doc.currency),
+        doc.kind === "invoice" && doc.status === "sent" ? cash(doc.balance, doc.currency) : "—", doc.overdue ? badge("overdue", "red") : badge(doc.status, DOC_STYLE[doc.status]), doc.due_date || "—",
+        button("Open", () => moneyDocDialog(doc, state), "button small")]);
+      const fromJob = select([["", "Quote from a business job…"], ...array(state.jobs).map(job => [job.id, `${job.title}${job.client ? ` · ${job.client}` : ""}`])]);
+      fromJob.addEventListener("change", async () => { if (!fromJob.value) return; const doc = await act("Quote drafted from the job's agreed scope. Check the price, then issue it.", () => mutate(`/api/money/documents/from-job/${encodeURIComponent(fromJob.value)}`)); if (doc) { render(); moneyDocDialog(doc, state); } });
+      const tools = append(el("div", "actions"), button("+ New quote", () => moneyDocDialog({kind: "quote", items: [], currency: main, status: "draft"}, state), "button primary"),
+        button("+ New invoice", () => moneyDocDialog({kind: "invoice", items: [], currency: main, status: "draft"}, state), "button"), state.jobs.length ? fromJob : null);
+      left.append(panel("Quotes & invoices", append(el("div"), body(tools), docs.length ? table(["Number", "Client", "Kind", "Total", "Still owed", "Status", "Due / valid until", ""], rows)
+        : body(empty("No quotes or invoices yet", "Quote a client, get their yes, invoice a deposit and the rest, and record what they pay. Cerebra numbers and lays out each one; you send it.", null, "$"))), null, docs.length));
+      left.append(productsPanel(state));
+      if (others.length) left.append(panel("Other currencies", table(["Currency", "Earned this month", "Owed", "Quotes out"], others.map(([currency, values]) => [currency, cash(values.earned_month, currency), cash(values.owed, currency), cash(values.pipeline, currency)]))));
+      side.append(panel("Get paid with Stripe", body(stripePanel(state.stripe))), panel("Your business", body(moneySettingsForm(state.settings))),
+        panel("Getting paid", body(hint("Each invoice can carry a payment link, shown on it as “Pay online”: a Stripe link Cerebra creates, or one you paste (PayPal, Paystack…). Record other payments you receive (M-Pesa, bank) from the invoice. Payments on a business job's invoice also go into that job's money record."),
+          hint(state.summary.note))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  function productsPanel(state) {
+    const items = array(state.products);
+    const rows = items.map(item => [el("strong", "", item.name), cash(item.price, item.currency), String(item.sold), cash(item.revenue, item.currency),
+      badge(item.selling ? "selling" : item.status, item.selling ? "green" : item.status === "paused" ? "amber" : "muted"), button("Open", () => productDialog(item, state), "button small")]);
+    return panel("Products you sell", append(el("div"), body(append(el("div", "actions"), button("+ New product", () => productDialog({price: "", currency: state.summary.currency, status: "draft"}, state), "button primary")),
+      items.length ? null : hint("Sell templates, design packs or guides made from your finished work. Cerebra packages the files (never Git history, installed packages or settings files); you upload the ZIP to your Google Drive, Dropbox or OneDrive and paste its share link; Stripe sells it and shows buyers that link right after they pay.")),
+      items.length ? table(["Product", "Price", "Sold", "Revenue", "Status", ""], rows) : null), null, items.length);
+  }
+  function productDialog(item, state) {
+    const root = el("div"), reopen = async (promise, message) => { const result = await act(message, () => promise); if (!result) return; closeDialog(); render(); const fresh = await api("/api/money"); const again = fresh.products.find(entry => entry.id === item.id); if (again) productDialog(again, fresh); };
+    const live = item.selling, form = el("form"), save = submitButton(item.id ? "Save" : "Create product");
+    const name = input("e.g. Bakery website template", item.name || ""), description = textarea("What buyers get, in a sentence or two", item.description || "");
+    const price = input("29", item.price ?? "", "number"), currency = input("USD", item.currency || "USD"), download = input("https://drive.google.com/… share link", item.download_url || "");
+    price.min = "0.5"; price.step = "any"; [price, currency, download].forEach(control => { control.disabled = live; });
+    append(form, field("Name", name), field("Description", description), append(el("div", "form-grid"), field("Price", price), field("Currency", currency)),
+      field("Download link", download, live ? "Pause selling to change the price or download link." : "Upload the package (below) to your own cloud storage, set sharing to “anyone with the link”, and paste the link. Buyers see it right after paying."),
+      actionsRow(button("Close", closeDialog, "button ghost"), save));
+    wireForm(form, save, async () => {
+      const payload = {name: name.value, description: description.value, ...(live ? {} : {price: Number(price.value || 0), currency: currency.value.trim().toUpperCase(), download_url: download.value.trim()})};
+      const saved = item.id ? await mutate(`/api/money/products/${item.id}`, payload, "PATCH") : await mutate("/api/money/products", payload);
+      toast("Product saved."); closeDialog(); render(); productDialog(saved, state);
+    });
+    root.append(form);
+    if (item.id) {
+      const source = select([["", "Package files from…"], ...array(state.sources).map(entry => [`${entry.kind}:${entry.id}`, entry.label])]);
+      source.addEventListener("change", () => { if (!source.value) return; const [kind, id] = source.value.split(/:(.*)/s); reopen(mutate(`/api/money/products/${item.id}/package`, {kind, id}, "POST", 300000), "Packaged. The folder with the ZIP is open: upload it to your cloud storage and paste the share link above."); });
+      const pack = item.package || {};
+      root.append(panel("Files", body(pack.zip ? kv([["Package", pack.zip], ["Files", `${pack.files} (${Math.round((pack.bytes || 0) / 1024)} KB)`], ["Made", date(pack.at)]]) : hint("No package yet. Choose finished work to package; settings files, Git history and installed packages are always left out."), source)));
+      const actions = el("div", "actions");
+      if (!state.stripe?.connected) actions.append(hint("Connect Stripe on the Money page to sell this product with a payment link.", true));
+      else if (!item.link || !live) actions.append(button(item.link ? "Resume selling" : "Start selling with Stripe", () => item.link
+        ? reopen(mutate(`/api/money/products/${item.id}/selling`, {active: true}), "On sale again.")
+        : showDialog("Start selling on Stripe?", append(el("div"), el("p", "", `Creates a payment link in your Stripe account (${state.stripe.mode} mode) selling “${item.name}” for ${cash(item.price, item.currency)}. After paying, buyers see your download link: ${item.download_url || "(add it first)"}.`),
+            actionsRow(button("Cancel", () => productDialog(item, state), "button ghost"), button("Create link", () => reopen(mutate(`/api/money/products/${item.id}/stripe-link`, {confirmed: true}, "POST", 60000), "On sale. Copy the link and share it."), "button primary")))), "button primary"));
+      if (item.link) {
+        actions.append(append(el("span", "inline-field"), el("code", "nowrap", item.link)), button("Copy link", () => navigator.clipboard.writeText(item.link).then(() => toast("Link copied. Share it on your site, social media or WhatsApp."), () => toast("Couldn't copy; select the link and copy it.", true)), "button small"));
+        if (live) actions.append(button("Pause selling", () => reopen(mutate(`/api/money/products/${item.id}/selling`, {active: false}), "Paused. The link no longer accepts payments."), "button"));
+      }
+      if (!array(item.sales).length && !live) actions.append(button("Delete product", () => reopen(api(`/api/money/products/${item.id}`, {method: "DELETE"}), "Product deleted."), "button ghost"));
+      root.append(actions);
+      if (array(item.sales).length) root.append(panel("Sales", table(["Date", "Amount", "Buyer"], item.sales.map(sale => [sale.date, cash(sale.amount, item.currency), sale.email || "—"])), null, item.sales.length));
+    }
+    showDialog(item.id ? item.name : "New product", root);
+  }
+  function stripePanel(stripe) {
+    const root = el("div");
+    if (!stripe?.configured) {
+      const form = el("form"), key = input("rk_live_…", "", "password"), save = submitButton("Connect Stripe"); key.autocomplete = "off";
+      append(form, hint("Clients pay your invoices by card through your own Stripe account, and Cerebra marks each invoice paid when Stripe reports the payment (it checks every 10 minutes)."),
+        field("Restricted API key", key, `In Stripe: Developers › API keys › Create restricted key. Allow only: ${stripe?.permissions || "Products, Prices, Payment Links: Write; Checkout Sessions: Read"}. Stored encrypted on this Windows account, never shown again.`), actionsRow(save));
+      wireForm(form, save, async () => { await mutate("/api/money/stripe", {key: key.value.trim()}, "PUT"); const result = await mutate("/api/money/stripe/check"); toast(result.message); render(); });
+      return append(root, form);
+    }
+    append(root, kv([["Status", stripe.connected ? `Connected · ${stripe.mode} mode` : "Key saved, not checked yet"], ["Checked", stripe.checked_at ? date(stripe.checked_at) : "—"]]),
+      stripe.mode === "test" ? hint("Test mode: payment links work with Stripe's test cards only. Use a live restricted key for real clients.", true) : null,
+      append(el("div", "actions"), button("Check connection", () => act(result => result.message, () => mutate("/api/money/stripe/check")).then(() => render()), "button small"),
+        button("Check for payments now", () => act(result => result.message, () => mutate("/api/money/stripe/sync", {}, "POST", 120000)).then(() => render()), "button small"),
+        button("Disconnect", () => act(result => result.message, () => api("/api/money/stripe", {method: "DELETE"})).then(() => render()), "button small ghost")));
+    return root;
+  }
+  function moneySettingsForm(settings) {
+    const form = el("form"), save = submitButton("Save");
+    const name = input("Your name or business name", settings.business_name), email = input("you@example.com", settings.email, "email"), phone = input("Phone", settings.phone);
+    const address = textarea("Address (optional)", settings.address), tax = input("Optional", settings.tax_id), terms = input("14", settings.payment_terms_days, "number"), valid = input("30", settings.quote_valid_days, "number");
+    const how = textarea("How clients can pay you: bank details, M-Pesa till or paybill, PayPal…", settings.payment_instructions);
+    append(form, field("Business name", name), append(el("div", "form-grid"), field("Email", email), field("Phone", phone)), field("Address", address),
+      append(el("div", "form-grid"), field("Invoices due after (days)", terms), field("Quotes valid for (days)", valid)), field("Tax ID", tax), field("How to pay you", how, "Printed on every invoice."), actionsRow(save));
+    wireForm(form, save, async () => { await mutate("/api/money/settings", {business_name: name.value, email: email.value.trim(), phone: phone.value, address: address.value, tax_id: tax.value,
+      payment_terms_days: Number(terms.value || 0), quote_valid_days: Number(valid.value || 1), payment_instructions: how.value}, "PUT"); toast("Business details saved. They appear on your quotes and invoices."); });
+    return form;
+  }
+  function moneyDocDialog(doc, state) {
+    const root = el("div"), draft = doc.status === "draft", word = doc.kind === "quote" ? "quote" : "invoice";
+    const reopen = async (promise, message) => { const result = await act(message, () => promise); if (!result) return; closeDialog(); render(); if (result.id) moneyDocDialog(result, state); };
+    const top = append(el("div", "detail-top"), badge(doc.kind), doc.overdue ? badge("overdue", "red") : badge(doc.status, DOC_STYLE[doc.status]), doc.number ? el("strong", "", doc.number) : null);
+    root.append(top);
+    if (draft) {
+      const client = input("Client or company name", doc.client), email = input("client@example.com (optional)", doc.client_email, "email"), currency = input("USD", doc.currency || "USD");
+      const job = select([["", "No business job"], ...array(state.jobs).map(item => [item.id, item.title])], doc.job_id || "");
+      const lines = el("div", "money-lines"), notes = textarea("Notes for the client (optional): what's not included, how changes are handled…", doc.notes || "");
+      const link = input("https://buy.stripe.com/… (optional)", doc.payment_url || "");
+      const addLine = (item = {description: "", quantity: 1, unit_price: ""}) => {
+        const row = el("div", "money-line"), text = input("What you'll do", item.description), qty = input("1", item.quantity, "number"), price = input("Price", item.unit_price, "number");
+        qty.min = "0.01"; qty.step = "any"; price.min = "0"; price.step = "any";
+        append(row, text, qty, price, button("×", () => row.remove(), "button small ghost")); row._read = () => ({description: text.value.trim(), quantity: Number(qty.value || 0), unit_price: Number(price.value || 0)}); lines.append(row);
+      };
+      (array(doc.items).length ? doc.items : [undefined]).forEach(item => addLine(item));
+      const form = el("form"), save = submitButton(doc.id ? "Save draft" : `Create ${word}`);
+      append(form, append(el("div", "form-grid"), field("Client", client), field("Client email", email)), append(el("div", "form-grid"), field("Business job", job), field("Currency", currency)),
+        field("Lines", append(el("div"), lines, button("+ Add a line", () => addLine(), "button small ghost")), "Description, quantity and price for each piece of work. You set every price."),
+        field("Notes", notes), doc.kind === "invoice" ? field("Payment link", link, "Shown on the invoice as “Pay online”.") : null, actionsRow(button("Cancel", closeDialog, "button ghost"), save));
+      wireForm(form, save, async () => {
+        const payload = {client: client.value, client_email: email.value.trim(), job_id: job.value || null, currency: currency.value.trim().toUpperCase(), notes: notes.value,
+          items: [...lines.children].map(row => row._read()).filter(item => item.description || item.unit_price), ...(doc.kind === "invoice" ? {payment_url: link.value.trim()} : {})};
+        const saved = doc.id ? await mutate(`/api/money/documents/${doc.id}`, payload, "PATCH") : await mutate("/api/money/documents", {kind: doc.kind, ...payload});
+        toast(`Draft ${word} saved.`); closeDialog(); render(); moneyDocDialog(saved, state);
+      });
+      root.append(form);
+    } else {
+      root.append(kv([["Client", `${doc.client}${doc.client_email ? ` · ${doc.client_email}` : ""}`], ["Total", cash(doc.total, doc.currency)], ...(doc.kind === "invoice" ? [["Paid", cash(doc.paid, doc.currency)], ["Still owed", cash(doc.balance, doc.currency)]] : []),
+        ["Issued", doc.issued_at], [doc.kind === "quote" ? "Valid until" : "Due", doc.due_date], ...(doc.payment_url ? [["Payment link", doc.payment_url]] : [])]));
+      if (array(doc.payments).length) root.append(table(["Paid on", "Amount", "How"], doc.payments.map(payment => [payment.date, cash(payment.amount, doc.currency), payment.method || "—"])));
+    }
+    const actions = el("div", "actions");
+    if (doc.id) actions.append(button("Preview", () => { const frame = el("iframe", "money-preview"); frame.setAttribute("sandbox", "allow-same-origin"); frame.setAttribute("referrerpolicy", "no-referrer"); frame.title = "Printable preview"; frame.src = `/api/money/documents/${encodeURIComponent(doc.id)}/print`; showDialog(`${doc.number || "Draft"} · ${doc.client}`, append(el("div"), frame, actionsRow(button("Back", () => moneyDocDialog(doc, state), "button ghost")))); }, "button"),
+      button("Save & open to print / PDF", () => act(result => `Saved ${result.path}. Print it or save it as PDF from your browser.`, () => mutate(`/api/money/documents/${doc.id}/save`)), "button"));
+    if (draft && doc.id) actions.append(button(`Issue this ${word}`, () => reopen(mutate(`/api/money/documents/${doc.id}/issue`), `${doc.kind === "quote" ? "Quote" : "Invoice"} numbered and dated. Send it to ${doc.client} yourself (Save & open, then email the PDF).`), "button primary"));
+    if (doc.kind === "quote" && doc.status === "sent") {
+      const deposit = input("50", "50", "number"); deposit.min = 0; deposit.max = 100;
+      actions.append(append(el("span", "inline-field"), el("span", "", "Deposit %"), deposit), button("Client accepted → draft the invoice", () => reopen(mutate(`/api/money/documents/${doc.id}/accept`, {deposit_percent: Number(deposit.value || 0)}), "Accepted. The invoice draft is ready."), "button primary"),
+        button("Client declined", () => reopen(mutate(`/api/money/documents/${doc.id}/decline`), "Marked declined."), "button"));
+    }
+    if (doc.kind === "quote" && doc.status === "accepted") actions.append(button("Invoice the rest", () => reopen(mutate(`/api/money/documents/${doc.id}/balance`), "Balance invoice drafted."), "button primary"));
+    if (doc.kind === "invoice" && doc.status === "sent" && state.stripe?.connected) {
+      const stripeLink = doc.provider?.stripe;
+      actions.append(button(stripeLink?.active ? "New Stripe link for the balance" : "Create Stripe payment link", () => showDialog("Create a Stripe payment link?", append(el("div"),
+        el("p", "", `Creates a payment link for ${cash(doc.balance, doc.currency)} in your Stripe account (${state.stripe.mode} mode), named “Invoice ${doc.number} · ${doc.client}”. ${doc.client} pays Stripe directly; Cerebra marks this invoice paid when Stripe reports the payment and then switches the link off.`),
+        stripeLink?.active ? hint("The current link is switched off, so the old amount can't be paid twice.") : null,
+        actionsRow(button("Cancel", () => moneyDocDialog(doc, state), "button ghost"), button("Create link", () => reopen(mutate(`/api/money/documents/${doc.id}/stripe-link`, {confirmed: true}, "POST", 60000).then(() => api("/api/money")).then(fresh => fresh.documents.find(item => item.id === doc.id)), "Payment link added to the invoice as “Pay online”. Send the invoice to your client."), "button primary")))), stripeLink?.active ? "button" : "button primary"));
+      if (stripeLink) actions.append(button("Check Stripe for payment", () => reopen(mutate("/api/money/stripe/sync", {document_id: doc.id}, "POST", 60000).then(() => api("/api/money")).then(fresh => fresh.documents.find(item => item.id === doc.id)), "Checked Stripe."), "button"));
+    }
+    if (doc.kind === "invoice" && doc.status === "sent") {
+      const amount = input("Amount", doc.balance, "number"), method = input("e.g. M-Pesa, bank, Stripe", ""); amount.step = "any";
+      actions.append(append(el("span", "inline-field"), el("span", "", "Received"), amount, method), button("Record payment", () => reopen(mutate(`/api/money/documents/${doc.id}/payments`, {amount: Number(amount.value || 0), method: method.value}), "Payment recorded."), "button primary"));
+    }
+    if (doc.id && !["void", "paid", "accepted", "declined"].includes(doc.status)) actions.append(button(draft ? "Delete draft" : `Void this ${word}`, () => reopen(api(`/api/money/documents/${doc.id}`, {method: "DELETE"}), draft ? "Draft deleted." : "Voided. Its number stays used."), "button ghost"));
+    root.append(actions);
+    showDialog(doc.id ? `${doc.number || `Draft ${word}`} · ${doc.client}` : `New ${word}`, root);
+  }
   // ---------- business studio ----------
   const STAGE_STYLE = {scope: "amber", intake: "muted", planning: "blue", creating: "blue", checking: "blue", waiting: "amber", ready: "green", completed: "green", failed: "red", cancelled: "muted"};
   const KIND_HELP = {service_site: "Service business website with a working quote form (client delivery)", website: "Static website: index.html, styles.css, README.md", listing: "Listing copy: title, description and tags (listing.md)", svg: "Original vector design (design.svg) + README", document: "A written document (deliverable.md)"};

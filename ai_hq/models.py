@@ -165,6 +165,45 @@ class BusinessRecord(Base):
     revisions: Mapped[list] = mapped_column(JSON, default=list)
     delivery_checks: Mapped[list] = mapped_column(JSON, default=list)
 
+class MoneyDocument(Base):
+    """A quote or an invoice the owner sends a client. Amounts are the owner's own; Cerebra never takes payments."""
+    __tablename__ = "money_documents"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    kind: Mapped[str] = mapped_column(String)  # quote | invoice
+    number: Mapped[str] = mapped_column(String, default="")  # given when issued, so numbers have no gaps
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft | sent | accepted | declined | paid | void
+    client: Mapped[str] = mapped_column(String, default="")
+    client_email: Mapped[str] = mapped_column(String, default="")
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("business_jobs.id"), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String, nullable=True)  # the quote an invoice came from
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    currency: Mapped[str] = mapped_column(String, default="USD")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    issued_at: Mapped[str] = mapped_column(String, default="")
+    due_date: Mapped[str] = mapped_column(String, default="")
+    payment_url: Mapped[str] = mapped_column(String, default="")
+    payments: Mapped[list] = mapped_column(JSON, default=list)
+    provider: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+class Product(Base):
+    """A digital product the owner sells (a template, a design pack…): its price, where buyers download it,
+    its Stripe payment link and the sales Stripe reported."""
+    __tablename__ = "products"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(Text, default="")
+    price: Mapped[float] = mapped_column(default=0.0)
+    currency: Mapped[str] = mapped_column(String, default="USD")
+    download_url: Mapped[str] = mapped_column(String, default="")
+    package: Mapped[dict] = mapped_column(JSON, default=dict)
+    stripe: Mapped[dict] = mapped_column(JSON, default=dict)
+    sales: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft | selling | paused
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

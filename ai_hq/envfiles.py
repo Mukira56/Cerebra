@@ -11,13 +11,16 @@ from __future__ import annotations
 import contextlib
 import re
 import shutil
-from pathlib import Path
+import subprocess
+from pathlib import Path, PurePosixPath
 
 PATTERN = re.compile(r"^\.env(\.[\w-]+)*$")
 EXAMPLES = re.compile(r"\.(example|sample|template|dist|defaults)$", re.I)
 SKIP = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next"}
 DEPTH = 3
 NAME = re.compile(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=", re.M)
+# "# Copy to apps/web/.env.local" in the example says where the real file belongs (EstatePilot's web app reads it there).
+TARGET = re.compile(r"copy\s+(?:this\s+file\s+|it\s+)?to\s+[`'\"]?((?:[\w.-]+[\\/])*\.env(?:\.[\w-]+)*)", re.I)
 
 
 def _walk(root, depth=DEPTH):
@@ -51,11 +54,43 @@ def missing(project):
     examples = sorted(path for path in _walk(root) if EXAMPLES.search(path.name))
     if not examples:
         return None
+    example = examples[0].relative_to(root).as_posix()
     try:
-        names = list(dict.fromkeys(NAME.findall(examples[0].read_text(encoding="utf-8", errors="replace"))))[:30]
+        text = examples[0].read_text(encoding="utf-8", errors="replace")
     except OSError:
-        names = []
-    return {"example": examples[0].relative_to(root).as_posix(), "names": names}
+        text = ""
+    names = list(dict.fromkeys(NAME.findall(text)))[:30]
+    return {"example": example, "names": names, "target": _target(example, text)}
+
+
+def _target(example, text):
+    """Where the real settings file goes: the path the example names, else .env beside it (read by dotenv in Node,
+    Python and Next.js alike)."""
+    found = TARGET.search(text)
+    if found:
+        relative = PurePosixPath(found.group(1).replace("\\", "/").removeprefix("./"))
+        if not relative.is_absolute() and ".." not in relative.parts and PATTERN.match(relative.name) and not EXAMPLES.search(relative.name):
+            return relative.as_posix()
+    return (PurePosixPath(example).parent / ".env").as_posix()
+
+
+def create(project):
+    """The owner's "Create the settings file": copy the example to where the real file goes, for the owner to fill
+    in. Only when Git ignores that path, so the owner's secrets can never be committed. Returns the path created."""
+    root = Path(project)
+    needed = missing(root)
+    if not needed:
+        raise ValueError("This project already has a settings file, or no example to start from")
+    target = (root / needed["target"]).resolve()
+    if not target.is_relative_to(root.resolve()) or target.exists():
+        raise ValueError(f"{needed['target']} already exists or is outside the project")
+    ignored = subprocess.run(["git", "check-ignore", "-q", needed["target"]], cwd=root, capture_output=True, timeout=30)
+    if ignored.returncode != 0:
+        raise ValueError(f"Git doesn't ignore {needed['target']} in this project, so your secrets could be committed. "
+                         f"Add {needed['target']} to the project's .gitignore first.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(root / needed["example"], target)
+    return needed["target"]
 
 
 @contextlib.contextmanager

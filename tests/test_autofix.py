@@ -167,3 +167,11 @@ def test_support_can_ask_the_council_itself(client, tmp_path):
         time.sleep(0.05)
     meeting = client.get(f"/api/council/{result['affected']['council_id']}").json()
     assert meeting["status"] == "done" and "module layout" in meeting["topic"]
+
+
+def test_fixing_is_only_shown_while_the_fix_chat_runs():
+    from ai_hq.autofix import shown
+    record = {"status": "fixing", "chat": "c1", "attempts": 1}
+    assert shown(record, {"c1"})["status"] == "fixing"
+    assert shown(record, set())["status"] == "ended" and record["status"] == "fixing"  # the stored record is unchanged
+    assert shown({"status": "gave_up", "chat": "c1"}, set())["status"] == "gave_up"

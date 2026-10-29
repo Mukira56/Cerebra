@@ -89,7 +89,15 @@ def covered(policy, task):
     return not fix.get("stopped") and (policy.get("scope") == "all" or bool(fix.get("chosen")))
 
 
-def candidates(session, policy):
+def shown(fix, busy):
+    """Auto-fix's record as the owner should see it: "fixing" only while the fix chat is actually running. When the
+    Assistant's chat ended without changing the task, the record would otherwise say "fixing" for days."""
+    if fix and fix.get("status") in {"fixing", "applying"} and fix.get("chat") not in busy:
+        return {**fix, "status": "ended"}
+    return fix
+
+
+def candidates(session, policy, busy=()):
     """The failed and stuck tasks the owner can choose from, newest first."""
     rows = session.scalars(select(Task).where(Task.state.in_(["FAILED", "BLOCKED"])).order_by(Task.updated_at.desc()).limit(200)).all()
     projects = {row.id: row.name for row in session.scalars(select(Project)).all()}
@@ -101,7 +109,7 @@ def candidates(session, policy):
         fix = row.results.get("auto_fix") or {}
         listed.append({"id": row.id, "description": redact(row.description)[:200], "project": projects.get(row.project_id, ""), "state": row.state,
                        "error": redact(str(reason))[:300], "updated_at": row.updated_at, "selected": covered(policy, row),
-                       "status": fix.get("status"), "attempts": fix.get("attempts", 0)})
+                       "status": shown(fix, busy).get("status"), "attempts": fix.get("attempts", 0)})
     return listed
 
 

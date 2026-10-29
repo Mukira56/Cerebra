@@ -775,7 +775,7 @@ class Supervisor:
             stored = self._get(session, task_id)
             stored.results = {**stored.results, "queued": False, "blocked_reason": "needs_settings", "resume_stage": "review", "missing_settings": needed,
                               "error": f"The tests failed and this project has no settings file yet, only {needed['example']}. It needs your own values{listed}. "
-                                       f"Copy {needed['example']} to .env.local in the project folder and fill them in; Cerebra tests the saved work again by itself "
+                                       f"Copy {needed['example']} to {needed.get('target') or '.env'} in the project folder (or use “Create the settings file” on the Projects page) and fill them in; Cerebra tests the saved work again by itself "
                                        "once it's there (the AI never sees it). Or press Try again to repair without them."}
             self._state(session, stored, "BLOCKED", f"Waiting for the project's settings: its tests need values only you have ({needed['example']} has no real counterpart)")
         return True
@@ -912,6 +912,11 @@ class Supervisor:
             task.results = {**task.results, "handoff_note": note, "error": None, "queued": False, "blocked_reason": "retry_requested",
                             "progress_fingerprint": None, **source}
             task.retry_count, task.pause_requested = 0, True
+            # A retry follows today's repair setting when it allows more than the task was created with (an old task
+            # made under "0 repairs" would otherwise fail at its first test failure, whatever the owner set since).
+            current = -1 if self.settings.max_retries < 0 else min(100, self.settings.max_retries)
+            if task.max_retries >= 0 and (current < 0 or current > task.max_retries):
+                task.max_retries = current
             self._event(session, task_id, "retry", f"Retry requested by the {author} with fix instructions", {"instructions": instructions[:500]})
             if task.state == "FAILED":
                 self._state(session, task, "BLOCKED", "Retrying with fix instructions")

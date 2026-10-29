@@ -130,7 +130,7 @@ form { display: flex; flex-direction: column; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-weight: 600; font-size: 13px; }
 .field small { color: var(--muted); font-size: 12px; }
-input[type=text], input[type=password], input[type=number], input:not([type]), select, textarea { width: 100%; padding: 9px 11px; background: #070a0e; border: 1px solid var(--line-2); border-radius: 8px; outline: none; }
+input[type=text], input[type=password], input[type=number], input[type=email], input:not([type]), select, textarea { width: 100%; padding: 9px 11px; background: #070a0e; border: 1px solid var(--line-2); border-radius: 8px; outline: none; }
 input:focus, select:focus, textarea:focus { border-color: var(--cyan); }
 textarea { min-height: 90px; resize: vertical; font-family: var(--mono); font-size: 13px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
@@ -455,3 +455,12 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .team-actions { display: flex; flex-wrap: wrap; gap: 6px; } .team-actions select { flex: 1 1 180px; min-width: 0; }
 @media (max-width: 760px) { .team-row { grid-template-columns: 1fr; } }
 .team-summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px 12px; font-size: 13px; opacity: .9; }
+/* Money center */
+.stat-value.money-value { font-size: 22px; overflow-wrap: anywhere; }
+.money-lines { display: grid; gap: 8px; margin-bottom: 8px; }
+.money-line { display: grid; grid-template-columns: minmax(0, 1fr) 80px 120px auto; gap: 8px; align-items: center; }
+@media (max-width: 640px) { .money-line { grid-template-columns: minmax(0, 1fr) 64px 96px auto; } }
+.money-preview { width: 100%; height: 60vh; border: 1px solid var(--line, #333); border-radius: 8px; background: #fff; }
+.inline-field { display: inline-flex; align-items: center; gap: 6px; }
+.inline-field input { width: 120px; }
+.nowrap { white-space: nowrap; }

@@ -313,3 +313,16 @@ def test_auto_fix_leaves_finished_work_to_the_owner(hq):
     assert fixer.scan() == []  # no Assistant run spent on finished work
     assert supervisor.get(task_id).results["auto_fix"]["status"] == "finished"
     assert "only the merge is left" in " ".join(events(db, task_id, "auto_fix"))
+
+
+def test_try_again_follows_todays_repair_setting(hq):
+    supervisor, _, _, db, _ = hq
+    supervisor.registry = StagnantAgentRegistry()  # its tests keep failing
+    task_id = ready(hq)
+    with db.Session.begin() as session:  # created back when the owner allowed no repairs
+        session.get(Task, task_id).max_retries = 0
+    supervisor.run_until_idle()
+    assert supervisor.get(task_id).state == "FAILED"
+    supervisor.settings.max_retries = -1  # since then: no limit
+    supervisor.try_again(task_id)
+    assert supervisor.get(task_id).max_retries == -1

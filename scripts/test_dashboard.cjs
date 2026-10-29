@@ -136,7 +136,7 @@ const path = require('node:path');
     const courier = page.locator('.courier[data-state="running"]').first();
     const before = await courier.getAttribute('transform'); await page.waitForTimeout(350);
     assert.notEqual(await courier.getAttribute('transform'), before, 'Real running telemetry animates the courier');
-    await page.emulateMedia({reducedMotion:'reduce'}); await page.waitForTimeout(100);
+    await page.emulateMedia({reducedMotion:'reduce'}); await page.waitForTimeout(600);  // the factory snaps workers to rest on its next frame; a busy laptop needs longer than 100 ms
     const still = await courier.getAttribute('transform'); await page.waitForTimeout(200);
     assert.equal(await courier.getAttribute('transform'), still, 'Reduced motion keeps workers stationary');
     await page.locator('.courier[aria-label^="Working worker: Coder"]').first().click();
@@ -295,10 +295,12 @@ const path = require('node:path');
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
     // No page prints a stray "null" (an empty value handed to the browser's append).
-    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'council', 'chat', 'system']) {
+    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'council', 'chat', 'system']) {
       await page.evaluate(view => { location.hash = view; }, name); await page.waitForTimeout(600);
       assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('body').innerText()), `"null" is printed on the ${name} page`);
     }
+    await page.evaluate(() => { location.hash = 'money'; }); await page.waitForTimeout(800);
+    assert.ok(await page.getByText('Earned this month').count() && await page.getByRole('button', {name: '+ New quote'}).count(), 'The Money page shows earnings and can start a quote');
     await page.evaluate(() => { location.hash = 'tasks'; }); await page.waitForTimeout(600);
     assert.match(await page.title(), /^(\(\d+\) )?Cerebra/, 'The window title names Cerebra and what needs the owner');
     const rowsBefore = await page.locator('.row[data-task-id]').count();
@@ -312,7 +314,7 @@ const path = require('node:path');
       await page.keyboard.press('Escape');
     }
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({pages: 16, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
+    console.log(JSON.stringify({pages: 17, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
   } catch (error) {
     if (shots && activePage) {
       await activePage.screenshot({path:path.join(shots,'failure.png')}).catch(() => {});
