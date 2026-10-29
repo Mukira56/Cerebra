@@ -217,6 +217,25 @@ class ChannelEntry(Base):
     note: Mapped[str] = mapped_column(String, default="")
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class RecurringPlan(Base):
+    """A client the owner bills on a schedule (a monthly care plan, a retainer): each period Cerebra drafts the
+    invoice from these lines, or issues it when the owner chose that. The owner still sends it."""
+    __tablename__ = "recurring_plans"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    client: Mapped[str] = mapped_column(String, default="")
+    client_email: Mapped[str] = mapped_column(String, default="")
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("business_jobs.id"), nullable=True)
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    currency: Mapped[str] = mapped_column(String, default="USD")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    every: Mapped[str] = mapped_column(String, default="month")  # month | quarter | year
+    next_date: Mapped[str] = mapped_column(String, default="")
+    auto_issue: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    made: Mapped[list] = mapped_column(JSON, default=list)  # [{"date", "document"}]
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

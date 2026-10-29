@@ -1067,15 +1067,59 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
+    def bill_due_plans():
+        """Draft (or issue) every recurring invoice that is due; recorded in the activity log."""
+        with db.Session.begin() as session:
+            made = money.run_plans(session)
+            if made:
+                session.add(Event(kind="money", message=f"Recurring plans: {len(made)} invoice(s) ready for "
+                                  + ", ".join(sorted({doc.client for doc in made}))[:200] + ". Open Money to send them."))
+        return made
+    payments.slow_jobs.append(bill_due_plans)
+
     @app.get("/api/money")
     def money_overview():
+        bill_due_plans()
         def read(session):
             jobs = [{"id": job.id, "title": job.title, "client": job.client} for job in session.scalars(select(BusinessJob).order_by(BusinessJob.created_at.desc()).limit(200))]
             from . import payments as payments_module
             return {"settings": money.settings(session), "summary": money.summary(session), "documents": money.documents(session), "jobs": jobs,
                     "stripe": payments_module.status(session), "products": products.products(session), "sources": products.sources(session),
-                    "channels": channels.status(session)}
+                    "channels": channels.status(session), "plans": money.plans(session)}
         return money_call(read, write=False)
+
+    @app.post("/api/money/export")
+    def money_export(payload: dict):
+        """A CSV of the year's income and costs in the business folder, opened in Explorer for the owner's accountant."""
+        try:
+            year = int(payload.get("year") or now()[:4])
+        except (TypeError, ValueError):
+            raise ValueError("Choose a year, for example 2026") from None
+        if not 2000 <= year <= 2100:
+            raise ValueError("Choose a year between 2000 and 2100")
+        def write(session):
+            return money.export_year(session, year, Path(business.load(session)["output_root"]) / "Quotes and invoices")
+        result = money_call(write, write=False)
+        try:
+            app.state.open_document(str(Path(result["path"]).parent))
+        except Exception:
+            pass
+        return result
+
+    @app.post("/api/money/plans", status_code=201)
+    def plan_create(payload: dict):
+        plan = money_call(lambda session: money.plan_public(money.save_plan(session, None, payload)))
+        bill_due_plans()  # a plan that starts today bills today
+        return plan
+
+    @app.patch("/api/money/plans/{plan_id}")
+    def plan_update(plan_id: str, payload: dict):
+        return money_call(lambda session: money.plan_public(money.save_plan(session, plan_id, payload)))
+
+    @app.delete("/api/money/plans/{plan_id}")
+    def plan_delete(plan_id: str):
+        money_call(lambda session: money.delete_plan(session, plan_id))
+        return {"deleted": True}
 
     @app.put("/api/money/settings")
     def money_settings(payload: dict):

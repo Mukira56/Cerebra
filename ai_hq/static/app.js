@@ -1057,14 +1057,58 @@
         String(array(doc.provider?.reminders).length), button("Remind", () => reminderDialog(doc, state), "button small primary")])), null, late.length));
       left.append(panel("Quotes & invoices", append(el("div"), body(tools), docs.length ? table(["Number", "Client", "Kind", "Total", "Still owed", "Status", "Due / valid until", ""], rows)
         : body(empty("No quotes or invoices yet", "Quote a client, get their yes, invoice a deposit and the rest, and record what they pay. Cerebra numbers and lays out each one; you send it.", null, "$"))), null, docs.length));
-      left.append(productsPanel(state));
+      left.append(plansPanel(state), productsPanel(state));
       if (others.length) left.append(panel("Other currencies", table(["Currency", "Earned this month", "Owed", "Quotes out"], others.map(([currency, values]) => [currency, cash(values.earned_month, currency), cash(values.owed, currency), cash(values.pipeline, currency)]))));
       side.append(panel("Get paid with Stripe", body(stripePanel(state.stripe))), panel("Marketplace sales", body(channelsPanel(state.channels))), panel("Your business", body(moneySettingsForm(state.settings))),
         panel("Getting paid", body(hint("Each invoice can carry a payment link, shown on it as “Pay online”: a Stripe link Cerebra creates, or one you paste (PayPal, Paystack…). Record other payments you receive (M-Pesa, bank) from the invoice. Payments on a business job's invoice also go into that job's money record."),
-          hint(state.summary.note))));
+          hint(state.summary.note), exportRow(state))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
     return root;
+  }
+  const EVERY_WORDS = {month: "Every month", quarter: "Every 3 months", year: "Every year"};
+  function exportRow(state) {
+    const thisYear = Number((state.summary.today || new Date().toISOString()).slice(0, 4)), year = select([[String(thisYear), String(thisYear)], [String(thisYear - 1), String(thisYear - 1)]]);
+    return append(el("div", "actions"), year, button("Export the year (CSV) for my accountant", () => act(result => `Saved ${result.rows} row(s) to ${result.path}. It opens in Excel.`,
+      () => mutate("/api/money/export", {year: Number(year.value)})), "button small"));
+  }
+  function plansPanel(state) {
+    const items = array(state.plans), main = state.summary.currency;
+    const monthly = items.filter(plan => plan.active && plan.currency === main).reduce((sum, plan) => sum + plan.monthly, 0);
+    const rows = items.map(plan => [el("strong", "", plan.client), cash(plan.total, plan.currency), EVERY_WORDS[plan.every] || plan.every, plan.active ? plan.next_date : "paused",
+      plan.auto_issue ? "issued for you" : "drafted for you", button("Open", () => planDialog(plan, state), "button small")]);
+    return panel("Recurring plans", append(el("div"), body(append(el("div", "actions"), button("+ New plan", () => planDialog({every: "month", currency: main, items: [], active: true}, state), "button primary"),
+        items.length ? el("span", "row-meta", `${cash(monthly, main)} a month in active plans`) : null),
+      items.length ? null : hint("Bill clients on a schedule: a website care plan, hosting and updates, a monthly retainer. On each date Cerebra drafts the invoice (or issues it, if you choose); you send it.")),
+      items.length ? table(["Client", "Each time", "How often", "Next invoice", "Invoice", ""], rows) : null), null, items.length);
+  }
+  function planDialog(plan, state) {
+    const form = el("form"), save = submitButton(plan.id ? "Save plan" : "Start plan");
+    const client = input("Client or company name", plan.client || ""), email = input("client@example.com (optional)", plan.client_email || "", "email");
+    const every = select(Object.entries(EVERY_WORDS), plan.every || "month"), start = input("", plan.next_date || new Date().toISOString().slice(0, 10), "date");
+    const currency = input("USD", plan.currency || "USD"), notes = textarea("Notes printed on each invoice (optional)", plan.notes || "");
+    const auto = check("Issue each invoice automatically (numbered and dated; you still send it)", plan.auto_issue), active = check("Active", plan.active !== false);
+    const lines = el("div", "money-lines");
+    const addLine = (item = {description: "", quantity: 1, unit_price: ""}) => {
+      const row = el("div", "money-line"), text = input("What you do each period", item.description), qty = input("1", item.quantity, "number"), price = input("Price", item.unit_price, "number");
+      qty.min = "0.01"; qty.step = "any"; price.min = "0"; price.step = "any";
+      append(row, text, qty, price, button("×", () => row.remove(), "button small ghost")); row._read = () => ({description: text.value.trim(), quantity: Number(qty.value || 0), unit_price: Number(price.value || 0)}); lines.append(row);
+    };
+    (array(plan.items).length ? plan.items : [undefined]).forEach(item => addLine(item));
+    append(form, append(el("div", "form-grid"), field("Client", client), field("Client email", email)), append(el("div", "form-grid"), field("How often", every), field(plan.id ? "Next invoice" : "First invoice", start, "Days after the 28th become the 28th, so every month has one.")),
+      field("Lines", append(el("div"), lines, append(el("div", "actions"), button("+ Add a line", () => addLine(), "button small ghost"),
+        servicePicker(state, item => { [...lines.children].filter(row => { const line = row._read(); return !line.description && !line.unit_price; }).forEach(row => row.remove()); addLine(item); })))),
+      field("Currency", currency), field("Notes", notes), auto.wrap, plan.id ? active.wrap : null,
+      array(plan.made).length ? hint(`Invoices made so far: ${plan.made.length} (last for ${plan.made[plan.made.length - 1].date}).`) : null,
+      actionsRow(plan.id ? button("Delete plan", () => act("Plan deleted. Its invoices stay.", () => api(`/api/money/plans/${plan.id}`, {method: "DELETE"})).then(result => { if (result) { closeDialog(); render(); } }), "button ghost") : null,
+        button("Cancel", closeDialog, "button ghost"), save));
+    wireForm(form, save, async () => {
+      const payload = {client: client.value, client_email: email.value.trim(), every: every.value, next_date: start.value, currency: currency.value.trim().toUpperCase(), notes: notes.value,
+        auto_issue: auto.control.checked, active: plan.id ? active.control.checked : true, items: [...lines.children].map(row => row._read()).filter(item => item.description || item.unit_price)};
+      plan.id ? await mutate(`/api/money/plans/${plan.id}`, payload, "PATCH") : await mutate("/api/money/plans", payload);
+      toast(plan.id ? "Plan saved." : "Plan started. Its invoices appear under Quotes & invoices on each date."); closeDialog(); render();
+    });
+    showDialog(plan.id ? `Recurring plan · ${plan.client}` : "New recurring plan", form);
   }
   function productsPanel(state) {
     const items = array(state.products);

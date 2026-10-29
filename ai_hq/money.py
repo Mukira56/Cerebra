@@ -436,3 +436,140 @@ def mark_reminded(session, doc_id, tone, today=None):
     provider["reminders"] = list(provider.get("reminders", [])) + [{"date": today or _today(), "tone": _clean(tone, 20)}]
     doc.provider, doc.updated_at = provider, now()
     return doc
+
+
+# ---- recurring plans: care plans and retainers billed on a schedule ----
+EVERY = {"month": 1, "quarter": 3, "year": 12}
+
+
+def _add_months(day, months):
+    """The same day `months` later, kept at most on the 28th so every month has it."""
+    total = day.month - 1 + months
+    return date(day.year + total // 12, total % 12 + 1, min(day.day, 28))
+
+
+def plan_public(plan):
+    from .models import RecurringPlan  # noqa: F401
+    total = round(sum(item["quantity"] * item["unit_price"] for item in plan.items or []), 2)
+    return {"id": plan.id, "client": plan.client, "client_email": plan.client_email, "job_id": plan.job_id, "items": plan.items or [], "currency": plan.currency,
+            "notes": plan.notes, "every": plan.every, "next_date": plan.next_date, "auto_issue": plan.auto_issue, "active": plan.active, "made": plan.made or [],
+            "total": total, "monthly": round(total / EVERY.get(plan.every, 1), 2)}
+
+
+def save_plan(session, plan_id, fields):
+    from .models import RecurringPlan
+    plan = session.get(RecurringPlan, plan_id) if plan_id else RecurringPlan(id=uid(), items=[], made=[], currency=_currency(session))
+    if plan is None:
+        raise LookupError("Recurring plan not found")
+    holder = MoneyDocument(kind="invoice", client=plan.client, client_email=plan.client_email, items=plan.items, currency=plan.currency,
+                           notes=plan.notes, job_id=plan.job_id)
+    _apply(session, holder, fields)  # the same checks as an invoice
+    plan.client, plan.client_email, plan.items, plan.currency, plan.notes, plan.job_id = holder.client, holder.client_email, holder.items, holder.currency, holder.notes, holder.job_id
+    if not plan.items:
+        raise ValueError("Add at least one line: what you'll do each period and its price")
+    if "every" in fields:
+        if fields["every"] not in EVERY:
+            raise ValueError("Bill every month, quarter or year")
+        plan.every = fields["every"]
+    if "next_date" in fields or not plan.next_date:
+        try:
+            plan.next_date = date.fromisoformat(str(fields.get("next_date") or _today())[:10]).isoformat()
+        except ValueError:
+            raise ValueError("Choose the date of the first invoice") from None
+    if "auto_issue" in fields:
+        plan.auto_issue = bool(fields["auto_issue"])
+    if "active" in fields:
+        plan.active = bool(fields["active"])
+    plan.updated_at = now()
+    if not plan_id:
+        session.add(plan)
+    session.flush()
+    return plan
+
+
+def delete_plan(session, plan_id):
+    from .models import RecurringPlan
+    plan = session.get(RecurringPlan, plan_id)
+    if plan is None:
+        raise LookupError("Recurring plan not found")
+    session.delete(plan)  # the invoices it made stay
+
+
+def plans(session):
+    from .models import RecurringPlan
+    return [plan_public(plan) for plan in session.scalars(select(RecurringPlan).order_by(RecurringPlan.created_at.desc()))]
+
+
+def run_plans(session, today=None):
+    """Make every invoice that is due: one per missed period (a laptop that was off for two months catches up), each
+    dated on its own period. Returns the new documents. Safe to call often: a period is billed once."""
+    from .models import RecurringPlan
+    today = today or _today()
+    made = []
+    for plan in session.scalars(select(RecurringPlan).where(RecurringPlan.active.is_(True))).all():
+        for _ in range(24):  # at most two years of catching up at once
+            if not plan.next_date or plan.next_date > today:
+                break
+            period = plan.next_date
+            doc = MoneyDocument(id=uid(), kind="invoice", client=plan.client, client_email=plan.client_email, job_id=plan.job_id, items=[dict(item) for item in plan.items],
+                                currency=plan.currency, notes=(plan.notes + ("\n" if plan.notes else "") + f"For the period starting {period}.").strip(), payments=[], provider={"plan": plan.id})
+            session.add(doc)
+            session.flush()
+            if plan.auto_issue:
+                issue(session, doc.id, today=period)
+            plan.made = list(plan.made or []) + [{"date": period, "document": doc.id}]
+            plan.next_date = _add_months(date.fromisoformat(period), EVERY[plan.every]).isoformat()
+            plan.updated_at = now()
+            made.append(doc)
+    return made
+
+
+def year_rows(session, year):
+    """Every payment, sale and cost of a calendar year, one row each, counted exactly like summary() (a business
+    job's invoice payments come from its ledger, so nothing is listed twice)."""
+    from .models import BusinessJob, BusinessRecord, ChannelEntry, Product
+    year, main, rows = str(year), _currency(session), []
+    for doc in session.scalars(select(MoneyDocument).where(MoneyDocument.kind == "invoice")).all():
+        if doc.job_id:
+            continue
+        for payment in doc.payments or []:
+            if payment["date"][:4] == year:
+                rows.append([payment["date"], "income", "invoice payment", doc.client, doc.number, payment.get("method", ""), payment["amount"], doc.currency])
+    for record in session.scalars(select(BusinessRecord)).all():
+        job = session.get(BusinessJob, record.job_id)
+        for item in record.ledger or []:
+            if item.get("kind") in {"payment", "expense"} and str(item.get("date", ""))[:4] == year:
+                rows.append([item["date"], "income" if item["kind"] == "payment" else "cost", "business job " + item["kind"], job.client if job else "",
+                             job.title if job else "", item.get("note", ""), item["amount"], main])
+    for product in session.scalars(select(Product)).all():
+        for sale in product.sales or []:
+            if sale["date"][:4] == year:
+                rows.append([sale["date"], "income", "product sale (Stripe)", sale.get("email", ""), product.name, sale["id"], sale["amount"], product.currency])
+    for entry in session.scalars(select(ChannelEntry)).all():
+        if entry.date[:4] == year:
+            rows.append([entry.date, "income" if entry.kind == "sale" else "cost", f"{entry.source} order", "", entry.note, entry.id.split(":", 1)[-1], entry.amount, entry.currency])
+    return sorted(rows, key=lambda row: (row[0], row[1]))
+
+
+def export_year(session, year, folder):
+    """Write the year's rows as a CSV for the owner's accountant or tax return. Never overwrites: a new name each time."""
+    import csv
+    from pathlib import Path
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    target, counter = folder / f"Cerebra money {year}.csv", 1
+    while target.exists():
+        target, counter = folder / f"Cerebra money {year} ({counter}).csv", counter + 1
+    rows = year_rows(session, year)
+    with target.open("x", newline="", encoding="utf-8-sig") as handle:  # Excel opens UTF-8 with a BOM correctly
+        writer = csv.writer(handle)
+        writer.writerow(["Date", "Type", "What", "Client or buyer", "Item", "Reference", "Amount", "Currency"])
+        for row in rows:
+            writer.writerow([_safe_cell(value) for value in row])
+    return {"path": str(target), "rows": len(rows)}
+
+
+def _safe_cell(value):
+    """Spreadsheets run cells that start with = + - @ as formulas; client names are never formulas."""
+    text = value if isinstance(value, (int, float)) else str(value or "")
+    return "'" + text if isinstance(text, str) and text[:1] in ("=", "+", "-", "@", "\t", "\r") else text

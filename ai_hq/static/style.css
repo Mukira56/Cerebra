@@ -130,7 +130,7 @@ form { display: flex; flex-direction: column; gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-weight: 600; font-size: 13px; }
 .field small { color: var(--muted); font-size: 12px; }
-input[type=text], input[type=password], input[type=number], input[type=email], input:not([type]), select, textarea { width: 100%; padding: 9px 11px; background: #070a0e; border: 1px solid var(--line-2); border-radius: 8px; outline: none; }
+input[type=text], input[type=password], input[type=number], input[type=email], input[type=date], input:not([type]), select, textarea { width: 100%; padding: 9px 11px; background: #070a0e; border: 1px solid var(--line-2); border-radius: 8px; outline: none; }
 input:focus, select:focus, textarea:focus { border-color: var(--cyan); }
 textarea { min-height: 90px; resize: vertical; font-family: var(--mono); font-size: 13px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
