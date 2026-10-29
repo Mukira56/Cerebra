@@ -281,7 +281,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 waits_for.setdefault(row.task_id, []).append(row.depends_on)
             for task in tasks:
                 task["dependencies"] = waits_for.get(task["id"], [])
-            approvals = [as_dict(row) for row in session.scalars(select(Approval).order_by(Approval.created_at.desc()).limit(200))]
+            # Answered approvals are history: their payloads (whole diffs, plans) are dropped, as the page polls this every few seconds.
+            approvals = [as_dict(row) if str(row.status).lower() == "pending" else {**as_dict(row), "payload": {}}
+                         for row in session.scalars(select(Approval).order_by(Approval.created_at.desc()).limit(200))]
             events = [as_dict(row) for row in session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100))]
             agents = [dict(as_dict(row)["status"], name=row.id) for row in session.scalars(select(Agent)) if not row.id.startswith("mock-")]
             from .profiles import list_profiles, default_roles
