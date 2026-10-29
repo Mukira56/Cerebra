@@ -17,7 +17,7 @@
     freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
-    connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
+    connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected by this computer's own secret store; external work needs your confirmation."],
     job: ["WORK", "Business result", ""],
     tasks: ["WORK", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
     projects: ["WORK", "Projects", "Repositories Cerebra is allowed to work in."],
@@ -263,7 +263,13 @@
     const glance = data.money?.by_currency?.[data.money?.currency] || {}, main = data.money?.currency || "USD";
     const moneyCard = body(kv([["Earned this month", cash(glance.earned_month, main)], ["Owed to you", glance.overdue_count ? `${cash(glance.owed, main)} · ${glance.overdue_count} overdue` : cash(glance.owed, main)],
       ["Quotes out", cash(glance.pipeline, main)], ...(glance.won_unbilled ? [["Won, not invoiced", cash(glance.won_unbilled, main)]] : [])]), link("Open Money →", "money"));
-    append(right, panel("Money", moneyCard), panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
+    const work = data.freelance || {}, workRows = [];
+    if (work.awarded) workRows.push(["Clients chose you", `${work.awarded}: accept on the Freelance page`]);
+    workRows.push(["Strong matches waiting", `${work.strong || 0} (score ${work.min_score || 40}+)`], ["Applied, waiting to hear", String(work.applied || 0)]);
+    if (work.won) workRows.push(["Won", String(work.won)]);
+    workRows.push(["Automatic bidding", work.auto ? `On · up to ${work.per_day} a day on Freelancer.com` : "Off"]);
+    const workCard = body(kv(workRows), link("Open Freelance →", "freelance"));
+    append(right, panel("Money", moneyCard), panel("Freelance", workCard), panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
     append(grid, left, right); node.append(grid); return node;
   }
 
@@ -1129,7 +1135,7 @@
       }
       root.append(box);
     });
-    root.append(hint("Keys and tokens are stored encrypted on this Windows account and never shown again."));
+    root.append(hint("Keys and tokens are stored encrypted by this computer's own secret store and never shown again."));
     return root;
   }
   function socialLimits(state) {
@@ -1263,7 +1269,7 @@
       append(el("div", "actions"), button("Check", () => act(result => result.message, () => mutate("/api/freelance/freelancer-account/check")).then(() => render()), "button small"),
         button("Disconnect", () => act(result => result.message, () => api("/api/freelance/freelancer-account", {method: "DELETE"})).then(() => render()), "button small ghost")));
     const form = el("form"), token = input("OAuth access token", "", "password"), save = submitButton("Connect"); token.autocomplete = "off";
-    append(form, hint("To bid from Cerebra: create an app at accounts.freelancer.com › Settings › Developer, give it the bidding scope, and paste its OAuth access token. Stored encrypted on this Windows account."), field("Access token", token), actionsRow(save));
+    append(form, hint("To bid from Cerebra: create an app at accounts.freelancer.com › Settings › Developer, give it the bidding scope, and paste its OAuth access token. Stored encrypted on this computer."), field("Access token", token), actionsRow(save));
     wireForm(form, save, async () => { const result = await mutate("/api/freelance/freelancer-account", {token: token.value.trim()}, "PUT"); toast(result.message); render(); });
     return append(root, form);
   }
@@ -1560,7 +1566,7 @@
     if (!stripe?.configured) {
       const form = el("form"), key = input("rk_live_…", "", "password"), save = submitButton("Connect Stripe"); key.autocomplete = "off";
       append(form, hint("Clients pay your invoices by card through your own Stripe account, and Cerebra marks each invoice paid when Stripe reports the payment (it checks every 10 minutes)."),
-        field("Restricted API key", key, `In Stripe: Developers › API keys › Create restricted key. Allow only: ${stripe?.permissions || "Products, Prices, Payment Links: Write; Checkout Sessions: Read"}. Stored encrypted on this Windows account, never shown again.`), actionsRow(save));
+        field("Restricted API key", key, `In Stripe: Developers › API keys › Create restricted key. Allow only: ${stripe?.permissions || "Products, Prices, Payment Links: Write; Checkout Sessions: Read"}. Stored encrypted on this computer, never shown again.`), actionsRow(save));
       wireForm(form, save, async () => { await mutate("/api/money/stripe", {key: key.value.trim()}, "PUT"); const result = await mutate("/api/money/stripe/check"); toast(result.message); render(); });
       return append(root, form);
     }
@@ -1863,7 +1869,7 @@
     const content = el("div", "guide");
     append(content, el("h3", "", "What you need"), list(guide.need));
     guide.sections.forEach(section => { const steps = el("ol"); section.steps.forEach(step => steps.append(el("li", "", step))); append(content, el("h3", "", section.heading), steps, section.links ? linkButtons(section.links) : null); });
-    append(content, hint("Keys and tokens are saved encrypted for your Windows account only. Never paste them into Support chat or task descriptions."), actionsRow(button("Close", closeDialog, "button ghost")));
+    append(content, hint("Keys and tokens are saved encrypted for your user account on this computer only. Never paste them into Support chat or task descriptions."), actionsRow(button("Close", closeDialog, "button ghost")));
     showDialog(`How to connect ${guide.title}`, content);
   }
   function guideNotes(key) {

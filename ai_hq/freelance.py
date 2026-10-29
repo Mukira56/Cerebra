@@ -332,6 +332,17 @@ def summary(session):
     return counts
 
 
+def glance(session):
+    """The Overview's freelance card: what needs the owner, cheap enough for a page polled every few seconds."""
+    from sqlalchemy import func
+    rules = auto_settings(session)
+    counts = dict(session.execute(select(FreelanceLead.status, func.count()).group_by(FreelanceLead.status)).all())
+    strong = session.scalar(select(func.count()).select_from(FreelanceLead).where(FreelanceLead.status == "new", FreelanceLead.score >= rules["min_score"])) or 0
+    return {"strong": strong, "min_score": rules["min_score"], "saved": counts.get("saved", 0),
+            "applied": counts.get("applied", 0) + counts.get("interview", 0), "awarded": counts.get("awarded", 0), "won": counts.get("won", 0),
+            "auto": bool(rules["enabled"]), "per_day": rules["per_day"]}
+
+
 # ---- fetching (read-only, polite) ----
 def _iso(seconds):
     try:
