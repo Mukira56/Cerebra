@@ -75,6 +75,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     payments = Payments(db)
     from . import freelance
     finder = freelance.Finder(db)
+    drafter = freelance.Drafter(db, settings, chat_registry)
+    bidder = freelance.Bidder(db)
     mailbox = gmail.Gmail(db, f"http://127.0.0.1:{settings.port}/oauth/gmail/callback")
     notifier = notify.Notifier(db)
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
@@ -101,6 +103,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         commerce.close()
         payments.client.close()
         finder.client.close()
+        bidder.client.close()
         mailbox.client.close()
         notifier.client.close()
         db.close()
@@ -113,7 +116,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.open_document = lambda path: os.startfile(path) if sys.platform == "win32" else None  # noqa: S606 - a page Cerebra just wrote
     app.state.edit_file = lambda path: __import__("subprocess").Popen(["notepad.exe", path]) if sys.platform == "win32" else None  # noqa: S603,S607
     app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
-    app.state.finder = finder
+    app.state.finder, app.state.drafter, app.state.bidder = finder, drafter, bidder
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -1074,14 +1077,47 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.get("/api/freelance")
     def freelance_overview(hidden: bool = False):
         def read(session):
-            settings = freelance.profile(session)
-            return {"profile": {key: value for key, value in settings.items() if key != "checked"}, "summary": freelance.summary(session),
+            wanted = freelance.profile(session)
+            return {"profile": {key: value for key, value in wanted.items() if key != "checked"}, "summary": freelance.summary(session),
                     "leads": freelance.leads(session, include_hidden=hidden),
                     "services": {key: label for key, (label, _) in freelance.SERVICES.items()},
-                    "sources": [{"id": name, **{key: value for key, value in info.items() if key != "every"}, "enabled": settings["sources"].get(name, True),
-                                 "every_minutes": info["every"] // 60, "last": {key: value for key, value in ((settings.get("checked") or {}).get(name) or {}).items() if key != "at_ts"}}
-                                for name, info in freelance.SOURCES.items()]}
+                    "sources": [{"id": name, **{key: value for key, value in info.items() if key != "every"}, "enabled": wanted["sources"].get(name, True),
+                                 "every_minutes": info["every"] // 60, "last": {key: value for key, value in ((wanted.get("checked") or {}).get(name) or {}).items() if key != "at_ts"}}
+                                for name, info in freelance.SOURCES.items()],
+                    "freelancer_account": bidder.status(), "agents_on": bool(settings.live_enabled and settings.cli_confinement_accepted)}
         return freelance_call(read, write=False)
+
+    @app.post("/api/freelance/draft")
+    def freelance_draft(payload: dict):
+        """Write a proposal for one lead with the owner's planner model (in the background)."""
+        try:
+            return drafter.start(str(payload.get("id") or ""))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.put("/api/freelance/proposal")
+    def freelance_proposal(payload: dict):
+        return freelance_call(lambda session: freelance.public(freelance.edit_proposal(session, str(payload.get("id") or ""), payload)))
+
+    @app.post("/api/freelance/bid")
+    def freelance_bid(payload: dict):
+        """Send the owner's proposal as a bid on Freelancer.com (its official API), after the owner's confirmation."""
+        try:
+            return bidder.bid(str(payload.get("id") or ""), payload.get("confirmed"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.put("/api/freelance/freelancer-account")
+    def freelance_account(payload: dict):
+        return bidder.save_token(payload.get("token"))
+
+    @app.post("/api/freelance/freelancer-account/check")
+    def freelance_account_check():
+        return bidder.check()
+
+    @app.delete("/api/freelance/freelancer-account")
+    def freelance_account_disconnect():
+        return bidder.disconnect()
 
     @app.put("/api/freelance/profile")
     def freelance_profile(payload: dict):

@@ -95,7 +95,7 @@
   function showDialog(title, nodeBody) { $("#dialog-title").textContent = title; dialogContent.replaceChildren(nodeBody); if (!dialog.open) dialog.showModal(); }
   function closeDialog() { if (dialog.open) dialog.close(); detailTaskId = ""; }
   $("#dialog-close").addEventListener("click", closeDialog);
-  dialog.addEventListener("close", () => { detailTaskId = ""; });
+  dialog.addEventListener("close", () => { detailTaskId = ""; delete dialog.dataset.leadId; });
 
   async function api(path, options = {}) {
     const response = await fetch(path, {credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(options.timeout || 30000), ...options,
@@ -1072,7 +1072,7 @@
         button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary"),
         button("+ Paste a job", () => pasteLeadDialog(state), "button"))),
         shown.length ? list : body(empty(leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? "Press “Check for new work now”: Cerebra reads Freelancer.com, Remote OK, Remotive, Himalayas and Hacker News for work that fits what you sell. Paste jobs from Upwork or Fiverr too." : "Leads you mark appear here.", null, "⌕"))), null, shown.length));
-      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))),
+      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))),
         panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. It never applies for you: open a job, then apply in your own name. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
@@ -1098,7 +1098,7 @@
     const root = el("div"), notes = textarea("Your notes: what you offered, the client's name, next step…", lead.notes || "");
     append(root, append(el("div", "detail-top"), scoreBadge(lead.score), badge(lead.status, LEAD_STYLE[lead.status]), el("span", "row-meta", [lead.source_label, leadMoney(lead), lead.posted_at ? relative(lead.posted_at) : ""].filter(Boolean).join(" · "))),
       hint(array(lead.reasons).join(" · ")), el("pre", "lead-description", lead.description || "No description."),
-      lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null, field("Notes", notes));
+      lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null, proposalSection(lead, state), field("Notes", notes));
     const actions = el("div", "actions");
     if (lead.url) actions.append(button("Open the job page", () => act("Opened in your browser.", () => mutate("/api/freelance/open", {id: lead.id})), "button primary"));
     if (lead.status === "new") actions.append(button("Save for later", () => setLead(lead, {status: "saved", notes: notes.value}, "Saved."), "button"));
@@ -1110,6 +1110,54 @@
     actions.append(button("Save notes", () => setLead(lead, {notes: notes.value}, "Notes saved."), "button ghost"));
     root.append(actions);
     showDialog(lead.title.slice(0, 90), root);
+    dialog.dataset.leadId = lead.id;
+  }
+  // Phase 2: a proposal written by the owner's own model from facts only; the owner edits and sends it.
+  async function refreshLead(id) { const fresh = await api("/api/freelance?hidden=true"); return [fresh.leads.find(item => item.id === id), fresh]; }
+  function watchDraft(lead) {
+    setTimeout(async () => {
+      if (!dialog.open || dialog.dataset.leadId !== lead.id) return;
+      try { const [fresh, state] = await refreshLead(lead.id); if (!fresh) return; if (fresh.proposal?.status === "drafting") watchDraft(fresh); else leadDialog(fresh, state); } catch { watchDraft(lead); }
+    }, 4000);
+  }
+  function proposalSection(lead, state) {
+    const proposal = lead.proposal || {}, box = el("div", "proposal-box");
+    const start = () => act("Writing your proposal with your AI model (about a minute)…", () => mutate("/api/freelance/draft", {id: lead.id})).then(async result => { if (!result) return; const [fresh, fresher] = await refreshLead(lead.id); leadDialog(fresh, fresher); });
+    if (!proposal.status) {
+      append(box, el("strong", "", "Proposal"), state.agents_on ? el("p", "row-meta", "Cerebra writes a tailored proposal and price from your own details, services and finished work. You edit it and send it.") : hint("Switch AI agents on in Settings to have proposals written for you.", true),
+        state.agents_on ? button("✍ Write a proposal", start, "button primary") : null);
+      return box;
+    }
+    if (proposal.status === "drafting") { watchDraft(lead); return append(box, el("strong", "", "Proposal"), el("p", "row-meta", `Writing it with ${proposal.model || "your AI model"}… this usually takes about a minute.`)); }
+    if (proposal.status === "failed") return append(box, el("strong", "", "Proposal"), hint(`It couldn't be written: ${proposal.error || "unknown problem"}`, true), button("Try again", start, "button"));
+    const text = textarea("", proposal.text || ""), price = input("Price", proposal.price || "", "number"), days = input("Days", proposal.days || "", "number");
+    text.rows = 10; price.min = 0; price.step = "any"; days.min = 1;
+    const save = () => mutate("/api/freelance/proposal", {id: lead.id, text: text.value, price: Number(price.value || 0), days: Number(days.value || 0)}, "PUT");
+    const sending = el("div", "actions");
+    if (proposal.sent_at) sending.append(hint(`Sent ${relative(proposal.sent_at)} via ${proposal.sent_via}.`));
+    else if (lead.source === "freelancer") {
+      sending.append(state.freelancer_account?.connected
+        ? button("Send bid on Freelancer.com", async () => { if (!await act("", save)) return; showDialog("Send this bid?", append(el("div"),
+            el("p", "", `Sends your proposal as a bid of ${lead.currency || "USD"} ${Number(price.value || 0).toLocaleString()} with delivery in ${days.value} day(s) on “${lead.title}”, from your Freelancer.com account ${state.freelancer_account.username}.`),
+            actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Send bid", async () => { const result = await act(outcome => outcome.message, () => mutate("/api/freelance/bid", {id: lead.id, confirmed: true})); if (result) { closeDialog(); render(); } }, "button primary")))); }, "button primary")
+        : hint("Connect your Freelancer.com account (Freelance page › Freelancer.com account) to send bids from here.", true));
+    } else {
+      sending.append(button("Copy proposal", async () => { if (!await act("", save)) return; navigator.clipboard.writeText(text.value).then(() => toast("Saved and copied. Paste it on the job page and send it."), () => toast("Saved. Couldn't copy; select the text and copy it.", true)); }, "button primary"),
+        hint(`${lead.source_label} doesn't allow automated bids: copy it, open the job page, paste and send it there, then press “I applied”.`));
+    }
+    append(box, el("strong", "", "Proposal"), proposal.fit ? hint(proposal.fit) : null, field("Text", text), append(el("div", "form-grid"), field(`Price (${proposal.currency || lead.currency || "USD"})`, price), field("Delivery (days)", days)),
+      append(el("div", "actions"), button("Save edits", () => act("Proposal saved.", save), "button"), button("Write it again", start, "button ghost")), sending);
+    return box;
+  }
+  function freelancerAccount(state) {
+    const account = state.freelancer_account || {}, root = el("div");
+    if (account.connected) return append(root, kv([["Account", account.username]]), hint("Bids go out only when you press Send on a proposal."),
+      append(el("div", "actions"), button("Check", () => act(result => result.message, () => mutate("/api/freelance/freelancer-account/check")).then(() => render()), "button small"),
+        button("Disconnect", () => act(result => result.message, () => api("/api/freelance/freelancer-account", {method: "DELETE"})).then(() => render()), "button small ghost")));
+    const form = el("form"), token = input("OAuth access token", "", "password"), save = submitButton("Connect"); token.autocomplete = "off";
+    append(form, hint("To bid from Cerebra: create an app at accounts.freelancer.com › Settings › Developer, give it the bidding scope, and paste its OAuth access token. Stored encrypted on this Windows account."), field("Access token", token), actionsRow(save));
+    wireForm(form, save, async () => { const result = await mutate("/api/freelance/freelancer-account", {token: token.value.trim()}, "PUT"); toast(result.message); render(); });
+    return append(root, form);
   }
   function pasteLeadDialog(state) {
     const form = el("form"), save = submitButton("Add and score it");

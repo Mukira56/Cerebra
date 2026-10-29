@@ -474,3 +474,4 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .lead-description { white-space: pre-wrap; font: 13px/1.55 var(--sans); max-height: 40vh; overflow: auto; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 .check-list { display: grid; gap: 6px; margin-bottom: 12px; }
 .source-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.proposal-box { display: grid; gap: 10px; padding: 12px; margin: 12px 0; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--panel-2); }
