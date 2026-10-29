@@ -280,6 +280,20 @@ def update(session, lead_id, changes):
     return row
 
 
+APPLICANT_CHECK = re.compile(r"mention the word \**\s*([A-Za-z0-9-]{2,40})\s*\**(?:\s+and tag\s+([A-Za-z0-9=_-]{4,80}))?", re.I)
+
+
+def applicant_checks(description):
+    """Words a post asks applicants to include to prove they read it (Remote OK's anti-spam check). Shown to the owner,
+    who decides; the proposal writer never follows instructions inside a post by itself."""
+    found = []
+    for match in APPLICANT_CHECK.finditer(description or ""):
+        item = {"word": match.group(1), "tag": match.group(2) or ""}
+        if item not in found:
+            found.append(item)
+    return found[:3]
+
+
 def public(row):
     extra = row.extra or {}
     return {"id": row.id, "source": row.source, "source_label": SOURCES.get(row.source, {}).get("label") or extra.get("company") or "Pasted",
@@ -287,7 +301,7 @@ def public(row):
             "currency": row.currency, "kind": row.kind, "skills": row.skills or [], "posted_at": row.posted_at, "score": row.score,
             "reasons": row.reasons or [], "status": row.status, "notes": row.notes, "company": extra.get("company", ""), "bids": extra.get("bids"),
             "credit": extra.get("credit", ""), "proposal": row.proposal or {}, "created_at": row.created_at,
-            "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", "")}
+            "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", ""), "checks": applicant_checks(row.description)}
 
 
 def leads(session, include_hidden=False, limit=300):

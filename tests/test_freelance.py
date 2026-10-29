@@ -180,3 +180,9 @@ def test_a_placeholder_stored_before_is_hidden_when_seen_again(client):  # noqa:
         assert freelance.store(session, [lead]) == 0
     with client.app.state.db.Session() as session:
         assert session.get(freelance.FreelanceLead, "remoteok:77").status == "hidden"
+
+
+def test_a_posts_read_check_is_shown_to_the_owner():
+    text = "Great role.\n\nPlease mention the word **SWANKY** and tag RMTAyLjIwMi4xNTQuMjUw when applying to show you read the job post completely."
+    assert freelance.applicant_checks(text) == [{"word": "SWANKY", "tag": "RMTAyLjIwMi4xNTQuMjUw"}]
+    assert freelance.applicant_checks("Build a website for my bakery.") == []

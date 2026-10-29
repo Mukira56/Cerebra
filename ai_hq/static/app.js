@@ -1198,7 +1198,9 @@
     const root = el("div"), notes = textarea("Your notes: what you offered, the client's name, next step…", lead.notes || "");
     append(root, append(el("div", "detail-top"), scoreBadge(lead.score), badge(lead.status, LEAD_STYLE[lead.status]), el("span", "row-meta", [lead.source_label, leadMoney(lead), lead.posted_at ? relative(lead.posted_at) : ""].filter(Boolean).join(" · "))),
       hint(array(lead.reasons).join(" · ")), el("pre", "lead-description", lead.description || "No description."),
-      lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null, proposalSection(lead, state), field("Notes", notes));
+      lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null,
+      array(lead.checks).length ? hint(`This post checks that applicants read it: it asks you to mention the word ${array(lead.checks).map(item => `“${item.word}”${item.tag ? ` (and the tag ${item.tag})` : ""}`).join(", ")}. Cerebra doesn't add it by itself; put it in your application if you apply.`) : null,
+      proposalSection(lead, state), field("Notes", notes));
     const actions = el("div", "actions");
     if (lead.url) actions.append(button("Open the job page", () => act("Opened in your browser.", () => mutate("/api/freelance/open", {id: lead.id})), "button primary"));
     if (lead.status === "new") actions.append(button("Save for later", () => setLead(lead, {status: "saved", notes: notes.value}, "Saved."), "button"));
