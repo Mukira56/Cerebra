@@ -154,8 +154,7 @@ class Payments:
             raise ValueError("Confirm creating this payment link in your Stripe account first")
         with self.db.Session() as session:
             product = products._get(session, product_id)
-            if not product.download_url:
-                raise ValueError("Add the download link first: upload the package to Google Drive, Dropbox or OneDrive and paste its share link")
+            service = products.is_service(product)
             existing, name, currency, amount, message = dict(product.stripe or {}), product.name, product.currency.upper(), minor(product.price, product.currency), products.thank_you(product)
         if existing.get("active"):
             return {"url": existing["url"], "message": "This product is already on sale."}
@@ -163,7 +162,8 @@ class Payments:
         price = self.request("POST", "/prices", idempotency=tag + "-price", data={"currency": currency.lower(), "unit_amount": amount, "product_data[name]": name[:250]})
         link = self.request("POST", "/payment_links", idempotency=tag + "-link", data={
             "line_items[0][price]": price["id"], "line_items[0][quantity]": 1, "metadata[cerebra_product]": product_id,
-            "after_completion[type]": "hosted_confirmation", "after_completion[hosted_confirmation][custom_message]": message})
+            "after_completion[type]": "hosted_confirmation", "after_completion[hosted_confirmation][custom_message]": message,
+            **({"phone_number_collection[enabled]": "true"} if service else {})})
         if not link.get("active", True):  # Stripe returned an earlier, paused link for the same request
             self.request("POST", f"/payment_links/{link['id']}", data={"active": "true"})
         with self.db.Session.begin() as session:

@@ -33,7 +33,6 @@ def test_a_package_never_contains_secrets_history_or_installed_packages(client, 
 
 def test_selling_with_stripe_delivers_the_download_and_counts_each_sale_once(client, stripe):  # noqa: F811
     item = product(client)
-    assert client.post(f"/api/money/products/{item['id']}/stripe-link", json={"confirmed": True}).status_code == 400  # no download link yet
     assert client.patch(f"/api/money/products/{item['id']}", json={"download_url": "http://insecure"}).status_code == 400
     client.patch(f"/api/money/products/{item['id']}", json={"download_url": "https://drive.google.com/file/d/abc/view"})
     assert client.post(f"/api/money/products/{item['id']}/stripe-link", json={}).status_code == 400  # not confirmed
@@ -76,3 +75,17 @@ def test_unsold_drafts_can_be_deleted_and_prices_must_be_real(client):  # noqa: 
     item = product(client)
     assert client.delete(f"/api/money/products/{item['id']}").json() == {"deleted": True}
     assert client.get("/api/money").json()["products"] == []
+
+
+def test_a_product_without_a_download_sells_a_service_and_collects_the_phone(client, stripe):  # noqa: F811
+    item = product(client, name="Website deposit (50%)", price=300, description="Books your 5-page website")
+    assert client.get("/api/money").json()["products"][0]["service"] is True
+    link = client.post(f"/api/money/products/{item['id']}/stripe-link", json={"confirmed": True}).json()
+    form = stripe.links["plink_1"]["form"]
+    assert link["url"] == "https://buy.stripe.com/test_1" and form["phone_number_collection[enabled]"] == "true"
+    assert "I'll contact you" in form["after_completion[hosted_confirmation][custom_message]"] and "Download" not in form["after_completion[hosted_confirmation][custom_message]"]
+    stripe.pay("plink_1", 30000)
+    stripe.sessions[-1]["customer_details"] = {"email": "client@example.com", "phone": "+254700000000"}
+    client.post("/api/money/stripe/sync")
+    sale = client.get("/api/money").json()["products"][0]["sales"][0]
+    assert sale["email"] == "client@example.com" and sale["phone"] == "+254700000000" and sale["amount"] == 300

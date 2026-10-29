@@ -495,10 +495,23 @@
       "Add one-time payments with Stripe Checkout. On the server, create a Checkout Session for the item being bought (price and currency decided on the server, never trusted from the browser) and redirect the customer to Stripe's hosted page; add success and cancelled pages. Add a webhook endpoint that verifies the Stripe-Signature header with STRIPE_WEBHOOK_SECRET and marks the order paid only on checkout.session.completed with payment_status 'paid', idempotently (a repeated event changes nothing). Read STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET from environment variables only; never put keys in code, the browser or logs. Add both names, with empty values, to the example settings file (.env.example). Write automated tests that mock Stripe (no network): session creation uses the server's price, a valid signed webhook marks the order paid once, an invalid signature is rejected. Document in the README how to create test keys in Stripe and run the Stripe CLI to forward webhooks locally. Use Stripe test mode only; do not deploy."],
     subscription: ["Subscriptions", "Customers pay monthly or yearly for access (Stripe Billing + customer portal).",
       "Add subscriptions with Stripe Billing. On the server, create a Checkout Session in subscription mode for a plan whose Price ID comes from configuration (STRIPE_PRICE_MONTHLY, optionally STRIPE_PRICE_YEARLY), linked to the signed-in user. Add a webhook endpoint that verifies the Stripe-Signature header with STRIPE_WEBHOOK_SECRET and keeps each user's subscription status in the database from customer.subscription.created/updated/deleted and invoice.paid/payment_failed, idempotently. Gate the paid features on an active or trialing status, checked on the server. Add a 'Manage billing' button that opens the Stripe customer portal. Read STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and the price IDs from environment variables only; never put keys in code, the browser or logs; add the names, with empty values, to the example settings file (.env.example). Write automated tests that mock Stripe (no network) for the webhook status changes, the server-side gate and signature rejection. Document in the README how to create the product, prices and test keys in Stripe and forward webhooks with the Stripe CLI. Use Stripe test mode only; do not deploy."]};
+  function storefrontTask(selling) {
+    const lines = selling.map(item => `- ${item.name}: ${cash(item.price, item.currency)}${item.description ? ` (${item.description.replace(/\s+/g, " ").slice(0, 160)})` : ""}. Buy button link: ${item.link}`).join("; ");
+    return "Add a clear 'Services and pricing' section (or page, linked from the main navigation) that shows exactly these offers, with their names, prices and descriptions as written, and a prominent 'Buy' or 'Book now' button for each that opens its Stripe payment link in the same tab: " + lines +
+      ". Use only these facts: invent no other prices, reviews, guarantees or claims. Match the site's existing look, keep it fast, accessible (real links with descriptive text) and mobile-friendly. Add automated tests that check every offer, price and exact link appears. Do not add any Stripe keys or server code: the links are public payment pages.";
+  }
   function paymentsTaskChooser(project) {
     const root = el("div");
     root.append(hint(`Let ${project.name} take payments through your Stripe account. Cerebra plans, codes, tests and reviews it like any task, and you approve every step. It uses test mode and keeps keys in the project's settings file (lent to tests, never shown to the AI).`));
     Object.values(PAYMENT_TASKS).forEach(([title, detail, text]) => root.append(append(el("div", "action-card"), el("strong", "", title), el("p", "", detail), button("Use this", () => { closeDialog(); taskForm(project.id, text); }, "button small primary"))));
+    const storefront = el("div"); root.append(storefront);
+    api("/api/money").then(state => {
+      const selling = array(state.products).filter(item => item.selling && item.link);
+      const card = append(el("div", "action-card"), el("strong", "", "Show my services with Buy buttons"),
+        el("p", "", selling.length ? `Adds what you sell on Stripe (${selling.map(item => item.name).join(", ")}) to this site, each with its price and a Buy button that opens its Stripe payment page. No keys and no server needed.` : "First put a service or product on sale on the Money page (Products you sell › Start selling with Stripe); then its Buy button can go on this site."));
+      if (selling.length) card.append(button("Use this", () => { closeDialog(); taskForm(project.id, storefrontTask(selling)); }, "button small primary"));
+      storefront.replaceChildren(card);
+    }).catch(() => {});
     showDialog(`Get paid in ${project.name}`, root);
   }
   function projectsView() {
@@ -1134,8 +1147,8 @@
     const rows = items.map(item => [el("strong", "", item.name), cash(item.price, item.currency), String(item.sold), cash(item.revenue, item.currency),
       badge(item.selling ? "selling" : item.status, item.selling ? "green" : item.status === "paused" ? "amber" : "muted"), button("Open", () => productDialog(item, state), "button small")]);
     return panel("Products you sell", append(el("div"), body(append(el("div", "actions"), button("+ New product", () => productDialog({price: "", currency: state.summary.currency, status: "draft"}, state), "button primary")),
-      items.length ? null : hint("Sell templates, design packs or guides made from your finished work. Cerebra packages the files (never Git history, installed packages or settings files); you upload the ZIP to your Google Drive, Dropbox or OneDrive and paste its share link; Stripe sells it and shows buyers that link right after they pay.")),
-      items.length ? table(["Product", "Price", "Sold", "Revenue", "Status", ""], rows) : null), null, items.length);
+      items.length ? null : hint("Sell your services (a website deposit, a support hour: no download link needed) or templates, design packs and guides made from your finished work. Cerebra packages the files (never Git history, installed packages or settings files); you upload the ZIP to your Google Drive, Dropbox or OneDrive and paste its share link; Stripe sells it and shows buyers that link right after they pay.")),
+      items.length ? table(["Product", "Price", "Sold", "Revenue", "Status", ""], rows) : null, items.some(item => item.selling) ? body(hint("Put these on your website with Buy buttons: open Projects, choose your site's project, then “Get paid…” › “Show my services with Buy buttons”.")) : null), null, items.length);
   }
   function productDialog(item, state) {
     const root = el("div"), reopen = async (promise, message) => { const result = await act(message, () => promise); if (!result) return; closeDialog(); render(); const fresh = await api("/api/money"); const again = fresh.products.find(entry => entry.id === item.id); if (again) productDialog(again, fresh); };
@@ -1144,7 +1157,7 @@
     const price = input("29", item.price ?? "", "number"), currency = input("USD", item.currency || "USD"), download = input("https://drive.google.com/… share link", item.download_url || "");
     price.min = "0.5"; price.step = "any"; [price, currency, download].forEach(control => { control.disabled = live; });
     append(form, field("Name", name), field("Description", description), append(el("div", "form-grid"), field("Price", price), field("Currency", currency)),
-      field("Download link", download, live ? "Pause selling to change the price or download link." : "Upload the package (below) to your own cloud storage, set sharing to “anyone with the link”, and paste the link. Buyers see it right after paying."),
+      field("Download link", download, live ? "Pause selling to change the price or download link." : "Selling files: upload the package (below) to your own cloud storage, set sharing to “anyone with the link”, and paste the link; buyers see it right after paying. Selling a service (a website deposit, an hour of support): leave it empty; Stripe asks for the buyer's phone and tells them you'll be in touch."),
       actionsRow(button("Close", closeDialog, "button ghost"), save));
     wireForm(form, save, async () => {
       const payload = {name: name.value, description: description.value, ...(live ? {} : {price: Number(price.value || 0), currency: currency.value.trim().toUpperCase(), download_url: download.value.trim()})};
@@ -1169,7 +1182,7 @@
       }
       if (!array(item.sales).length && !live) actions.append(button("Delete product", () => reopen(api(`/api/money/products/${item.id}`, {method: "DELETE"}), "Product deleted."), "button ghost"));
       root.append(actions);
-      if (array(item.sales).length) root.append(panel("Sales", table(["Date", "Amount", "Buyer"], item.sales.map(sale => [sale.date, cash(sale.amount, item.currency), sale.email || "—"])), null, item.sales.length));
+      if (array(item.sales).length) root.append(panel("Sales", table(["Date", "Amount", "Buyer", "Phone"], item.sales.map(sale => [sale.date, cash(sale.amount, item.currency), sale.email || "—", sale.phone || "—"])), null, item.sales.length));
     }
     showDialog(item.id ? item.name : "New product", root);
   }

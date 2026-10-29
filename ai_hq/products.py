@@ -30,7 +30,7 @@ def public(product):
     revenue = round(sum(sale["amount"] for sale in product.sales or []), 2)
     return {"id": product.id, "name": product.name, "description": product.description, "price": product.price, "currency": product.currency,
             "download_url": product.download_url, "package": product.package or {}, "status": product.status, "sales": product.sales or [],
-            "sold": len(product.sales or []), "revenue": revenue, "link": (product.stripe or {}).get("url", ""),
+            "sold": len(product.sales or []), "revenue": revenue, "link": (product.stripe or {}).get("url", ""), "service": is_service(product),
             "selling": bool((product.stripe or {}).get("active")), "created_at": product.created_at, "updated_at": product.updated_at}
 
 
@@ -168,15 +168,25 @@ def record_sale(session, product_id, checkout):
     product = _get(session, product_id)
     if any(sale["id"] == checkout["id"] for sale in product.sales or []):
         return False
-    email = _clean((checkout.get("customer_details") or {}).get("email"), 120)
+    details = checkout.get("customer_details") or {}
+    email, phone = _clean(details.get("email"), 120), _clean(details.get("phone"), 40)
     day = datetime.fromtimestamp(int(checkout.get("created") or 0), timezone.utc).date().isoformat()
     product.sales = list(product.sales or []) + [{"id": checkout["id"], "amount": major(int(checkout.get("amount_total") or 0), product.currency),
-                                                   "date": day, "email": email}]
+                                                   "date": day, "email": email, **({"phone": phone} if phone else {})}]
     product.updated_at = now()
     return True
 
 
+def is_service(product):
+    """A product without a download link is a service the owner delivers (a website deposit, an hour of support)."""
+    return not product.download_url
+
+
 def thank_you(product):
-    """Stripe's thank-you page text (at most 500 characters): where the buyer downloads what they paid for."""
+    """Stripe's thank-you page text (at most 500 characters): where the buyer downloads what they paid for, or, for a
+    service, that the owner will be in touch (Stripe collects the buyer's email and phone number for that)."""
+    if is_service(product):
+        return (f"Thank you for booking {product.name}! Your payment is confirmed. I'll contact you by email or phone, "
+                "using the details you just gave, to get started.")[:500]
     text = f"Thank you for buying {product.name}! Download your files here: {product.download_url} (save or bookmark this link)."
     return text[:500]
