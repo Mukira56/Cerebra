@@ -464,3 +464,8 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .inline-field { display: inline-flex; align-items: center; gap: 6px; }
 .inline-field input { width: 120px; }
 .nowrap { white-space: nowrap; }
+.start-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.start-step { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+.start-step p { margin: 2px 0 0; color: var(--soft); font-size: 13px; }
+.start-step.done { opacity: .6; } .start-step.done .start-mark { color: var(--green); }
+.start-mark { font: 600 16px/1.4 var(--mono); color: var(--muted); }

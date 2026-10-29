@@ -301,6 +301,7 @@ const path = require('node:path');
     }
     await page.evaluate(() => { location.hash = 'money'; }); await page.waitForTimeout(800);
     assert.ok(await page.getByText('Earned this month').count() && await page.getByRole('button', {name: '+ New quote'}).count(), 'The Money page shows earnings and can start a quote');
+    assert.ok(await page.getByText(/Start earning · \d of 6 done/).count(), 'A new owner sees the Start earning checklist');
     await page.evaluate(() => { location.hash = 'tasks'; }); await page.waitForTimeout(600);
     assert.match(await page.title(), /^(\(\d+\) )?Cerebra/, 'The window title names Cerebra and what needs the owner');
     const rowsBefore = await page.locator('.row[data-task-id]').count();

@@ -1062,11 +1062,30 @@
       side.append(panel("Get paid with Stripe", body(stripePanel(state.stripe))), panel("Marketplace sales", body(channelsPanel(state.channels))), panel("Your business", body(moneySettingsForm(state.settings))),
         panel("Getting paid", body(hint("Each invoice can carry a payment link, shown on it as “Pay online”: a Stripe link Cerebra creates, or one you paste (PayPal, Paystack…). Record other payments you receive (M-Pesa, bank) from the invoice. Payments on a business job's invoice also go into that job's money record."),
           hint(state.summary.note), exportRow(state))));
-      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+      root.replaceChildren(...[startEarning(state), stats, append(el("div", "grid two"), left, side)].filter(Boolean));
     })();
     return root;
   }
   const EVERY_WORDS = {month: "Every month", quarter: "Every 3 months", year: "Every year"};
+  // The first steps to earning with Cerebra, ticked off from the owner's own records; hidden once all are done.
+  function startEarning(state) {
+    const docs = array(state.documents), settings = state.settings || {};
+    const goTo = (title, selector = "input, textarea") => () => { const section = [...document.querySelectorAll(".panel")].find(node => node.querySelector("h2")?.textContent.startsWith(title));
+      if (!section) return; section.scrollIntoView({behavior: "smooth", block: "start"}); setTimeout(() => section.querySelector(selector)?.focus({preventScroll: true}), 400); };
+    const steps = [
+      [!!settings.business_name, "Add your business details", "Your name, email and how clients pay you appear on every quote and invoice.", goTo("Your business")],
+      [array(settings.services).length > 0, "Save your services and prices", "So each quote takes a minute: pick a service and its line fills itself in.", goTo("Your business", "textarea[placeholder^='One per line']")],
+      [!!state.stripe?.connected, "Connect Stripe", "Clients pay by card from a link on the invoice; Cerebra marks it paid.", goTo("Get paid with Stripe")],
+      [docs.some(doc => doc.kind === "quote" && doc.status !== "draft"), "Send your first quote", "Quote a client: when they say yes, Cerebra drafts the deposit invoice.", () => moneyDocDialog({kind: "quote", items: [], currency: state.summary.currency, status: "draft"}, state)],
+      [array(state.plans).length > 0, "Offer a monthly care plan", "Steady income: hosting, updates and fixes for a client whose site you built.", () => planDialog({every: "month", currency: state.summary.currency, items: [], active: true}, state)],
+      [array(state.products).length > 0, "Sell something you already made", "Package a finished project as a template and sell it with a Stripe link.", () => productDialog({price: "", currency: state.summary.currency, status: "draft"}, state)]];
+    const done = steps.filter(([finished]) => finished).length;
+    if (done === steps.length) return null;
+    const list = el("div", "start-steps");
+    steps.forEach(([finished, title, detail, start]) => list.append(append(el("div", `start-step${finished ? " done" : ""}`), el("span", "start-mark", finished ? "✓" : "○"),
+      append(el("div"), el("strong", "", title), el("p", "", detail)), !finished && start ? button("Start", start, "button small") : null)));
+    return panel(`Start earning · ${done} of ${steps.length} done`, body(list));
+  }
   function exportRow(state) {
     const thisYear = Number((state.summary.today || new Date().toISOString()).slice(0, 4)), year = select([[String(thisYear), String(thisYear)], [String(thisYear - 1), String(thisYear - 1)]]);
     return append(el("div", "actions"), year, button("Export the year (CSV) for my accountant", () => act(result => `Saved ${result.rows} row(s) to ${result.path}. It opens in Excel.`,

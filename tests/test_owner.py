@@ -66,3 +66,27 @@ def test_support_the_council_and_coding_runs_receive_the_details(client, tmp_pat
     assert coding and "Mukira56" in coding[0].description and "Dark themes" in coding[0].description
     reviews = [request for name, request in registry.requests if getattr(request, "role", "") == "review"]
     assert reviews and "ABOUT THE OWNER" not in reviews[0].description  # the reviewer doesn't need it
+
+
+def test_support_sees_the_money_record_to_suggest_next_steps(client):  # noqa: F811
+    from ai_hq import money
+    from ai_hq.models import MoneyDocument
+    enable_agents(client)
+    created = client.post("/api/money/documents", json={"kind": "invoice", "client": "Ama's Bakery", "client_email": "ama@example.com",
+                                                        "items": [{"description": "Website", "quantity": 1, "unit_price": 800}]}).json()
+    client.post(f"/api/money/documents/{created['id']}/issue", json={})
+    with client.app.state.db.Session.begin() as session:
+        session.get(MoneyDocument, created["id"]).due_date = "2026-01-01"
+    with client.app.state.db.Session() as session:
+        text = money.brief(session, today="2026-01-21")
+    assert "overdue: INV-0001 Ama's Bakery, USD 800.00 owed, 20 days late, 0 reminder(s) sent" in text and "ama@example.com" not in text
+    registry = Capture()
+    client.app.state.supervisor.registry = registry
+    conversation = client.post("/api/chats", json={"profile": "codex"}).json()["id"]
+    client.post(f"/api/chats/{conversation}/messages", json={"text": "How can I make more money this month?"})
+    for _ in range(200):
+        if not client.get(f"/api/chats/{conversation}").json()["busy"]:
+            break
+        time.sleep(0.05)
+    prompt = registry.prompts[-1]
+    assert "MONEY (the owner's own records" in prompt and "Payment reminder" in prompt and "Never invent earnings" in prompt
