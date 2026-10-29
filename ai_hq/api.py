@@ -1151,6 +1151,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 except Exception:
                     pass
 
+    @app.get("/api/freelance/insights")
+    def freelance_insights():
+        """What works: wins and money by source, service and way of applying, with plain suggestions."""
+        from . import insights
+        with db.Session() as session:
+            return insights.summary(session)
+
     @app.get("/api/freelance/auto")
     def freelance_auto():
         with db.Session() as session:

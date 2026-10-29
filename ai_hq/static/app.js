@@ -14,7 +14,7 @@
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     marketing: ["WORK", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
-    freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. You apply in your own name."],
+    freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
     connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected on this Windows account; external work needs your confirmation."],
@@ -1172,8 +1172,8 @@
         button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary"),
         button("+ Paste a job", () => pasteLeadDialog(state), "button"))),
         shown.length ? list : body(empty(leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? "Press “Check for new work now”: Cerebra reads Freelancer.com, Remote OK, Remotive, Himalayas and Hacker News for work that fits what you sell. Paste jobs from Upwork or Fiverr too." : "Leads you mark appear here.", null, "⌕"))), null, shown.length));
-      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("Apply automatically", body(autoApplyPanel())), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
-        panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. It never applies for you: open a job, then apply in your own name. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
+      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("What works", body(insightsPanel())), panel("Apply automatically", body(autoApplyPanel())), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
+        panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. On Freelancer.com it can bid for you (Apply automatically); everywhere else, open a job and apply in your own name with the proposal Cerebra writes. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
     return root;
@@ -1266,6 +1266,30 @@
     return append(root, form);
   }
   // Phase 4: profiles, gigs and case studies, written from the owner's real details; the owner copies them in.
+  // Phase 5: what works. Wins and money by source, service and way of applying, from the owner's own records.
+  function insightsPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/freelance/insights").then(result => {
+      const earned = value => Object.entries(value || {}).map(([currency, amount]) => `${currency} ${Number(amount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`).join(" + ") || "—";
+      const totals = result.totals || {}, paid = Object.keys(totals.earned || {}).length > 0;
+      const won = row => row.applied ? `${row.won} (${row.win_rate}%)` : String(row.won);
+      const grid = (first, list, found = true) => {
+        const shown = array(list).filter(row => found ? row.found || row.applied : row.applied);
+        return table([first, ...(found ? ["Found"] : []), "Applied", "Won", ...(paid ? ["Earned"] : [])],
+          shown.map(row => [row.label || row.name, ...(found ? [row.found] : []), row.applied, won(row), ...(paid ? [earned(row.earned)] : [])]));
+      };
+      const ways = array(result.ways).map(row => ({...row, label: row.name === "automatic" ? "By Cerebra" : "By you"}));
+      root.replaceChildren(
+        hint(totals.applied ? `${totals.applied} application(s), ${totals.awarded || 0} chosen by the client, ${totals.won || 0} won, ${paid ? `${earned(totals.earned)} earned from won jobs` : "nothing earned from won jobs yet"}.` : `${totals.found || 0} job(s) found so far and none applied to yet. Mark the jobs you apply to (or switch on Apply automatically) and this shows where you win.`),
+        totals.applied ? append(el("ul", "tips"), ...array(result.advice).map(tip => el("li", "", tip))) : null,
+        append(el("div"), el("h4", "", "By where the job came from"), grid("Source", result.sources)),
+        append(el("div"), el("h4", "", "By the kind of work"), grid("Service", result.services)),
+        ways.some(row => row.applied) ? append(el("div"), el("h4", "", "Automatic bids and your own"), grid("Sent", ways, false)) : null,
+        hint("Won shows the share of applications won. Earnings are what won jobs' invoices and recorded payments brought in. Mark leads as applied, won or lost so this stays true."));
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
   // Phase 4b: applying by itself on Freelancer.com, and noticing what was won.
   function autoApplyPanel() {
     const root = el("div");
