@@ -815,6 +815,30 @@ def fit_price(price, days, low, high):
     return round(price, 2), int(days) if days and int(days) > 0 else 7
 
 
+def _tokens(text):
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def same_job(a, b):
+    """A client's re-post of the same job ("… -- 2", "… - Polish Developers"): the same post body, or nearly the same
+    title with a mostly shared body. Short posts need near-identical text, so two different small jobs aren't merged."""
+    body_a, body_b = _tokens(a.description[:1500]), _tokens(b.description[:1500])
+    shared = len(body_a & body_b) / max(1, len(body_a | body_b))
+    long_enough = min(len(body_a), len(body_b)) >= 15
+    if long_enough and shared >= 0.8:
+        return True
+    title_a, title_b = _tokens(a.title), _tokens(b.title)
+    return len(title_a & title_b) / max(1, min(len(title_a), len(title_b))) >= 0.8 and shared >= (0.5 if long_enough else 0.9)
+
+
+def bid_before(session, row):
+    """The Freelancer.com lead the owner already bid on that this one re-posts, or None."""
+    for other in session.scalars(select(FreelanceLead).where(FreelanceLead.source == row.source, FreelanceLead.id != row.id)).all():
+        if (other.proposal or {}).get("sent_at") and same_job(row, other):
+            return other
+    return None
+
+
 class AutoApplier:
     """After each search: for every new Freelancer.com match above the owner's score, up to the owner's daily number,
     the owner's model writes a tailored proposal; if the model judges the job a fit, the bid is placed. Every bid is
@@ -852,8 +876,17 @@ class AutoApplier:
             if room <= 0:
                 self._note(f"Today's {rules['per_day']} automatic bids are sent; more tomorrow", "waiting")
                 return {"skipped": "daily limit"}
-            sent, passed = 0, 0
-            for lead_id in candidates[:room]:
+            sent, passed, repeats = 0, 0, 0
+            for lead_id in candidates:
+                if sent + passed >= room:
+                    break
+                with self.db.Session.begin() as session:
+                    row = session.get(FreelanceLead, lead_id)
+                    earlier = bid_before(session, row)
+                    if earlier is not None:  # no proposal written, no bid spent: the client sees the first bid on their re-post
+                        row.proposal = {**(row.proposal or {}), "skipped": f"A re-post of “{earlier.title[:80]}”, which you already bid on"}
+                        repeats += 1
+                        continue
                 self._note(f"Writing a proposal ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
                 try:
                     self.drafter.start(lead_id, wait=True)
@@ -885,13 +918,13 @@ class AutoApplier:
                         continue  # this project refused the bid (already closed, amount outside its rules): try the next one
                     self._note(f"Stopped: {str(exc)[:200]}", "waiting")  # an account, limit or connection problem: don't push on
                     break
-            if sent or passed:
+            if sent or passed or repeats:
                 with self.db.Session.begin() as session:
-                    session.add(Event(kind="freelance", message=f"Automatic bidding: {sent} bid(s) sent on Freelancer.com, {passed} job(s) passed over as a poor fit",
-                                      data={"sent": sent, "passed": passed}))
+                    session.add(Event(kind="freelance", message=f"Automatic bidding: {sent} bid(s) sent on Freelancer.com, {passed} job(s) passed over as a poor fit" + (f", {repeats} re-post(s) of jobs already bid on skipped" if repeats else ""),
+                                      data={"sent": sent, "passed": passed, "repeats": repeats}))
             if self.status["state"] == "working":
                 self._note(f"Sent {sent} bid(s), passed over {passed} poor fit(s)")
-            return {"sent": sent, "passed": passed}
+            return {"sent": sent, "passed": passed, "repeats": repeats}
         finally:
             self._lock.release()
 

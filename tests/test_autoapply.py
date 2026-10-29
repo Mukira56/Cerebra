@@ -160,3 +160,22 @@ def test_a_lead_scored_under_older_rules_is_checked_again_before_a_bid(client): 
                                   description="Review our dashboard and UI design terms.", budget_min=250, budget_max=750, currency="USD", kind="fixed"))
     client.app.state.applier.tick()
     assert 77 not in {bid["project_id"] for bid in site.bids}
+
+
+def test_a_clients_re_post_of_a_job_already_bid_on_gets_no_second_bid(client):  # noqa: F811
+    site = setup(client, min_score=1)
+    from ai_hq.models import FreelanceLead
+    body = "We need a Python web app finished: connect the payment API, fix the login flow, deploy it to our server and document the setup."
+    with client.app.state.db.Session.begin() as session:
+        for number, title in ((501, "Finalize Python Web App Integration"), (502, "Finalize Python Web App Integration - Polish Developers")):
+            session.add(FreelanceLead(id=f"freelancer:{number}", source="freelancer", title=title, description=body, status="new", score=90,
+                                      budget_min=1500, budget_max=3000, currency="USD", kind="fixed"))
+    result = client.app.state.applier.tick()
+    projects = [bid["project_id"] for bid in site.bids]
+    assert (501 in projects) != (502 in projects) and result["repeats"] == 1
+    skipped = by_title(client, "Polish Developers") if 501 in projects else next(lead for lead in client.get("/api/freelance?hidden=true").json()["leads"] if lead["id"] == "freelancer:501")
+    assert "re-post" in skipped["proposal"]["skipped"]
+    from ai_hq import freelance
+    short_a = FreelanceLead(title="Logo design", description="Logo for a bakery.")
+    short_b = FreelanceLead(title="Logo design", description="Logo for a gym.")
+    assert not freelance.same_job(short_a, short_b)  # two small jobs with a common title stay separate
