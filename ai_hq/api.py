@@ -77,6 +77,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     finder = freelance.Finder(db)
     drafter = freelance.Drafter(db, settings, chat_registry)
     bidder = freelance.Bidder(db)
+    from . import social
+    publisher = social.Publisher(db)
+    post_writer = social.Writer(db, settings, chat_registry)
     mailbox = gmail.Gmail(db, f"http://127.0.0.1:{settings.port}/oauth/gmail/callback")
     notifier = notify.Notifier(db)
     bootstrap_hash = hashlib.sha256((bootstrap_key or secrets.token_urlsafe(32)).encode()).digest()
@@ -93,7 +96,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             notifier.start()
             payments.start()
             finder.start()
+            publisher.start()
         yield
+        publisher.stop()
         payments.stop()
         finder.stop()
         autofix.stop()
@@ -104,6 +109,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         payments.client.close()
         finder.client.close()
         bidder.client.close()
+        publisher.client.close()
         mailbox.client.close()
         notifier.client.close()
         db.close()
@@ -117,6 +123,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.edit_file = lambda path: __import__("subprocess").Popen(["notepad.exe", path]) if sys.platform == "win32" else None  # noqa: S603,S607
     app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
     app.state.finder, app.state.drafter, app.state.bidder = finder, drafter, bidder
+    app.state.publisher, app.state.post_writer = publisher, post_writer
 
     @app.middleware("http")
     async def local_security(request: Request, call_next):
@@ -1156,6 +1163,74 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         url = freelance_call(find, write=False)
         app.state.open_document(url)
         return {"opened": url}
+
+    # ---- Marketing: the owner's X, Facebook Page and Instagram posts (social.py) ----
+    def social_call(work, write=True):
+        try:
+            with (db.Session.begin() if write else db.Session()) as session:
+                return work(session)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/social")
+    def social_overview():
+        return social_call(lambda session: {"posts": social.posts(session), "settings": social.settings(session), "accounts": social.accounts_public(session),
+                                            "spent_this_month": social.spent_this_month(session), "writer": dict(post_writer.status),
+                                            "channels": social.CHANNELS, "agents_on": bool(settings.live_enabled and settings.cli_confinement_accepted)}, write=False)
+
+    @app.put("/api/social/settings")
+    def social_settings(payload: dict):
+        return social_call(lambda session: social.save_settings(session, payload))
+
+    @app.post("/api/social/posts", status_code=201)
+    def social_create(payload: dict):
+        return social_call(lambda session: social.public(social.create(session, payload)))
+
+    @app.post("/api/social/write")
+    def social_write(payload: dict):
+        """Have the owner's AI model draft a batch of posts (they arrive as drafts to approve)."""
+        return post_writer.start(payload.get("count") or 5, payload.get("channels") or ["x", "facebook"])
+
+    @app.put("/api/social/accounts/{channel}")
+    def social_connect(channel: str, payload: dict):
+        if channel not in social.CHANNELS:
+            raise HTTPException(404, "Unknown channel")
+        return publisher.connect(channel, payload)
+
+    @app.post("/api/social/accounts/{channel}/check")
+    def social_check(channel: str):
+        if channel not in social.CHANNELS:
+            raise HTTPException(404, "Unknown channel")
+        return publisher.check(channel)
+
+    @app.delete("/api/social/accounts/{channel}")
+    def social_disconnect(channel: str):
+        if channel not in social.CHANNELS:
+            raise HTTPException(404, "Unknown channel")
+        return publisher.disconnect(channel)
+
+    @app.patch("/api/social/posts/{post_id}")
+    def social_update(post_id: str, payload: dict):
+        return social_call(lambda session: social.public(social.update(session, post_id, payload)))
+
+    @app.delete("/api/social/posts/{post_id}")
+    def social_delete(post_id: str):
+        social_call(lambda session: social.delete(session, post_id))
+        return {"deleted": True}
+
+    @app.post("/api/social/posts/{post_id}/{step}")
+    def social_step(post_id: str, step: str, payload: dict | None = None):
+        payload = payload or {}
+        if step == "approve":
+            return social_call(lambda session: social.public(social.approve(session, post_id, payload.get("when"))))
+        if step == "unapprove":
+            return social_call(lambda session: social.public(social.unapprove(session, post_id)))
+        if step == "post-now":
+            social_call(lambda session: social.public(social.approve(session, post_id)) if social._get(session, post_id).status in {"draft", "failed"} else None)
+            return {"results": publisher.publish_due(post_id)}
+        if step == "retry":
+            return {"results": publisher.retry(post_id)}
+        raise HTTPException(404, "Unknown step")
 
     # ---- Money center: quotes, invoices, earnings (money.py) ----
     from . import money

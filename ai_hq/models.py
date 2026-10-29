@@ -259,6 +259,22 @@ class FreelanceLead(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class SocialPost(Base):
+    """A post for the owner's X, Facebook Page or Instagram: a draft until the owner approves it, then published on time."""
+    __tablename__ = "social_posts"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    text: Mapped[str] = mapped_column(Text, default="")
+    link: Mapped[str] = mapped_column(String, default="")
+    image_url: Mapped[str] = mapped_column(String, default="")
+    channels: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft | approved | posted | partial | failed
+    scheduled_at: Mapped[str] = mapped_column(String, default="")
+    results: Mapped[dict] = mapped_column(JSON, default=dict)  # per channel: id, url, posted_at, cost | error | waiting
+    origin: Mapped[str] = mapped_column(String, default="owner")  # owner | ai
+    approved_at: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class ChatAction(Base):
     """Something the support chat asked Cerebra to do, and what happened when it ran."""
     __tablename__ = "chat_actions"

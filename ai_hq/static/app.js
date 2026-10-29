@@ -13,6 +13,7 @@
     overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
+    marketing: ["WORK", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. You apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
@@ -162,7 +163,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, freelance: freelanceView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1041,6 +1042,105 @@
     load(); return root;
   }
 
+  // ---------- marketing: posts to the owner's X, Facebook Page and Instagram ----------
+  const POST_STYLE = {draft: "muted", approved: "blue", posted: "green", partial: "amber", failed: "red"};
+  function marketingView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading your posts…")));
+    (async () => {
+      let state; try { state = await api("/api/social"); } catch (issue) { root.replaceChildren(body(empty("Marketing unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const posts = array(state.posts), count = status => posts.filter(post => post.status === status).length, limits = state.settings;
+      const stats = el("div", "grid stats");
+      [["To approve", count("draft"), "drafts waiting for your yes", "amber"], ["Scheduled", count("approved"), "go out by themselves", "cyan"],
+       ["Posted", count("posted") + count("partial"), "on your channels", "green"], ["X this month", `USD ${Number(state.spent_this_month || 0).toFixed(2)}`, `of your USD ${Number(limits.monthly_cap).toFixed(2)} budget`, ""]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const writer = state.writer || {};
+      const tools = append(el("div", "actions"), button("+ New post", () => postDialog({channels: ["x", "facebook"], status: "draft"}, state), "button primary"),
+        state.agents_on ? button(writer.state === "writing" ? "Writing posts…" : "✍ Write posts for me", () => act("Your AI model is writing 5 posts from your real work (about a minute). They arrive as drafts to approve.", () => mutate("/api/social/write", {count: 5, channels: ["x", "facebook"]})).then(() => setTimeout(() => render(), 1500)), "button") : null);
+      const list = el("div", "row-list");
+      posts.forEach(post => list.append(postRow(post, state)));
+      const left = append(el("div"), panel("Your posts", append(el("div"), body(tools, writer.state === "failed" ? hint(`Couldn't write posts: ${writer.error}`, true) : writer.state === "done" ? hint(`${writer.count} new draft(s) written. Read and approve them.`) : null,
+        state.agents_on ? null : hint("Switch AI agents on in Settings to have posts written for you.")),
+        posts.length ? list : body(empty("No posts yet", "Share finished work, tips and your services so clients find you. Write one, or have your AI model draft a batch from your real work; nothing goes out until you approve it.", null, "✎"))), null, posts.length));
+      const side = append(el("div"), panel("Your accounts", body(socialAccounts(state))), panel("Budget and limits", body(socialLimits(state))),
+        panel("How it works", body(hint("Drafts never post. When you approve a post, it goes out by itself at the time you choose, through each platform's official API with your own app. X charges per post, so Cerebra records each post's cost and stops at your monthly budget. A post that failed is never retried by itself, because it may have gone out; press Retry."))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  function postRow(post, state) {
+    const row = el("div", "row lead-row"), info = el("div", "row-main");
+    row.tabIndex = 0; row.setAttribute("role", "button");
+    const where = array(post.channels).map(channel => state.channels[channel] || channel).join(", ");
+    const when = post.status === "approved" ? `goes out ${date(post.scheduled_at)}` : post.status === "posted" ? "posted" : post.origin === "ai" ? "written by your AI model" : "";
+    append(info, el("strong", "", post.text.length > 140 ? post.text.slice(0, 140) + "…" : post.text), el("div", "row-meta", [where, when].filter(Boolean).join(" · ")));
+    const notes = Object.entries(post.results || {}).map(([channel, result]) => result.error ? `${state.channels[channel]}: ${result.error}` : result.waiting ? `${state.channels[channel]}: ${result.waiting}` : "").filter(Boolean);
+    if (notes.length) info.append(el("div", "row-reason", notes.join(" · ")));
+    append(row, info, badge(post.status, POST_STYLE[post.status]));
+    row.addEventListener("click", () => postDialog(post, state)); row.addEventListener("keydown", event => { if (event.key === "Enter") postDialog(post, state); });
+    return row;
+  }
+  function postDialog(post, state) {
+    const root = el("div"), editable = !["posted", "partial"].includes(post.status);
+    const text = textarea("What do you want to share? A project you finished, a tip, a service you offer…", post.text || ""), link = input("https://… (optional)", post.link || ""), image = input("https://… public image link (needed for Instagram)", post.image_url || "");
+    text.rows = 6; [text, link, image].forEach(control => { control.disabled = !editable; });
+    const counter = el("small", "row-meta");
+    const recount = () => { const full = `${text.value} ${link.value}`.trim().replace(/https?:\/\/\S+/g, "x".repeat(23)); counter.textContent = `${full.length} / 280 on X (each link counts as 23)`; counter.style.color = full.length > 280 ? "var(--red)" : ""; };
+    text.addEventListener("input", recount); link.addEventListener("input", recount); recount();
+    const boxes = Object.entries(state.channels).map(([key, label]) => { const item = check(`${label}${state.accounts[key]?.connected ? "" : " (not connected)"}`, array(post.channels).includes(key)); item.key = key; item.control.disabled = !editable; return item; });
+    append(root, field("Post", append(el("div"), text, counter)), field("Link", link), field("Picture", image, "Instagram needs one; it must be a public https:// address (for example from your site)."), append(el("div", "check-list"), ...boxes.map(item => item.wrap)));
+    Object.entries(post.results || {}).forEach(([channel, result]) => root.append(hint(`${state.channels[channel]}: ${result.posted_at ? `posted ${relative(result.posted_at)}${result.cost ? ` · USD ${result.cost}` : ""}${result.url ? ` · ${result.url}` : ""}` : result.error || result.waiting}`, !!result.error)));
+    const payload = () => ({text: text.value, link: link.value.trim(), image_url: image.value.trim(), channels: boxes.filter(item => item.control.checked).map(item => item.key)});
+    const save = async () => post.id ? mutate(`/api/social/posts/${post.id}`, payload(), "PATCH") : mutate("/api/social/posts", payload());
+    const after = message => result => { if (result) { toast(message); closeDialog(); render(); } };
+    const actions = el("div", "actions");
+    if (editable) {
+      const when = input("", "", "datetime-local");
+      actions.append(button(post.id ? "Save" : "Save draft", () => act("", save).then(after("Saved.")), "button"),
+        append(el("span", "inline-field"), el("span", "", "Post at"), when),
+        button("Approve", async () => { const saved = await act("", save); if (!saved) return; act("", () => mutate(`/api/social/posts/${saved.id}/approve`, {when: when.value ? new Date(when.value).toISOString() : ""})).then(after(when.value ? "Approved: it goes out by itself at that time." : "Approved: it goes out within a minute.")); }, "button primary"),
+        button("Post now", async () => { const saved = await act("", save); if (!saved) return; act("", () => mutate(`/api/social/posts/${saved.id}/post-now`, {}, "POST", 120000)).then(after("Posting done; check the results on the post.")); }, "button"));
+    }
+    if (post.status === "approved") actions.append(button("Back to draft", () => act("", () => mutate(`/api/social/posts/${post.id}/unapprove`)).then(after("It won't go out until you approve it again.")), "button ghost"));
+    if (["failed", "partial"].includes(post.status)) actions.append(button("Retry the failed channels", () => act("", () => mutate(`/api/social/posts/${post.id}/retry`, {}, "POST", 120000)).then(after("Retried.")), "button primary"));
+    if (post.id && editable) actions.append(button("Delete", () => act("", () => api(`/api/social/posts/${post.id}`, {method: "DELETE"})).then(after("Deleted.")), "button ghost"));
+    root.append(actions);
+    showDialog(post.id ? "Post" : "New post", root);
+  }
+  function socialAccounts(state) {
+    const root = el("div"), accounts = state.accounts || {};
+    const forms = {
+      x: ["X", [["consumer_key", "API key"], ["consumer_secret", "API key secret"], ["access_token", "Access token"], ["access_secret", "Access token secret"]], "In the X Developer Portal: create an app with Read and write permission, then copy its API key and secret and generate an access token and secret for your own account."],
+      facebook: ["Facebook Page", [["page_id", "Page ID"], ["page_token", "Page access token"]], "From your Meta app (developers.facebook.com): a Page access token with pages_manage_posts, and your Page's ID."],
+      instagram: ["Instagram", [["ig_user_id", "Instagram professional account ID"]], "Your Instagram business or creator account linked to the Page above. It posts with the Page's token."]};
+    Object.entries(forms).forEach(([channel, [label, fields, help]]) => {
+      const item = accounts[channel] || {}, box = el("div", "action-card");
+      append(box, append(el("div", "row-meta"), badge(item.connected ? "connected" : "not connected", item.connected ? "green" : "muted"), el("strong", "", label)));
+      if (item.connected) {
+        append(box, el("p", "", item.username ? `@${item.username}` : item.page || ""), append(el("div", "actions"),
+          button("Check", () => act(result => result.message, () => mutate(`/api/social/accounts/${channel}/check`)).then(() => render()), "button small"),
+          button("Disconnect", () => act(result => result.message, () => api(`/api/social/accounts/${channel}`, {method: "DELETE"})).then(() => render()), "button small ghost")));
+      } else {
+        const form = el("form"), inputs = fields.map(([key, name]) => { const control = input(name, "", key.includes("id") ? "text" : "password"); control.autocomplete = "off"; control.key = key; return control; }), save = submitButton("Connect");
+        append(form, hint(help), ...inputs.map(control => field(control.placeholder, control)), actionsRow(save));
+        wireForm(form, save, async () => { const result = await mutate(`/api/social/accounts/${channel}`, Object.fromEntries(inputs.map(control => [control.key, control.value.trim()])), "PUT"); toast(result.message); render(); });
+        box.append(form);
+      }
+      root.append(box);
+    });
+    root.append(hint("Keys and tokens are stored encrypted on this Windows account and never shown again."));
+    return root;
+  }
+  function socialLimits(state) {
+    const limits = state.settings, form = el("form"), save = submitButton("Save");
+    const cap = input("10", limits.monthly_cap, "number"), per = input("0.015", limits.x_cost_per_post, "number"), withLink = input("0.20", limits.x_cost_with_link, "number"), day = input("3", limits.per_day, "number");
+    [cap, per, withLink].forEach(control => { control.step = "any"; control.min = 0; }); day.min = 1;
+    append(form, field("Monthly X budget (USD)", cap, "Nothing posts on X once this month's posts reach it."), append(el("div", "form-grid"), field("X cost per post", per), field("X cost with a link", withLink)),
+      field("Posts per day on each channel", day, "So you share, not flood. Extra approved posts wait for the next day."), hint("Check X's current prices in your developer dashboard and set them here; Cerebra uses these to keep you within budget."), actionsRow(save));
+    wireForm(form, save, async () => { await mutate("/api/social/settings", {monthly_cap: Number(cap.value || 0), x_cost_per_post: Number(per.value || 0), x_cost_with_link: Number(withLink.value || 0), per_day: Number(day.value || 1)}, "PUT"); toast("Saved."); render(); });
+    return form;
+  }
   // ---------- freelance: work found for the owner ----------
   const LEAD_STYLE = {new: "blue", saved: "amber", applied: "purple", interview: "cyan", won: "green", lost: "muted", hidden: "muted"};
   let leadFilter = "open";
