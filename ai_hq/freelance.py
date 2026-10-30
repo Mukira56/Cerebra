@@ -571,10 +571,13 @@ class Finder:
                     for row in rares:
                         row.extra = {**(row.extra or {}), "rare": now()}
                     # One message a round: a rare chance is worth a ping on its own; otherwise the usual count of strong matches.
+                    # A round with nothing strong isn't logged (each source's last check is shown on the Freelance page), so the
+                    # activity log isn't buried under "0 strong matches" every half hour.
                     best = max(rares, key=lambda row: row.score, default=None)
-                    session.add(Event(kind="freelance", message=f"Found {added} new freelance lead(s), {len(good)} strong match(es)" + (f", {len(rares)} rare chance(s)" if rares else ""),
-                                      data={"notify": "rare" if rares else "leads" if good else "", "count": len(rares) or len(good),
-                                            "best": {"score": best.score, "bids": (best.extra or {}).get("bids")} if best else None}))
+                    if good:
+                        session.add(Event(kind="freelance", message=f"Found {added} new freelance lead(s), {len(good)} strong match(es)" + (f", {len(rares)} rare chance(s)" if rares else ""),
+                                          data={"notify": "rare" if rares else "leads", "count": len(rares) or len(good),
+                                                "best": {"score": best.score, "bids": (best.extra or {}).get("bids")} if best else None}))
             return results
 
     def start(self, interval=300):

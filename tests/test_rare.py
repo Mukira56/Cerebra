@@ -71,3 +71,11 @@ def test_the_overview_shows_todays_jobs_and_what_stands_between_the_owner_and_ea
     assert gaps == ["freelancer", "phone", "models", "gmail", "stripe"] and all(gap["page"] and gap["why"] for gap in earn["gaps"])  # skills are set by default
     client.put("/api/business/notifications", json={"ntfy_enabled": True})
     assert "phone" not in [gap["key"] for gap in client.get("/api/overview").json()["earn"]["gaps"]]
+
+
+def test_a_search_that_finds_nothing_strong_leaves_the_activity_log_alone(client):  # noqa: F811
+    client.app.state.sources.broken = {"www.freelancer.com"}  # only weak jobs elsewhere: a plumber, a salaried role…
+    client.put("/api/freelance/auto", json={"alert": False})
+    client.post("/api/freelance/check")
+    events = [event["message"] for event in client.get("/api/overview").json()["events"]]
+    assert not any(message.startswith("Found ") for message in events)
