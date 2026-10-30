@@ -355,7 +355,8 @@ def public(row):
             "currency": row.currency, "kind": row.kind, "skills": row.skills or [], "posted_at": row.posted_at, "score": row.score,
             "reasons": row.reasons or [], "status": row.status, "notes": row.notes, "company": extra.get("company", ""), "bids": extra.get("bids"),
             "credit": extra.get("credit", ""), "proposal": row.proposal or {}, "created_at": row.created_at,
-            "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", ""), "checks": applicant_checks(row.description)}
+            "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", ""), "checks": applicant_checks(row.description),
+            "committee": extra.get("committee") or {}}
 
 
 PREVIEW = 600  # characters of a job post in the list; the full post is fetched when a lead is opened
@@ -853,7 +854,7 @@ class Bidder:
 
 # ---- Phase 4b: applying by itself (Freelancer.com only: Upwork and Fiverr ban automated proposals) ----
 AUTO_KEY = "freelance_auto"
-AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False}
+AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True}
 
 
 def auto_settings(session):
@@ -867,6 +868,8 @@ def save_auto(session, changes):
         value["enabled"] = bool(changes["enabled"])
     if "accept_awards" in changes:
         value["accept_awards"] = bool(changes["accept_awards"])
+    if "committee" in changes:
+        value["committee"] = bool(changes["committee"])
     for key, low, high in (("min_score", 1, 100), ("per_day", 1, 50)):
         if key in changes:
             number = int(changes[key])
@@ -961,6 +964,21 @@ class AutoApplier:
                     if earlier is not None:  # no proposal written, no bid spent: the client sees the first bid on their re-post
                         row.proposal = {**(row.proposal or {}), "skipped": f"A re-post of “{earlier.title[:80]}”, which you already bid on"}
                         repeats += 1
+                        continue
+                committee = getattr(self, "committee", None)
+                if rules.get("committee", True) and committee is not None:
+                    # The committee (analyst, bull, bear, risk, manager) decides before a proposal is written or a bid spent.
+                    self._note(f"The committee is reviewing a job ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
+                    try:
+                        verdict = committee.review(lead_id)
+                    except (ValueError, LookupError) as exc:
+                        self._note(str(exc), "waiting")
+                        break
+                    if verdict["decision"] != "bid":
+                        with self.db.Session.begin() as session:
+                            row = session.get(FreelanceLead, lead_id)
+                            row.proposal = {**(row.proposal or {}), "skipped": f"Committee: {verdict['reason'] or 'skip'}"}
+                        passed += 1
                         continue
                 self._note(f"Writing a proposal ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
                 try:

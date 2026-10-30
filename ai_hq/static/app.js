@@ -1632,7 +1632,7 @@
         return text; })(),
       lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null,
       array(lead.checks).length ? hint(`This post checks that applicants read it: it asks you to mention the word ${array(lead.checks).map(item => `“${item.word}”${item.tag ? ` (and the tag ${item.tag})` : ""}`).join(", ")}. Cerebra doesn't add it by itself; put it in your application if you apply.`) : null,
-      proposalSection(lead, state), field("Notes", notes));
+      committeeSection(lead, state), proposalSection(lead, state), field("Notes", notes));
     const actions = el("div", "actions");
     if (lead.url) actions.append(button("Open the job page", () => act("Opened in your browser.", () => mutate("/api/freelance/open", {id: lead.id})), "button primary"));
     if (lead.status === "new") actions.append(button("Save for later", () => setLead(lead, {status: "saved", notes: notes.value}, "Saved."), "button"));
@@ -1651,6 +1651,22 @@
     root.append(actions);
     showDialog(lead.title.slice(0, 90), root);
     dialog.dataset.leadId = lead.id;
+  }
+  // The decision committee: an analyst, a case for, a case against, a risk reviewer who can veto, and a manager who decides.
+  const COMMITTEE_ROLES = [["analyst", "Analyst"], ["bull", "Case for"], ["bear", "Case against"], ["risk", "Risk review"], ["manager", "Manager"]];
+  function committeeSection(lead, state) {
+    const record = lead.committee || {}, box = el("div", "proposal-box");
+    const ask = () => act("The committee is looking at this job (about a minute)…", () => mutate("/api/freelance/committee", {id: lead.id})).then(async result => { if (!result) return; const [fresh, fresher] = await refreshLead(lead.id); leadDialog(fresh, fresher); });
+    if (!record.decision) {
+      if (!state.agents_on) return null;
+      return append(box, el("strong", "", "Decision committee"), el("p", "row-meta", "Five AI roles weigh this job before you spend a bid on it: fit, the case for, the case against, a risk check that can veto, and a decision."),
+        button("Ask the committee", ask, "button"));
+    }
+    const verdict = record.decision === "bid" ? `Bid (${record.confidence}% sure)` : record.vetoed ? "Skip: vetoed by the risk review" : `Skip (${record.confidence}% sure)`;
+    const details = el("details");
+    append(details, el("summary", "", "What each role said"), ...COMMITTEE_ROLES.filter(([key]) => record.roles?.[key]).map(([key, label]) => append(el("div"), el("h4", "", label), el("p", "", record.roles[key]))));
+    return append(box, append(el("div", "detail-top"), el("strong", "", "Decision committee"), el("span", `badge ${record.decision === "bid" ? "green" : "amber"}`, verdict), record.at ? el("span", "row-meta", relative(record.at)) : null),
+      record.reason ? el("p", "", record.reason) : null, details, state.agents_on ? button("Ask again", ask, "button ghost small") : null);
   }
   // Phase 2: a proposal written by the owner's own model from facts only; the owner edits and sends it.
   let freelanceState = null;  // the page's last state; a single lead is fetched on its own, not the whole list
@@ -1732,9 +1748,10 @@
     api("/api/freelance/auto").then(state => {
       const rules = state.settings, form = el("form"), save = submitButton("Save");
       const on = check("Bid by myself on Freelancer.com", rules.enabled), accept = check("Also accept awards by myself (a commitment to the client's job at your bid)", rules.accept_awards);
+      const committee = check("Ask the decision committee before each bid (skips jobs it rejects)", rules.committee !== false);
       const score = input("40", rules.min_score, "number"), perDay = input("15", rules.per_day, "number"); score.min = 1; score.max = 100; perDay.min = 1; perDay.max = 50;
-      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), accept.wrap, actionsRow(save));
-      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
+      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), committee.wrap, accept.wrap, actionsRow(save));
+      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, committee: committee.control.checked, min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
       const connected = state.freelancer_account?.connected, gmail = state.gmail || {};
       root.replaceChildren(form,
         !connected ? hint("Connect your Freelancer.com account (panel above) so Cerebra can bid.", true) : null,

@@ -1455,6 +1455,19 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer):
         writer.hub = hub
 
+    from . import committee as committee_module
+    committee = committee_module.Committee(db, settings, chat_registry, hub)
+    applier.committee = committee
+    app.state.committee = committee
+
+    @app.post("/api/freelance/committee")
+    def freelance_committee(payload: dict):
+        """Ask the decision committee about one job (five roles; a minute or more on free or local models)."""
+        try:
+            return committee.review(str(payload.get("id") or ""))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
     @app.get("/api/models/hub")
     def models_hub():
         with db.Session() as session:

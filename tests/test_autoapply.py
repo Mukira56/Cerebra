@@ -53,7 +53,8 @@ def setup(client, **rules):  # noqa: F811
     client.post("/api/freelance/check")
     if rules.get("connect", True):
         client.put("/api/freelance/freelancer-account", json={"token": TOKEN})
-    client.put("/api/freelance/auto", json={"enabled": True, **{key: value for key, value in rules.items() if key != "connect"}})
+    # These tests are about bidding itself; the decision committee has its own tests (test_committee.py).
+    client.put("/api/freelance/auto", json={"enabled": True, "committee": False, **{key: value for key, value in rules.items() if key != "connect"}})
     return site
 
 
