@@ -106,3 +106,14 @@ def test_an_application_with_no_reply_gets_one_follow_up_then_a_nudge_to_close_i
     assert [item["title"] for item in waiting()] == ["Still no reply: close it?"]
     client.patch(f"/api/freelance/leads/{lead['id']}", json={"status": "lost"})
     assert waiting() == []
+
+
+def test_a_ready_proposal_for_a_job_gone_stale_stops_asking_for_attention(client):  # noqa: F811
+    from ai_hq.models import FreelanceLead
+    with client.app.state.db.Session.begin() as session:
+        for number, (status, points) in enumerate([("new", 70), ("new", 20), ("saved", 20)]):
+            session.add(FreelanceLead(id=f"remotive:{number}", source="remotive", title=f"Job {number}", status=status, score=points,
+                                      proposal={"status": "ready", "text": "Hi"}))
+    with client.app.state.db.Session() as session:
+        waiting = sorted(item["detail"].split(":")[0] for item in chief.calls(session) if item["kind"] == "proposal")
+    assert waiting == ["Job 0", "Job 2"]  # the crowded, old one (20) drops out; one the owner saved stays

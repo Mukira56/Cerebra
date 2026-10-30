@@ -344,15 +344,17 @@ def calls(session):
         items.append({"kind": "approval", "title": what, "detail": " ".join((task.description if task else "").split())[:140], "page": "approvals",
                       "at": approval.created_at})
     # Only the columns needed: the Overview asks for this every few seconds, and job posts are long.
+    from .freelance import auto_settings
     leads = session.execute(select(FreelanceLead.title, FreelanceLead.status, FreelanceLead.source, FreelanceLead.proposal, FreelanceLead.updated_at,
-                                   FreelanceLead.extra).where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
+                                   FreelanceLead.extra, FreelanceLead.score).where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
     fresh = _stamp(datetime.now(timezone.utc) - timedelta(hours=48))
-    for title, status, source, proposal, updated, extra in leads:
+    worth = auto_settings(session)["min_score"]  # scores are refreshed hourly: an old, crowded job's proposal stops asking for attention
+    for title, status, source, proposal, updated, extra, points in leads:
         proposal, spotted = proposal or {}, str((extra or {}).get("rare") or "")
         if status == "awarded":
             items.append({"kind": "award", "title": "A client chose you", "detail": f"{title[:120]}: accept or decline", "page": "freelance", "at": updated})
         elif (proposal.get("status") == "ready" and not proposal.get("sent_at") and not proposal.get("skipped")
-              and (not proposal.get("auto") or proposal.get("bid_error"))):  # an automatic bid is sent at once; only a refused one waits for the owner
+              and (not proposal.get("auto") or proposal.get("bid_error")) and (status == "saved" or (points or 0) >= worth)):  # an automatic bid is sent at once; only a refused one waits for the owner
             items.append({"kind": "proposal", "title": "A proposal is ready to send", "detail": f"{title[:120]}: apply in your own name", "page": "freelance",
                           "at": proposal.get("drafted_at") or updated})
         elif spotted >= fresh and status == "new" and not proposal.get("sent_at") and not proposal.get("skipped"):
