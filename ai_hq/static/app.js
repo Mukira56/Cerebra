@@ -1618,7 +1618,8 @@
     row.tabIndex = 0; row.setAttribute("role", "button"); row.dataset.leadId = lead.id;
     const meta = [lead.source_label, leadMoney(lead), lead.posted_at ? relative(lead.posted_at) : "", lead.bids != null ? `${lead.bids} bids` : ""].filter(Boolean).join(" · ");
     append(info, el("strong", "", lead.title), el("div", "row-meta", meta), el("div", "row-reason waiting", array(lead.reasons).join(" · ")));
-    const actions = append(el("div", "lead-actions"), scoreBadge(lead.score), lead.status !== "new" ? badge(lead.status, LEAD_STYLE[lead.status]) : null);
+    const actions = append(el("div", "lead-actions"), lead.rare && lead.status === "new" ? el("span", "badge amber", "RARE") : null, scoreBadge(lead.score), lead.status !== "new" ? badge(lead.status, LEAD_STYLE[lead.status]) : null);
+    if (lead.rare) row.title = "A rare chance: a strong match with few bids so far and a real budget";
     append(row, info, actions);
     row.addEventListener("click", () => leadDialog(lead, state)); row.addEventListener("keydown", event => { if (event.key === "Enter") leadDialog(lead, state); });
     return row;
@@ -1752,9 +1753,15 @@
       const committee = check("Ask the decision committee before each bid (skips jobs it rejects)", rules.committee !== false);
       const ahead = check("Write proposals ahead for my strongest matches from every source (nothing is sent; they wait in Your calls)", rules.ahead !== false);
       const aheadPerDay = input("5", rules.ahead_per_day, "number"); aheadPerDay.min = 1; aheadPerDay.max = 20;
+      const alert = check("Tell me at once about rare chances (in Your calls, and on my phone if notifications are on)", rules.alert !== false);
+      const alertScore = input("50", rules.alert_score, "number"), alertBids = input("15", rules.alert_bids, "number"), alertUsd = input("250", rules.alert_usd, "number");
+      alertScore.min = 1; alertScore.max = 100; alertBids.min = 1; alertUsd.min = 1;
       const score = input("40", rules.min_score, "number"), perDay = input("15", rules.per_day, "number"); score.min = 1; score.max = 100; perDay.min = 1; perDay.max = 50;
-      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), committee.wrap, ahead.wrap, append(el("div", "form-grid"), field("Proposals written ahead per day", aheadPerDay)), accept.wrap, actionsRow(save));
-      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, committee: committee.control.checked, ahead: ahead.control.checked, ahead_per_day: Number(aheadPerDay.value || 5), min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
+      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), committee.wrap, ahead.wrap, append(el("div", "form-grid"), field("Proposals written ahead per day", aheadPerDay)),
+        alert.wrap, append(el("div", "form-grid"), field("Rare: score at least", alertScore), field("Rare: fewer bids than", alertBids), field("Rare: budget at least (USD)", alertUsd)),
+        accept.wrap, actionsRow(save));
+      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, committee: committee.control.checked, ahead: ahead.control.checked, ahead_per_day: Number(aheadPerDay.value || 5), alert: alert.control.checked, alert_score: Number(alertScore.value || 50),
+        alert_bids: Number(alertBids.value || 15), alert_usd: Number(alertUsd.value || 250), min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
       const connected = state.freelancer_account?.connected, gmail = state.gmail || {};
       root.replaceChildren(form,
         !connected ? hint("Connect your Freelancer.com account (panel above) so Cerebra can bid.", true) : null,

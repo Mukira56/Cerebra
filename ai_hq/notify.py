@@ -150,7 +150,11 @@ class Notifier:
                 if settings["only_orders"] and event.kind == "state" and not (task and task.results.get("order")):
                     continue
                 if event.kind == "freelance":
-                    if (event.data or {}).get("notify") == "leads":
+                    if (event.data or {}).get("notify") == "rare":  # counts only: ntfy topics travel through a public server
+                        best = event.data.get("best") or {}
+                        messages.append(("Cerebra · a rare chance", f"{int(event.data.get('count') or 0)} strong match(es) with few bids so far and a real budget"
+                                         + (f" (best: score {int(best.get('score') or 0)}, {int(best.get('bids') or 0)} bids)" if best else "") + ". Apply soon: open Freelance in Cerebra.", "zap"))
+                    elif (event.data or {}).get("notify") == "leads":
                         messages.append(("Cerebra · new freelance work", f"{int(event.data.get('count') or 0)} strong new match(es) for what you sell. Open Freelance in Cerebra.", "briefcase"))
                     continue
                 if event.kind == "money":

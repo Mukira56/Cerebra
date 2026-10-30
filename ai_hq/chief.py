@@ -344,16 +344,20 @@ def calls(session):
         items.append({"kind": "approval", "title": what, "detail": " ".join((task.description if task else "").split())[:140], "page": "approvals",
                       "at": approval.created_at})
     # Only the columns needed: the Overview asks for this every few seconds, and job posts are long.
-    leads = session.execute(select(FreelanceLead.title, FreelanceLead.status, FreelanceLead.source, FreelanceLead.proposal, FreelanceLead.updated_at)
-                            .where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
-    for title, status, source, proposal, updated in leads:
-        proposal = proposal or {}
+    leads = session.execute(select(FreelanceLead.title, FreelanceLead.status, FreelanceLead.source, FreelanceLead.proposal, FreelanceLead.updated_at,
+                                   FreelanceLead.extra).where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
+    fresh = _stamp(datetime.now(timezone.utc) - timedelta(hours=48))
+    for title, status, source, proposal, updated, extra in leads:
+        proposal, spotted = proposal or {}, str((extra or {}).get("rare") or "")
         if status == "awarded":
             items.append({"kind": "award", "title": "A client chose you", "detail": f"{title[:120]}: accept or decline", "page": "freelance", "at": updated})
         elif (proposal.get("status") == "ready" and not proposal.get("sent_at") and not proposal.get("skipped")
               and (not proposal.get("auto") or proposal.get("bid_error"))):  # an automatic bid is sent at once; only a refused one waits for the owner
             items.append({"kind": "proposal", "title": "A proposal is ready to send", "detail": f"{title[:120]}: apply in your own name", "page": "freelance",
                           "at": proposal.get("drafted_at") or updated})
+        elif spotted >= fresh and status == "new" and not proposal.get("sent_at") and not proposal.get("skipped"):
+            items.append({"kind": "rare", "title": "A rare chance: apply soon", "detail": f"{title[:120]}: a strong match with few bids so far",
+                          "page": "freelance", "at": spotted})
     for post in session.scalars(select(SocialPost).where(SocialPost.status == "draft", SocialPost.origin == "ai")).all():
         items.append({"kind": "post", "title": "A post waits for your approval", "detail": " ".join(post.text.split())[:140], "page": "marketing", "at": post.created_at})
     today = now()[:10]

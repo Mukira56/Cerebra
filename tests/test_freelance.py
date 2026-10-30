@@ -155,6 +155,7 @@ def test_a_job_pasted_from_upwork_or_fiverr_is_scored_too(client):
 def test_strong_new_matches_reach_the_phone_without_details(client):
     notifier = client.app.state.notifier
     client.put("/api/business/notifications", json={"ntfy_enabled": True})
+    client.put("/api/freelance/auto", json={"alert": False})  # the rare-chance message has its own test (test_rare.py)
     notifier.pending_messages()
     client.post("/api/freelance/check")
     _, messages = notifier.pending_messages()

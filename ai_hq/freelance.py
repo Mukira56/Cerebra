@@ -356,7 +356,7 @@ def public(row):
             "reasons": row.reasons or [], "status": row.status, "notes": row.notes, "company": extra.get("company", ""), "bids": extra.get("bids"),
             "credit": extra.get("credit", ""), "proposal": row.proposal or {}, "created_at": row.created_at,
             "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", ""), "checks": applicant_checks(row.description),
-            "committee": extra.get("committee") or {}}
+            "committee": extra.get("committee") or {}, "rare": extra.get("rare", "")}
 
 
 PREVIEW = 600  # characters of a job post in the list; the full post is fetched when a lead is opened
@@ -541,8 +541,15 @@ class Finder:
                     since = datetime.fromtimestamp(stamp, timezone.utc).isoformat()
                     good = session.scalars(select(FreelanceLead).where(FreelanceLead.created_at >= since, FreelanceLead.score >= GOOD,
                                                                        FreelanceLead.status == "new")).all()
-                    session.add(Event(kind="freelance", message=f"Found {added} new freelance lead(s), {len(good)} strong match(es)",
-                                      data={"notify": "leads" if good else "", "count": len(good)}))
+                    rules = auto_settings(session)
+                    rares = [row for row in good if rare(row, rules)] if rules["alert"] else []
+                    for row in rares:
+                        row.extra = {**(row.extra or {}), "rare": now()}
+                    # One message a round: a rare chance is worth a ping on its own; otherwise the usual count of strong matches.
+                    best = max(rares, key=lambda row: row.score, default=None)
+                    session.add(Event(kind="freelance", message=f"Found {added} new freelance lead(s), {len(good)} strong match(es)" + (f", {len(rares)} rare chance(s)" if rares else ""),
+                                      data={"notify": "rare" if rares else "leads" if good else "", "count": len(rares) or len(good),
+                                            "best": {"score": best.score, "bids": (best.extra or {}).get("bids")} if best else None}))
             return results
 
     def start(self, interval=300):
@@ -854,7 +861,21 @@ class Bidder:
 
 # ---- Phase 4b: applying by itself (Freelancer.com only: Upwork and Fiverr ban automated proposals) ----
 AUTO_KEY = "freelance_auto"
-AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True, "ahead": True, "ahead_per_day": 5}
+AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True, "ahead": True, "ahead_per_day": 5,
+                 "alert": True, "alert_score": 50, "alert_bids": 15, "alert_usd": 250}
+RARE_HOURLY = 20  # USD an hour: the hourly side of "a real budget" for a rare chance
+
+
+def rare(row, rules):
+    """A rare chance (the "alert when a gap passes a threshold" design): a strong match that few have bid on yet, with a
+    real budget. Only judged when the number of bids is known, so it's never guessed."""
+    extra = row.extra or {}
+    bids = extra.get("bids")
+    if bids is None or bids >= rules["alert_bids"] or row.score < rules["alert_score"] or row.kind == "job":
+        return False
+    rate = float(extra.get("usd_rate") or (1.0 if (row.currency or "USD") == "USD" else 0))
+    top = max(row.budget_min or 0, row.budget_max or 0) * rate
+    return top >= (RARE_HOURLY if row.kind == "hourly" else rules["alert_usd"]) and top < (UNREAL_HOURLY if row.kind == "hourly" else UNREAL_FIXED)
 
 
 def auto_settings(session):
@@ -870,9 +891,10 @@ def save_auto(session, changes):
         value["accept_awards"] = bool(changes["accept_awards"])
     if "committee" in changes:
         value["committee"] = bool(changes["committee"])
-    if "ahead" in changes:
-        value["ahead"] = bool(changes["ahead"])
-    for key, low, high in (("min_score", 1, 100), ("per_day", 1, 50), ("ahead_per_day", 1, 20)):
+    for flag in ("ahead", "alert"):
+        if flag in changes:
+            value[flag] = bool(changes[flag])
+    for key, low, high in (("min_score", 1, 100), ("per_day", 1, 50), ("ahead_per_day", 1, 20), ("alert_score", 1, 100), ("alert_bids", 1, 200), ("alert_usd", 1, 100000)):
         if key in changes:
             number = int(changes[key])
             if not low <= number <= high:
@@ -1057,8 +1079,8 @@ class DraftAhead:
                 wanted = profile(session)
                 rows = session.scalars(select(FreelanceLead).where(FreelanceLead.status.in_(["new", "saved"]), FreelanceLead.score >= rules["min_score"])
                                        .order_by(FreelanceLead.score.desc()).limit(80)).all()
-                candidates = [row.id for row in rows if not row.proposal and not (bidding and row.source == "freelancer")
-                              and score(_as_lead(row), wanted)[0] >= rules["min_score"]]
+                candidates = [row.id for row in sorted(rows, key=lambda row: not (row.extra or {}).get("rare"))  # rare chances first, then by score
+                              if not row.proposal and not (bidding and row.source == "freelancer") and score(_as_lead(row), wanted)[0] >= rules["min_score"]]
             written, passed = 0, 0
             for lead_id in candidates:
                 if written + passed >= room:
