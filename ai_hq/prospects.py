@@ -264,6 +264,7 @@ def update(session, prospect_id, fields):
 
 # ---- openers and the offer: drafted by the owner's model, sent only by the owner ----
 OPENER_RULES = """Write a short first email from a freelancer to a local US business, in the freelancer's own voice.
+""" + __import__("ai_hq.freelance", fromlist=["VOICE"]).VOICE + """
 Rules (US law and honesty):
 - Mention exactly one or two of the FACTS below, in plain words, and what each means for their customers. Say you looked at their
   website. Never claim anything about the business that isn't in FACTS: no guessed revenue, reviews, problems or competitors.
@@ -276,6 +277,7 @@ Rules (US law and honesty):
 Reply with ONLY one JSON object: {"subject": "...", "body": "..."}"""
 
 OFFER_RULES = """Write a one-page offer a freelancer sends to local US businesses of one kind, in plain, confident words.
+""" + __import__("ai_hq.freelance", fromlist=["VOICE"]).VOICE + """
 - The problem: use only the FINDINGS (what was seen on these businesses' own websites, with the counts). No invented statistics.
 - What's included and how it works: only the freelancer's services and finished work in FREELANCER. No invented results,
   clients, guarantees or testimonials.
@@ -409,7 +411,8 @@ class Writer:
                 selected, prompt = self.profile_for(session), opener_prompt(session, row)
                 signature, missing = footer(session)
             data = self._ask(selected, prompt)
-            subject, body = " ".join(str(data.get("subject") or "").split())[:120], str(data.get("body") or "").strip()[:3000]
+            from .freelance import own_voice
+            subject, body = " ".join(own_voice(str(data.get("subject") or "")).split())[:120], own_voice(str(data.get("body") or "").strip())[:3000]
             if not subject or not body:
                 raise ValueError("The model's draft was empty; try again")
             with self.db.Session.begin() as session:

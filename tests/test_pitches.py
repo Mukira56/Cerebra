@@ -96,4 +96,5 @@ def test_cerebras_own_test_projects_never_count_as_the_owners_work(client, tmp_p
     assert [item["project"] for item in client.get("/api/pitches").json()["finished"]] == ["Portfolio"]
     with client.app.state.db.Session() as session:
         facts = freelance.context(session)
-    assert "Portfolio" in facts and "Live validation" not in facts and "readiness" not in facts
+    # The owner (2026-10-30): applications never present projects built in Cerebra, their own portfolio site among them.
+    assert "Portfolio" not in facts and "Live validation" not in facts and "readiness" not in facts

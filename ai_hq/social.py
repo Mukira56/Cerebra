@@ -417,6 +417,7 @@ class Publisher:
 
 # ---- posts written by the owner's AI model, from real work only ----
 POST_RULES = """Write social media posts that win freelance clients for this freelancer, in their own voice.
+""" + __import__("ai_hq.freelance", fromlist=["VOICE"]).VOICE + """
 Rules:
 - Each post shares something real and useful: a finished project (what problem it solved), a tip from their work, a service or
   product they offer. Only use facts from the FREELANCER section; never invent clients, results, numbers, reviews or testimonials.

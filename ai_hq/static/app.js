@@ -1782,10 +1782,12 @@
     const services = Object.entries(state.services).map(([key, label]) => { const item = check(label, array(settings.services).includes(key)); item.key = key; return item; });
     const words = textarea("Extra skills or tools, one per line (e.g. Supabase, Tailwind)", array(settings.keywords).join("\n")), exclude = textarea("Words that rule a job out, one per line (e.g. unpaid, crypto)", array(settings.exclude).join("\n"));
     const minimum = input("0", settings.min_budget || 0, "number"); minimum.min = 0; minimum.step = "any";
-    append(form, append(el("div", "check-list"), ...services.map(item => item.wrap)), field("Extra skills", words), field("Rule out jobs that mention", exclude), field("Smallest budget you take (USD)", minimum, "Jobs below it sink to the bottom."), actionsRow(save));
+    const skills = input("Cybersecurity, AI integration, Web development, API integration", array(settings.skills).join(", "));
+    append(form, field("Your skills", skills, "How you describe yourself, separated by commas. Every proposal, email and profile leads with these, written as you."),
+      append(el("div", "check-list"), ...services.map(item => item.wrap)), field("Extra skills", words), field("Rule out jobs that mention", exclude), field("Smallest budget you take (USD)", minimum, "Jobs below it sink to the bottom."), actionsRow(save));
     wireForm(form, save, async () => {
       const lines = value => value.split("\n").map(item => item.trim()).filter(Boolean);
-      await mutate("/api/freelance/profile", {services: services.filter(item => item.control.checked).map(item => item.key), keywords: lines(words.value), exclude: lines(exclude.value), min_budget: Number(minimum.value || 0)}, "PUT");
+      await mutate("/api/freelance/profile", {skills: skills.value.split(",").map(item => item.trim()).filter(Boolean), services: services.filter(item => item.control.checked).map(item => item.key), keywords: lines(words.value), exclude: lines(exclude.value), min_budget: Number(minimum.value || 0)}, "PUT");
       toast("Saved. Every open lead was scored again."); render();
     });
     return form;

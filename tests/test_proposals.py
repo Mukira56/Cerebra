@@ -110,3 +110,19 @@ def test_freelancer_com_errors_are_explained(client):  # noqa: F811
     client.app.state.bidder.client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(401, json={"status": "error", "message": "Invalid token"})))
     response = client.put("/api/freelance/freelancer-account", json={"token": TOKEN})
     assert response.status_code == 400 and "Invalid token" in response.json()["detail"] and TOKEN not in response.text
+
+
+def test_applications_are_written_as_the_owner_with_their_skills_and_never_mention_cerebra(client):  # noqa: F811
+    from ai_hq import freelance, pitches, prospects, social
+    from ai_hq.models import FreelanceLead
+    saved = client.put("/api/freelance/profile", json={"skills": ["Cybersecurity", "AI integration", "Web development", "API integration"]}).json()
+    assert saved["skills"] == ["Cybersecurity", "AI integration", "Web development", "API integration"]
+    with client.app.state.db.Session() as session:
+        facts = freelance.context(session)
+        prompt = freelance.proposal_prompt(session, FreelanceLead(title="Secure a web API", description="Harden our API.", source="freelancer"))
+    assert facts.startswith("SKILLS (the freelancer's own words; lead with these): Cybersecurity, AI integration, Web development, API integration")
+    assert "built with Cerebra" not in facts and "Finished work" not in facts  # no projects built inside Cerebra, no portfolio as client work
+    for rules in (prompt, prospects.OPENER_RULES, prospects.OFFER_RULES, pitches.RULES, social.POST_RULES):
+        assert "Never mention Cerebra" in rules and "portfolio" in rules
+    assert freelance.own_voice("I secure APIs. I built this with Cerebra's help. Want a call?") == "I secure APIs. Want a call?"
+    assert freelance.parse_proposal('{"proposal": "Hi. Cerebra wrote this. I can start today.", "price": 100, "days": 3}')["text"] == "Hi. I can start today."

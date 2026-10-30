@@ -34,6 +34,7 @@ KINDS = {
                  '"headline": at most 220 characters (role, who you help, how). "about": 800-2,000 characters in first person, ending with how to hire you.'),
 }
 RULES = """Write {what} for this freelancer, in their own voice.
+""" + __import__("ai_hq.freelance", fromlist=["VOICE"]).VOICE.replace("{", "{{").replace("}", "}}") + """
 Use only facts from the FREELANCER section. Never invent clients, employers, years of experience, ratings, reviews, certificates,
 results or numbers. Where proof is thin, describe the work and approach honestly instead. Plain, confident, specific; no hype words,
 no emojis, no placeholders like [Name]. Stay inside every length limit.

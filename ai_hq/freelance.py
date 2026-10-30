@@ -45,7 +45,13 @@ SOURCES = {
     "hn": {"label": "Hacker News hiring threads", "every": 3 * 60 * 60, "url": "https://news.ycombinator.com"},
 }
 STATUSES = {"new", "saved", "hidden", "applied", "interview", "awarded", "won", "lost"}  # awarded: the client chose you; won: the work is on
-DEFAULTS = {"services": list(SERVICES), "keywords": [], "exclude": [], "min_budget": 0.0, "currency": "USD",
+# The owner's own words for what they do (2026-10-30): every application leads with these.
+DEFAULT_SKILLS = ["Cybersecurity", "AI integration", "Web development", "API integration"]
+# How everything sent in the owner's name must read (the owner, 2026-10-30): as the owner, never as a tool's output.
+VOICE = ("Write as the freelancer, in the first person, as a person applying in their own name. Never mention Cerebra, or any AI tool,"
+         " assistant or agent helping with the work or the writing. Never present the freelancer's own portfolio or personal website as"
+         " a client project or as something they are building. Lead with the SKILLS listed.")
+DEFAULTS = {"services": list(SERVICES), "keywords": [], "exclude": [], "min_budget": 0.0, "currency": "USD", "skills": DEFAULT_SKILLS,
             "sources": {name: True for name in SOURCES}, "checked": {}}
 MAX_DESCRIPTION = 6000
 GOOD = 50  # a strong match: worth a phone alert and the top of the list
@@ -83,6 +89,8 @@ def save_profile(session, changes):
     for key in ("keywords", "exclude"):
         if key in changes:
             value[key] = _words(changes[key])
+    if "skills" in changes:
+        value["skills"] = [" ".join(str(item).split())[:60] for item in (changes["skills"] or []) if str(item).strip()][:12]
     if "min_budget" in changes:
         budget = float(changes["min_budget"] or 0)
         if not 0 <= budget <= 1_000_000:
@@ -565,6 +573,7 @@ PLATFORM_STYLE = {
     "default": "a short application message or email: 120-220 words, plain text",
 }
 PROPOSAL_RULES = """Write a proposal that wins this job, as the freelancer, in their own voice.
+""" + VOICE + """
 How winning proposals read:
 - Open with the client's actual problem in their own words (one line), not with "Hi, I am".
 - Show you understood: restate the outcome they want and one detail that proves you read the post.
@@ -594,11 +603,15 @@ def own_project(project):
 
 
 def context(session):
-    """What a proposal may rely on: the owner's own details, services and prices, finished work. Facts only."""
+    """What anything written in the owner's name may rely on: their skills, details, services and prices. Facts only.
+    Projects built inside Cerebra (the owner's own portfolio site among them) are left out: the owner asked that applications
+    never present them, nor mention Cerebra or AI help."""
     from . import money, owner
     from .models import Product, Project, Task
     settings, details = money.settings(session), profile(session)
     parts = []
+    skills = details.get("skills") or DEFAULT_SKILLS
+    parts.append("SKILLS (the freelancer's own words; lead with these): " + ", ".join(skills))
     about = owner.brief(session)
     if about:
         parts.append(about)
@@ -612,9 +625,6 @@ def context(session):
     parts.append("Kinds of work offered: " + ", ".join(SERVICES[key][0] for key in details["services"]))
     if details.get("keywords"):
         parts.append("Extra skills and tools: " + ", ".join(details["keywords"]))
-    done = finished_tasks(session)
-    if done:
-        parts.append("Finished work (built with Cerebra, real):\n" + "\n".join(f"- {project.name}: {' '.join(task.description.split())[:160]}" for task, project in done))
     sold = [product.name for product in session.scalars(select(Product)).all()][:6]
     if sold:
         parts.append("Products for sale: " + ", ".join(sold))
@@ -636,6 +646,14 @@ def proposal_prompt(session, row):
             f"Source: {public(row)['source_label']}\nDescription:\n{row.description[:5000]}\n\nJSON:")
 
 
+def own_voice(text):
+    """Drop any sentence that names Cerebra: the owner applies in their own name, and the model is told so, but this makes sure."""
+    if "cerebra" not in str(text or "").lower():
+        return text
+    kept = [part for part in re.split(r"(?<=[.!?])\s+", str(text)) if "cerebra" not in part.lower()]
+    return " ".join(kept).strip()
+
+
 def parse_proposal(text):
     """The model's JSON (fenced or bare); a plain-text answer is kept as the proposal itself."""
     import json
@@ -647,14 +665,14 @@ def parse_proposal(text):
             proposal = str(data.get("proposal") or "").strip()
             if proposal:
                 price = data.get("price")
-                return {"text": proposal[:6000], "price": round(float(price), 2) if isinstance(price, (int, float)) and price > 0 else 0,
+                return {"text": own_voice(proposal)[:6000], "price": round(float(price), 2) if isinstance(price, (int, float)) and price > 0 else 0,
                         "days": int(data["days"]) if isinstance(data.get("days"), (int, float)) and 0 < data["days"] <= 365 else 0,
                         "fit": " ".join(str(data.get("fit") or "").split())[:400], "apply": data.get("apply") is not False}
         except (ValueError, TypeError):
             pass
     if not raw:
         raise ValueError("The model returned an empty answer")
-    return {"text": raw[:6000], "price": 0, "days": 0, "fit": ""}
+    return {"text": own_voice(raw)[:6000], "price": 0, "days": 0, "fit": ""}
 
 
 class Drafter:
