@@ -23,6 +23,8 @@ class OpenRouter:
         self.status, self.bodies = status, []
 
     def __call__(self, request):
+        if request.url.host == "127.0.0.1":  # no Ollama on this simulated computer
+            raise httpx.ConnectError("refused")
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json=MODELS)
         assert request.headers["Authorization"] == f"Bearer {KEY}"
@@ -88,3 +90,44 @@ def test_writing_goes_to_the_owners_claude_account(client):  # noqa: F811
     result = modelhub.chat_for(hub, "writing", lambda: Accounts(), {"provider": "codex", "model": "gpt-x"}, "Write a proposal", ".")
     assert result.output == "drafted" and calls == ["claude"]
     assert modelhub.chat_for(None, "writing", lambda: Accounts(), {"provider": "codex"}, "x", ".").output == "drafted" and calls[-1] == "codex"  # no hub: as before
+
+
+class Ollama:
+    def __init__(self, models=("deepseek-r1:8b", "qwen3:14b")):
+        self.models, self.bodies = list(models), []
+
+    def __call__(self, request):
+        if request.url.host == "127.0.0.1" and request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": name} for name in self.models]})
+        if request.url.host == "127.0.0.1" and request.url.path == "/api/chat":
+            body = json.loads(request.content)
+            self.bodies.append(body)
+            if body["model"] not in self.models:
+                return httpx.Response(404, json={"error": "model not found"})
+            return httpx.Response(200, json={"message": {"content": "<think>let me think</think>\nready"}, "prompt_eval_count": 10, "eval_count": 2})
+        return OpenRouter()(request)
+
+
+def test_models_on_this_computer_work_without_any_key_and_cost_nothing(client):  # noqa: F811
+    local = Ollama()
+    client.app.state.hub.client = httpx.Client(transport=httpx.MockTransport(local))
+    state = client.get("/api/models/hub").json()
+    assert state["local_models"] == ["deepseek-r1:8b", "qwen3:14b"] and not state["connected"]  # no OpenRouter key needed
+    assert client.put("/api/models/hub", json={"routes": {"verify": "local:deepseek-r1:8b"}}).status_code == 200
+    assert client.post("/api/models/hub/test", json={"category": "verify"}).json()["answer"] == "ready"  # its thinking is left out
+    assert local.bodies[-1]["model"] == "deepseek-r1:8b" and local.bodies[-1]["stream"] is False
+    usage = client.get("/api/models/hub").json()["usage"]
+    assert usage == [{"category": "verify", "model": "local:deepseek-r1:8b", "calls": 1, "cost": 0.0}]
+    client.put("/api/models/hub", json={"routes": {"verify": "local:llama4:70b"}})
+    missing = client.post("/api/models/hub/test", json={"category": "verify"})
+    assert missing.status_code == 400 and "ollama pull llama4:70b" in missing.json()["detail"]
+
+
+def test_without_ollama_running_the_message_says_so(client):  # noqa: F811
+    def down(request):
+        raise httpx.ConnectError("refused")
+    client.app.state.hub.client = httpx.Client(transport=httpx.MockTransport(down))
+    assert client.get("/api/models/hub").json()["local_models"] == []
+    client.put("/api/models/hub", json={"routes": {"bulk": "local:qwen3:14b"}})
+    result = client.app.state.hub.chat("bulk", "hello")
+    assert not result.success and "Ollama isn't running" in result.error

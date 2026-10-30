@@ -42,7 +42,9 @@ CATEGORIES = {
     "verify": ("Checking", "Cross-checking claims against their sources", "google/gemma-4-31b-it:free"),
     "verify_second": ("Second check", "Another company's model, for disputed claims", "nvidia/nemotron-3.5-super-vl:free"),
 }
-FALLBACK = "openrouter/free"  # OpenRouter's own free router: picks any free model that is up
+FALLBACK = "openrouter/free"
+OLLAMA = "http://127.0.0.1:11434"  # local models on the owner's own computer: free, no daily limit; only this loopback address
+LOCAL = "local:"  # OpenRouter's own free router: picks any free model that is up
 DEFAULTS = {"api_key": "", "routes": {}, "enabled": True}
 
 
@@ -73,8 +75,9 @@ def save_settings(session, fields):
             model = str(model or "").strip()
             if category not in CATEGORIES or not model:
                 continue
-            if model not in ACCOUNTS and not (model.endswith(":free") or model == FALLBACK):
-                raise ValueError(f"{model} isn't free: choose a free model (its name ends in :free) or your Claude or Codex account")
+            local = model.startswith(LOCAL) and 1 < len(model) - len(LOCAL) <= 100 and " " not in model
+            if model not in ACCOUNTS and not local and not (model.endswith(":free") or model == FALLBACK):
+                raise ValueError(f"{model} isn't free: choose a free model (its name ends in :free), a model on this computer, or your Claude or Codex account")
             value["routes"][category] = model
     stored = {**value, "routes": {key: model for key, model in value["routes"].items() if model != CATEGORIES[key][2]}}
     row = session.get(Metadata, KEY)
@@ -144,6 +147,39 @@ class Hub:
         except httpx.HTTPError:
             return set()
 
+    def local_models(self):
+        """Models pulled into Ollama on this computer (empty when Ollama isn't running). Never starts Ollama or downloads anything."""
+        try:
+            response = self.client.get(f"{OLLAMA}/api/tags", timeout=3)
+            response.raise_for_status()
+        except (httpx.HTTPError, ValueError):
+            return []
+        return sorted(item.get("name", "") for item in response.json().get("models", []) if item.get("name"))
+
+    def chat_local(self, category, model, prompt, max_tokens=4000):
+        """One turn with a model on this computer, through Ollama (free; as fast as the computer allows)."""
+        name = model[len(LOCAL):]
+        started = time.monotonic()
+        try:
+            response = self.client.post(f"{OLLAMA}/api/chat", timeout=900, json={"model": name, "messages": [{"role": "user", "content": prompt}],
+                                                                                "stream": False, "options": {"num_predict": max_tokens, "num_ctx": 16384}})
+        except httpx.HTTPError:
+            return AgentResult(False, "", error="Ollama isn't running on this computer. Open Ollama, or choose another model on the Models page.")
+        if response.status_code >= 400:
+            self._record(category, model, {}, 0.0, False, time.monotonic() - started)
+            missing = response.status_code == 404
+            return AgentResult(False, "", error=(f"{name} isn't on this computer yet: in a terminal run  ollama pull {name}" if missing
+                                                 else f"Ollama refused ({response.status_code})"))
+        data = response.json()
+        text = ((data.get("message") or {}).get("content") or "")
+        if "<think>" in text:  # reasoning models (DeepSeek-R1, Qwen3) think aloud first: keep only the answer
+            text = text.split("</think>")[-1]
+        self._record(category, model, {"prompt_tokens": data.get("prompt_eval_count") or 0, "completion_tokens": data.get("eval_count") or 0},
+                     0.0, bool(text.strip()), time.monotonic() - started)
+        if not text.strip():
+            return AgentResult(False, "", error=f"{name} returned no answer")
+        return AgentResult(True, text.strip())
+
     def route(self, category):
         with self.db.Session() as session:
             return settings(session)["routes"].get(category) or CATEGORIES[category][2]
@@ -152,10 +188,12 @@ class Hub:
         """One turn with a free model. Anything with a price is refused: the owner pays only for Claude and Codex."""
         with self.db.Session() as session:
             value = settings(session)
-            if not value["api_key"]:
-                return AgentResult(False, "", error="Add your free OpenRouter key on the Models page to use free models")
             model = model or value["routes"].get(category) or CATEGORIES.get(category, ("", "", FALLBACK))[2]
-            key = vault.unprotect(value["api_key"])
+            key = vault.unprotect(value["api_key"]) if value["api_key"] else ""
+        if model.startswith(LOCAL):
+            return self.chat_local(category, model, prompt, max_tokens)
+        if not key:
+            return AgentResult(False, "", error="Add your free OpenRouter key on the Models page to use free models")
         free = self.free_models()
         if model != FALLBACK and model not in free:
             return AgentResult(False, "", error=f"{model} isn't free right now, so Cerebra won't use it. Choose another free model on the Models page.")
@@ -199,6 +237,6 @@ def chat_for(hub, category, registry_source, selected, prompt, workdir):
         provider = route.split(":", 1)[1]
         model = selected.get("model", "") if selected.get("provider") == provider else ""
         return registry_source().chat(provider, prompt, str(workdir), model)
-    if route and hub.ready():
+    if route.startswith(LOCAL) or (route and hub.ready()):
         return hub.chat(category, prompt)
     return registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))

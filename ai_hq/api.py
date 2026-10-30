@@ -1464,7 +1464,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             reachable = True
         except httpx.HTTPError:
             free, reachable = [], False
-        return {**modelhub.public(value, spent), "free_models": free, "usage": usage, "catalog_reachable": reachable}
+        return {**modelhub.public(value, spent), "free_models": free, "usage": usage, "catalog_reachable": reachable, "local_models": hub.local_models()}
 
     @app.put("/api/models/hub")
     def models_hub_save(payload: dict):

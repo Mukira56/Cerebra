@@ -1014,7 +1014,7 @@
     root.append(el("p", "row-meta", "Loading…"));
     api("/api/models/hub").then(state => {
       const key = input(state.connected ? "Saved: paste a new key to replace it" : "sk-or-v1-…", "", "password"), saveKey = button("Save key", () => act("Saved.", () => mutate("/api/models/hub", {api_key: key.value.trim()}, "PUT")).then(() => render()), "button small");
-      const choices = [...Object.entries(state.accounts || {}).map(([id, label]) => [id, label]), ...array(state.free_models).map(item => [item.id, /free/i.test(item.name) ? item.name : `${item.name} (free)`])];
+      const choices = [...Object.entries(state.accounts || {}).map(([id, label]) => [id, label]), ...array(state.local_models).map(name => [`local:${name}`, `${name} (on this computer, free)`]), ...array(state.free_models).map(item => [item.id, /free/i.test(item.name) ? item.name : `${item.name} (free)`])];
       const routes = array(state.categories).map(category => {
         const pick = select(choices.length ? choices : [[state.routes[category.key], state.routes[category.key]]], state.routes[category.key]);
         if (!Array.from(pick.options).some(option => option.value === state.routes[category.key])) { pick.append(option(state.routes[category.key], `${state.routes[category.key]} (no longer free: choose another)`)); pick.value = state.routes[category.key]; }
@@ -1029,6 +1029,8 @@
         state.catalog_reachable ? null : hint("Couldn't reach OpenRouter to list today's free models; check your internet connection.", true),
         table(["Kind of work", "Uses", ""], routes.map(([label, pick, test]) => [label, pick, test || ""])),
         hint("Free models allow about 20 requests a minute and 50 a day on an account that never bought credits, and they come and go: each request names free backups. Writing in your name and planning stay on your Claude account by default, for quality."),
+        array(state.local_models).length ? hint(`On this computer (free, no daily limit): ${state.local_models.join(", ")}.`)
+          : hint("Models on your own computer are free with no daily limit (DeepSeek, Qwen, Llama, Gemma…). Open Ollama, then pull one in a terminal, for example: ollama pull deepseek-r1:8b . It appears here when ready. A 7-8B model needs about 8 GB of memory."),
         usage.length ? append(el("div"), el("h4", "", "This month"), table(["Kind of work", "Model", "Calls", "Cost"], usage.map(item => [item.category, item.model, String(item.calls), `USD ${item.cost.toFixed(2)}`]))) : null);
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
