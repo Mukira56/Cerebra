@@ -433,6 +433,29 @@ def brief(session):
     return {"lines": lines, "first": first[:5], "today": picks, "calls": waiting[:10], "phone": phone, "at": now()}
 
 
+def earning_gaps(session, freelancer_connected):
+    """What stands between the owner and the automation they asked for, most money first: each with why and where to fix it.
+    Read from stored settings only (no network), as the Overview asks for it every few seconds."""
+    from . import freelance, gmail, modelhub, notify, payments
+    gaps = []
+    if not (freelance.profile(session).get("skills") or []):
+        gaps.append({"key": "skills", "title": "Add your skills", "why": "Every match, proposal and email leads with them.", "page": "freelance"})
+    if not freelancer_connected:
+        gaps.append({"key": "freelancer", "title": "Connect Freelancer.com", "why": "So Cerebra can bid on your best matches by itself, within your daily number.", "page": "freelance"})
+    alerts = notify.load(session)
+    if not (alerts.get("ntfy_enabled") or alerts.get("telegram_enabled")):
+        gaps.append({"key": "phone", "title": "Turn on phone alerts", "why": "So rare chances and clients who chose you reach you while they're open.", "page": "connections"})
+    hub = modelhub.settings(session)
+    if not hub.get("api_key") and not any(str(route).startswith(modelhub.LOCAL) for route in (hub.get("routes") or {}).values()):
+        gaps.append({"key": "models", "title": "Add free models", "why": "A free OpenRouter key or a model on this computer: the committee's helpers then stop using your Claude account.",
+                     "page": "models"})
+    if not gmail.public(gmail.load(session))["connected"]:
+        gaps.append({"key": "gmail", "title": "Connect Gmail (read-only)", "why": "So Cerebra notices hires and orders on Upwork and Fiverr and starts the work.", "page": "connections"})
+    if not payments.status(session)["configured"]:
+        gaps.append({"key": "stripe", "title": "Connect Stripe", "why": "So clients can pay your invoices online and Cerebra records the payment.", "page": "money"})
+    return gaps
+
+
 URGENT = {"problem", "overdue", "award", "rare"}  # a failed worker, money owed, a client waiting, a chance that closes soon
 
 

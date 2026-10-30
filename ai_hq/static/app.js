@@ -258,6 +258,8 @@
       });
     node.append(stats);
     const grid = el("div", "grid two"), left = el("div"), right = el("div");
+    const earn = data.earn || {};
+    if (array(earn.today).length || array(earn.gaps).length) left.append(panel("Today", body(todayPanel(earn)), link("Freelance →", "freelance")));
     if (data.calls?.count) left.append(panel("Your calls", callList(data.calls.items), link("All →", "chief"), data.calls.count));
     left.append(panel("Recent tasks", tasks.length ? taskRows(tasks.slice(0, 8)) : body(empty("No tasks yet", "Create a task: describe what you want, and the AI team plans, codes, tests and reviews it.", button("+ New task", () => taskForm(), "button primary"), "#")), link("All tasks →", "tasks"), tasks.length));
     const waiting = pendingApprovals(), merges = finishedTasks();
@@ -1239,20 +1241,36 @@
       row.href = `#${item.page}`; list.append(row); });
     return list;
   }
-  function briefPanel(state) {
-    const settings = state.settings || {}, root = el("div"), on = check("Send me a morning brief", settings.brief !== false);
-    const hour = select(Array.from({length: 24}, (_, value) => [String(value), `${String(value).padStart(2, "0")}:00`]), String(settings.brief_hour ?? 8));
-    on.control.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief: on.control.checked}, "PUT")));
-    hour.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief_hour: Number(hour.value)}, "PUT")));
-    const brief = state.brief || {}, picks = el("div", "row-list");
-    array(brief.today).forEach(item => {
+  // The money first: the jobs worth applying to now, and what still stands between the owner and the automation.
+  function pickRows(items) {
+    const list = el("div", "row-list");
+    array(items).forEach(item => {
       const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.title),
         el("div", "row-meta", [item.rare ? "rare chance" : "", item.ready ? "proposal ready to send" : "", item.committee === "bid" ? "the committee says bid" : "", item.why].filter(Boolean).join(" · "))), scoreBadge(item.score));
       row.tabIndex = 0; row.setAttribute("role", "button");
       const open = () => act("", () => refreshLead(item.id)).then(result => { if (result) leadDialog(...result); });
       row.addEventListener("click", open); row.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
-      picks.append(row);
+      list.append(row);
     });
+    return list;
+  }
+  function todayPanel(earn) {
+    const root = el("div");
+    root.append(el("h4", "", "Apply today"), array(earn.today).length ? pickRows(earn.today) : hint("No strong match is open right now. New work is checked all day."));
+    if (array(earn.gaps).length) {
+      const gaps = el("div", "row-list");
+      array(earn.gaps).forEach(gap => { const row = append(el("a", "row clickable"), append(el("div", "row-main"), el("strong", "", gap.title), el("div", "row-meta", gap.why)), el("span", "row-meta", "Set up →"));
+        row.href = `#${gap.page}`; gaps.append(row); });
+      root.append(el("h4", "", `Ready to earn: ${earn.gaps.length} step${earn.gaps.length === 1 ? "" : "s"} left`), gaps);
+    }
+    return root;
+  }
+  function briefPanel(state) {
+    const settings = state.settings || {}, root = el("div"), on = check("Send me a morning brief", settings.brief !== false);
+    const hour = select(Array.from({length: 24}, (_, value) => [String(value), `${String(value).padStart(2, "0")}:00`]), String(settings.brief_hour ?? 8));
+    on.control.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief: on.control.checked}, "PUT")));
+    hour.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief_hour: Number(hour.value)}, "PUT")));
+    const brief = state.brief || {}, picks = pickRows(brief.today);
     append(root, array(brief.first).length ? append(el("div"), el("h4", "", "First, what can't wait"), callList(brief.first)) : null,
       append(el("div"), el("h4", "", "Apply today"), array(brief.today).length ? picks : hint("No strong match is open right now. New work is checked all day.")),
       append(el("div"), el("h4", "", "Overnight"), append(el("ul", "tips"), ...array(brief.lines).map(line => el("li", "", line)))), append(el("div", "form-grid"), field("At", hour), on.wrap),

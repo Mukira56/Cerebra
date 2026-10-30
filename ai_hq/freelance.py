@@ -267,16 +267,17 @@ RESCORE_EVERY = 3600  # seconds: freshness is part of the score, so open leads a
 def today(session, limit=3):
     """The morning's picks: the open jobs most worth applying to now, best first, each with why. A job the committee
     rejected, or already applied to or passed over, isn't picked."""
-    picks = []
-    for row in session.scalars(select(FreelanceLead).where(FreelanceLead.status.in_(["new", "saved"]), FreelanceLead.score >= GOOD)
-                               .order_by(FreelanceLead.score.desc()).limit(40)).all():
-        proposal, extra = row.proposal or {}, row.extra or {}
+    picks = []  # only the columns needed: the Overview shows these and polls every few seconds
+    for lead_id, title, points, reasons, proposal, extra in session.execute(
+            select(FreelanceLead.id, FreelanceLead.title, FreelanceLead.score, FreelanceLead.reasons, FreelanceLead.proposal, FreelanceLead.extra)
+            .where(FreelanceLead.status.in_(["new", "saved"]), FreelanceLead.score >= GOOD).order_by(FreelanceLead.score.desc()).limit(40)).all():
+        proposal, extra = proposal or {}, extra or {}
         verdict = (extra.get("committee") or {}).get("decision")
         if proposal.get("sent_at") or proposal.get("skipped") or verdict == "skip":
             continue
-        picks.append({"id": row.id, "title": row.title, "score": row.score, "bids": extra.get("bids"), "rare": bool(extra.get("rare")),
+        picks.append({"id": lead_id, "title": title, "score": points, "bids": extra.get("bids"), "rare": bool(extra.get("rare")),
                       "ready": proposal.get("status") == "ready", "committee": verdict or "",
-                      "why": "; ".join(reason for reason in (row.reasons or []) if not reason.startswith("matches"))[:200]})
+                      "why": "; ".join(reason for reason in (reasons or []) if not reason.startswith("matches"))[:200]})
     picks.sort(key=lambda item: (not item["rare"], not item["ready"], -item["score"]))  # rare chances, then proposals ready to send
     return picks[:limit]
 

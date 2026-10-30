@@ -42,9 +42,9 @@ CATEGORIES = {
     "verify": ("Checking", "Cross-checking claims against their sources", "google/gemma-4-31b-it:free"),
     "verify_second": ("Second check", "Another company's model, for disputed claims", "nvidia/nemotron-3.5-super-vl:free"),
 }
-FALLBACK = "openrouter/free"
+FALLBACK = "openrouter/free"  # OpenRouter's own free router: picks any free model that is up
 OLLAMA = "http://127.0.0.1:11434"  # local models on the owner's own computer: free, no daily limit; only this loopback address
-LOCAL = "local:"  # OpenRouter's own free router: picks any free model that is up
+LOCAL = "local:"  # a route to one of those local models, e.g. "local:qwen3:14b"
 DEFAULTS = {"api_key": "", "routes": {}, "enabled": True}
 
 

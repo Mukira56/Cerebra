@@ -61,3 +61,13 @@ def test_the_morning_brief_puts_what_cant_wait_first_and_picks_todays_jobs(clien
     assert content["today"][1]["ready"] and "posted 2 h ago" in content["today"][1]["why"]
     assert [item["kind"] for item in content["first"]] == ["rare"]
     assert "Top pick today: score" in content["phone"] and "bakery" not in content["phone"].lower() and "Vue" not in content["phone"]
+
+
+def test_the_overview_shows_todays_jobs_and_what_stands_between_the_owner_and_earning(client):  # noqa: F811
+    client.post("/api/freelance/check")
+    earn = client.get("/api/overview").json()["earn"]
+    assert "bakery" in earn["today"][0]["title"] and earn["today"][0]["rare"]
+    gaps = [gap["key"] for gap in earn["gaps"]]
+    assert gaps == ["freelancer", "phone", "models", "gmail", "stripe"] and all(gap["page"] and gap["why"] for gap in earn["gaps"])  # skills are set by default
+    client.put("/api/business/notifications", json={"ntfy_enabled": True})
+    assert "phone" not in [gap["key"] for gap in client.get("/api/overview").json()["earn"]["gaps"]]
