@@ -300,10 +300,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             from . import money as money_module
             money_glance = money_module.summary(session)
             freelance_glance = freelance.glance(session)
+            from . import books as books_glance_module
+            books_glance = books_glance_module.glance(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -1153,6 +1155,58 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                     step()
                 except Exception:
                     pass
+
+    # ---- Books: short nonfiction for Amazon KDP (docs/BOOKS_PLAN.md) ----
+    from . import books as books_module
+
+    def books_call(work, write=True):
+        try:
+            with (db.Session.begin() if write else db.Session()) as session:
+                return work(session)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/books")
+    def books_overview():
+        return books_call(books_module.overview, write=False)
+
+    @app.put("/api/books/settings")
+    def books_settings(payload: dict):
+        return books_call(lambda session: books_module.save_settings(session, payload))
+
+    @app.post("/api/books/calculate")
+    def books_calculate(payload: dict):
+        """Printing cost, royalty, minimum price, spine and cover size for every format, from KDP's published numbers."""
+        try:
+            return books_module.calculate(payload)
+        except (TypeError, KeyError) as exc:
+            raise HTTPException(400, f"Check the numbers: {exc}")
+
+    @app.post("/api/books/niches")
+    def books_niche_create(payload: dict):
+        return books_call(lambda session: books_module.create_niche(session, payload))
+
+    @app.patch("/api/books/niches/{niche_id}")
+    def books_niche_update(niche_id: str, payload: dict):
+        return books_call(lambda session: books_module.update_niche(session, niche_id, payload))
+
+    @app.delete("/api/books/niches/{niche_id}")
+    def books_niche_delete(niche_id: str):
+        books_call(lambda session: books_module.delete_niche(session, niche_id))
+        return {"deleted": niche_id}
+
+    @app.post("/api/books/items")
+    def books_create(payload: dict):
+        return books_call(lambda session: books_module.create_book(session, payload))
+
+    @app.patch("/api/books/items/{book_id}")
+    def books_update(book_id: str, payload: dict):
+        return books_call(lambda session: books_module.update_book(session, book_id, payload))
+
+    @app.delete("/api/books/items/{book_id}")
+    def books_delete(book_id: str):
+        books_call(lambda session: books_module.delete_book(session, book_id))
+        return {"deleted": book_id}
 
     @app.get("/api/freelance/insights")
     def freelance_insights():

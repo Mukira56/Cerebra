@@ -370,6 +370,41 @@ class ActionRecord(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     finished_at: Mapped[str] = mapped_column(String, default="")
 
+class BookNiche(Base):
+    """A book idea: one reader with one problem, scored from the sales and search evidence the owner gathered."""
+    __tablename__ = "book_niches"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    area: Mapped[str] = mapped_column(String, default="")
+    reader: Mapped[str] = mapped_column(String, default="")
+    problem: Mapped[str] = mapped_column(String, default="")
+    trend: Mapped[str] = mapped_column(String, default="")  # rising | flat | fad | "" (not checked)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    competitors: Mapped[list] = mapped_column(JSON, default=list)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="idea")  # idea | researching | chosen | dropped
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+class Book(Base):
+    """A book for Amazon KDP: its formats, size, prices and where it is on the way to publishing. Its text lives in files."""
+    __tablename__ = "books"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    niche_id: Mapped[str | None] = mapped_column(ForeignKey("book_niches.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    subtitle: Mapped[str] = mapped_column(String, default="")
+    pen_name: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="planned")  # planned | writing | files_ready | published | retired
+    formats: Mapped[list] = mapped_column(JSON, default=list)
+    trim: Mapped[str] = mapped_column(String, default="6x9")
+    paper: Mapped[str] = mapped_column(String, default="white")
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    words: Mapped[int] = mapped_column(Integer, default=0)
+    prices: Mapped[dict] = mapped_column(JSON, default=dict)
+    extra: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

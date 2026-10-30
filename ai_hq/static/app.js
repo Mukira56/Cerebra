@@ -14,6 +14,7 @@
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     marketing: ["WORK", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
+    books: ["WORK", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
     freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["WORK", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
@@ -163,7 +164,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -269,7 +270,11 @@
     if (work.won) workRows.push(["Won", String(work.won)]);
     workRows.push(["Automatic bidding", work.auto ? `On · up to ${work.per_day} a day on Freelancer.com` : "Off"]);
     const workCard = body(kv(workRows), link("Open Freelance →", "freelance"));
-    append(right, panel("Money", moneyCard), panel("Freelance", workCard), panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
+    const shelf = data.books || {}, shelfRows = [];
+    if (shelf.files_ready) shelfRows.push(["Ready to upload", `${shelf.files_ready}: upload on KDP`]);
+    shelfRows.push(["Niches being checked", String(shelf.niches || 0)], ["Being written", String((shelf.planned || 0) + (shelf.writing || 0))], ["Published", String(shelf.published || 0)]);
+    const shelfCard = body(kv(shelfRows), link("Open Books →", "books"));
+    append(right, panel("Money", moneyCard), panel("Freelance", workCard), panel("Books", shelfCard), panel("Your AI team", team), panel("Recent activity", activityList(array(data.events)), link("All →", "activity")));
     append(grid, left, right); node.append(grid); return node;
   }
 
@@ -1147,6 +1152,133 @@
     wireForm(form, save, async () => { await mutate("/api/social/settings", {monthly_cap: Number(cap.value || 0), x_cost_per_post: Number(per.value || 0), x_cost_with_link: Number(withLink.value || 0), per_day: Number(day.value || 1)}, "PUT"); toast("Saved."); render(); });
     return form;
   }
+  // ---------- books: short nonfiction for Amazon KDP ----------
+  const BOOK_STYLE = {planned: "blue", writing: "amber", files_ready: "cyan", published: "green", retired: "muted"};
+  const NICHE_STYLE = {idea: "blue", researching: "amber", chosen: "green", dropped: "muted"};
+  const usd = value => `USD ${Number(value || 0).toFixed(2)}`;
+  function royaltyLine(name, result) {
+    if (!result) return null;
+    if (result.problem) return [name, result.problem];
+    const how = result.printing !== undefined ? `${Math.round(result.rate * 100)}% of ${usd(result.price)} − ${usd(result.printing)} printing`
+      : `${Math.round(result.rate * 100)}% of ${usd(result.price)}${result.delivery ? ` − ${usd(result.delivery)} delivery` : ""}`;
+    return [name, result.allowed ? `${usd(result.royalty)} a copy (${how})` : `Not allowed: the lowest price is ${usd(result.minimum_price)}`];
+  }
+  function earningsRows(earnings) {
+    if (!earnings) return [];
+    if (earnings.problem) return [["Size", earnings.problem]];
+    return [royaltyLine("Paperback", earnings.paperback), royaltyLine("Kindle", earnings.kindle), royaltyLine("Hardcover", earnings.hardcover),
+      ["Pages", `${earnings.pages}${earnings.pages_estimated ? " (estimated from the word count)" : ""} · ${earnings.trim} in, ${earnings.paper} paper`],
+      ["Cover (paperback)", `${earnings.cover.width}" × ${earnings.cover.height}" with a ${earnings.cover.spine}" spine${earnings.cover.spine_text ? "" : " (too thin for spine text)"}`]].filter(Boolean);
+  }
+  function booksView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading your books…")));
+    (async () => {
+      let state; try { state = await api("/api/books"); } catch (issue) { root.replaceChildren(body(empty("Books unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const books = array(state.books), niches = array(state.niches), stats = el("div", "grid stats");
+      const count = status => books.filter(book => book.status === status).length;
+      [["Niches", niches.filter(niche => niche.status !== "dropped").length, "ideas being checked", ""], ["Writing", count("planned") + count("writing"), "planned or being written", "amber"],
+       ["Ready to upload", count("files_ready"), "files waiting for you", "cyan"], ["Published", count("published"), `${state.today.published} of ${state.today.cap} new titles today`, "green"]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const nicheList = el("div", "row-list");
+      niches.forEach(niche => nicheList.append(append(el("div", "row clickable"), scoreBadge(niche.score), append(el("div", "row-main"), el("strong", "", niche.area),
+        el("div", "row-meta", [niche.reader, niche.problem].filter(Boolean).join(" · ") || "Name one reader and one problem")), badge(niche.status, NICHE_STYLE[niche.status]))));
+      Array.from(nicheList.children).forEach((row, index) => row.addEventListener("click", () => nicheDialog(niches[index], state)));
+      const bookList = el("div", "row-list");
+      books.forEach(book => {
+        const best = book.earnings?.paperback?.royalty ?? book.earnings?.kindle?.royalty;
+        const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", book.title), el("div", "row-meta", [book.subtitle, book.pen_name ? `by ${book.pen_name}` : "", best !== undefined ? `${usd(best)} a paperback` : ""].filter(Boolean).join(" · "))),
+          badge(book.status, BOOK_STYLE[book.status]));
+        row.addEventListener("click", () => bookDialog(book, state)); bookList.append(row);
+      });
+      const left = append(el("div"),
+        panel("Niches", append(el("div"), body(append(el("div", "actions"), button("+ New niche", () => nicheDialog(null, state), "button primary")),
+          hint("One reader with one problem (“sleep after menopause”, not “health”). The score uses only what you checked: competing books' Best Sellers Rank and reviews, and the search trend.")),
+          niches.length ? nicheList : body(empty("No niches yet", "Add a problem people already pay to fix. Check its trend on Google Trends and its competing books on Amazon.", null, "◎"))), null, niches.length),
+        panel("Books", append(el("div"), body(append(el("div", "actions"), button("+ New book", () => bookDialog(null, state), "button primary"))),
+          books.length ? bookList : body(empty("No books yet", "Start one from a niche you chose. Cerebra shows what each format earns before you write a word.", null, "▤"))), null, books.length));
+      const side = append(el("div"), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
+        panel("How it works", body(hint("You pick a niche, Cerebra helps plan, write and check the book, and prepares the files and listing. KDP has no publishing API, so you upload and click Publish yourself, including Amazon's AI-content question. KDP allows 3 new titles a day."),
+          el("p", "row-meta", `KDP's numbers were checked on ${state.checked} against its help pages: ${Object.values(state.sources).join(" · ")}`))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  function publishingChecklist(state) {
+    const root = el("div"), boxes = array(state.checklist).map(item => { const box = check(item.title, item.done); box.key = item.key; box.how = item.how; return box; });
+    boxes.forEach(box => { box.control.addEventListener("change", () => act("Saved.", () => mutate("/api/books/settings", {done: boxes.filter(item => item.control.checked).map(item => item.key)}, "PUT")));
+      root.append(append(el("div", "steps-item"), box.wrap, el("small", "row-meta", box.how))); });
+    const names = input("Pen names, separated by commas", array(state.settings.pen_names).join(", "));
+    names.addEventListener("change", () => act("Pen names saved.", () => mutate("/api/books/settings", {pen_names: names.value.split(",").map(name => name.trim()).filter(Boolean)}, "PUT")));
+    return append(el("div"), root, field("Pen names", names, "Used on your books; your KDP account stays in your own name."));
+  }
+  function bookSizeFields(state, values) {
+    const trim = select(array(state.options.trims).map(name => [name, `${name.replace("x", " × ")} in`]), values.trim || state.settings.default_trim);
+    const paper = select([["white", "White paper"], ["cream", "Cream paper"]], values.paper || state.settings.default_paper);
+    const pages = input("Printed pages (or leave empty)", values.pages || "", "number"), words = input("Words, about", values.words || "", "number");
+    pages.min = 0; words.min = 0; words.step = 500;
+    const prices = Object.fromEntries(["paperback", "kindle", "hardcover"].map(name => { const box = input(name === "kindle" ? "4.99" : name === "paperback" ? "12.99" : "22.99", values.prices?.[name] || "", "number"); box.step = "0.01"; box.min = 0; return [name, box]; }));
+    return {trim, paper, pages, words, prices, payload: () => ({trim: trim.value, paper: paper.value, pages: Number(pages.value || 0), words: Number(words.value || 0),
+      prices: Object.fromEntries(Object.entries(prices).filter(([, box]) => box.value).map(([name, box]) => [name, Number(box.value)]))})};
+  }
+  function royaltyCalculator(state) {
+    const root = el("div"), size = bookSizeFields(state, {pages: 120, prices: {paperback: 12.99, kindle: 4.99}}), out = el("div");
+    const run = async () => { const result = await api("/api/books/calculate", {method: "POST", body: JSON.stringify(size.payload())}).catch(issue => ({problem: issue.message})); out.replaceChildren(kv(earningsRows(result))); };
+    [size.trim, size.paper, size.pages, size.words, ...Object.values(size.prices)].forEach(control => control.addEventListener("input", run));
+    append(root, append(el("div", "form-grid"), field("Trim size", size.trim), field("Paper", size.paper), field("Pages", size.pages), field("Words", size.words)),
+      append(el("div", "form-grid"), field("Paperback USD", size.prices.paperback), field("Kindle USD", size.prices.kindle), field("Hardcover USD", size.prices.hardcover)), out,
+      hint("From KDP's published printing costs and royalties on Amazon.com. Paperbacks earn 50% under 9.99 USD and 60% from 9.99; Kindle earns 70% from 2.99 to 12.99 USD, else 35%."));
+    run();
+    return root;
+  }
+  function nicheDialog(niche, state) {
+    const form = el("form"), save = submitButton(niche ? "Save and re-score" : "Add and score it"), value = niche || {};
+    const area = input("e.g. Sleep after menopause", value.area || ""), reader = input("e.g. Women 45–60 who wake at 3 am", value.reader || ""), problem = input("e.g. Can't stay asleep, tired at work", value.problem || "");
+    const trend = select([["", "Not checked yet"], ["rising", "Rising"], ["flat", "Flat for years (lasting)"], ["fad", "A spike that fell (fad)"]], value.trend || "");
+    const status = select([["idea", "Idea"], ["researching", "Researching"], ["chosen", "Chosen"], ["dropped", "Dropped"]], value.status || "idea");
+    const competitors = textarea("Title | Best Sellers Rank | reviews | paperback price | Kindle price — one book a line",
+      array(value.competitors).map(book => [book.title, book.bsr ?? "", book.reviews ?? "", book.paperback ?? "", book.kindle ?? ""].join(" | ")).join("\n"));
+    const notes = textarea("Your notes", value.notes || ""); area.required = true; competitors.rows = 6; notes.rows = 3;
+    append(form, field("Area", area), append(el("div", "form-grid"), field("The reader", reader), field("Their problem", problem)),
+      append(el("div", "form-grid"), field("Google Trends, 5 years", trend, "Search it on trends.google.com over 5 years."), field("Status", status)),
+      field("Competing books on Amazon", competitors, "From each top book's page: Product details › Best Sellers Rank. Under 100,000 sells; over 1,000,000 doesn't."),
+      field("Notes", notes), value.reasons ? hint(`Score ${value.score}: ${array(value.reasons).join(" · ")}`) : null,
+      actionsRow(niche ? button("Delete", () => act("Deleted.", () => api(`/api/books/niches/${niche.id}`, {method: "DELETE"})).then(result => { if (result) { closeDialog(); render(); } }), "button ghost") : null, save));
+    wireForm(form, save, async () => {
+      const payload = {area: area.value, reader: reader.value, problem: problem.value, trend: trend.value, status: status.value, competitors: competitors.value, notes: notes.value};
+      const saved = niche ? await mutate(`/api/books/niches/${niche.id}`, payload, "PATCH") : await mutate("/api/books/niches", payload);
+      toast(`Scored ${saved.score}/100.`); render(); nicheDialog(saved, state);
+    });
+    showDialog(niche ? niche.area : "New niche", form);
+  }
+  function bookDialog(book, state) {
+    const form = el("form"), save = submitButton(book ? "Save" : "Add the book"), value = book || {};
+    const niche = select([["", "No niche"], ...array(state.niches).map(item => [item.id, item.area])], value.niche_id || "");
+    const title = input("Working title", value.title || ""), subtitle = input("Subtitle (optional)", value.subtitle || "");
+    const pen = select([["", "Choose a pen name"], ...array(state.settings.pen_names).map(name => [name, name])], value.pen_name || "");
+    const status = select(array(state.options.statuses).map(name => [name, nice(name)]), value.status || "planned");
+    const formats = array(state.options.formats).map(name => { const box = check(nice(name), array(value.formats || ["paperback", "kindle"]).includes(name)); box.key = name; return box; });
+    const size = bookSizeFields(state, value), asins = Object.fromEntries(array(state.options.formats).map(name => [name, input(name === "kindle" ? "ASIN, e.g. B0…" : "ISBN or ASIN", value.asins?.[name] || "")]));
+    title.required = true;
+    append(form, append(el("div", "form-grid"), field("Title", title), field("Subtitle", subtitle)), append(el("div", "form-grid"), field("Niche", niche), field("Pen name", pen), field("Status", status)),
+      append(el("div", "check-list"), ...formats.map(box => box.wrap)),
+      append(el("div", "form-grid"), field("Trim size", size.trim), field("Paper", size.paper), field("Pages", size.pages), field("Words", size.words)),
+      append(el("div", "form-grid"), field("Paperback USD", size.prices.paperback), field("Kindle USD", size.prices.kindle), field("Hardcover USD", size.prices.hardcover)),
+      value.earnings ? kv(earningsRows(value.earnings)) : null,
+      value.status === "published" || value.status === "files_ready" ? append(el("div", "form-grid"), field("Paperback ISBN", asins.paperback), field("Kindle ASIN", asins.kindle), field("Hardcover ISBN", asins.hardcover)) : null,
+      actionsRow(book && book.status !== "published" ? button("Delete", () => act("Deleted.", () => api(`/api/books/items/${book.id}`, {method: "DELETE"})).then(result => { if (result) { closeDialog(); render(); } }), "button ghost") : null, save));
+    wireForm(form, save, async () => {
+      const payload = {...size.payload(), niche_id: niche.value || null, title: title.value, subtitle: subtitle.value, pen_name: pen.value, status: status.value,
+        formats: formats.filter(box => box.control.checked).map(box => box.key)};
+      if (value.status === "published" || value.status === "files_ready") payload.asins = Object.fromEntries(Object.entries(asins).map(([name, box]) => [name, box.value.trim()]));
+      if (payload.status === "published" && value.status !== "published" && state.today.published >= state.today.cap) throw new Error(`KDP allows ${state.today.cap} new titles a day; publish this one tomorrow.`);
+      const saved = book ? await mutate(`/api/books/items/${book.id}`, payload, "PATCH") : await mutate("/api/books/items", payload);
+      toast("Saved."); render(); bookDialog(saved, state);
+    });
+    showDialog(book ? book.title : "New book", form);
+  }
+
   // ---------- freelance: work found for the owner ----------
   const LEAD_STYLE = {new: "blue", saved: "amber", applied: "purple", interview: "cyan", awarded: "green", won: "green", lost: "muted", hidden: "muted"};
   let leadFilter = "open";
