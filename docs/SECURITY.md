@@ -188,6 +188,14 @@ Under policy B:
 
 Use the accepted policy for trusted project/test code and the explicit task scope. It does not grant unrelated operations or permission to extract secrets. To revoke it, stop the application, run `manage revoke-cli-confinement`, and restart. The supervisor, dashboard, logs, and Git operations are local; provider inference can send task/workspace content to Codex/Claude services under their account settings.
 
+## Prospector (0.55.0)
+Reads only public data: OpenStreetMap (Nominatim, Overpass) and one home page per business.
+- **Every request** carries an identifying User-Agent.
+- **robots.txt is respected,** and pages are capped at 1 MB with a 15 s timeout.
+- **Each host and redirect target must resolve only to public internet addresses,** so a website listed on the public map can never make Cerebra reach the owner's own network.
+- **Only facts are stored, never page content.**
+- **Nothing contacts a business.**
+
 ## Data and operations
 
 SQLite, raw logs, worktrees, and managed repositories are local application data under the chosen data directory. No provider credentials should be stored there. The managed-server stamp contains process identity, not a launch secret. Stop verifies PID, executable, and creation time before acting, to avoid killing a reused PID or unrelated Python process.

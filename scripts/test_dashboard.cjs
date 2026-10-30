@@ -295,7 +295,7 @@ const path = require('node:path');
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
     // No page prints a stray "null" (an empty value handed to the browser's append).
-    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'books', 'chief', 'freelance', 'marketing', 'council', 'chat', 'system']) {
+    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'books', 'chief', 'prospects', 'freelance', 'marketing', 'council', 'chat', 'system']) {
       await page.evaluate(view => { location.hash = view; }, name); await page.waitForTimeout(600);
       assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('body').innerText()), `"null" is printed on the ${name} page`);
     }
@@ -315,7 +315,7 @@ const path = require('node:path');
       await page.keyboard.press('Escape');
     }
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({pages: 21, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
+    console.log(JSON.stringify({pages: 22, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
   } catch (error) {
     if (shots && activePage) {
       await activePage.screenshot({path:path.join(shots,'failure.png')}).catch(() => {});

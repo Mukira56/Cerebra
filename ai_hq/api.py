@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Lock
 import threading
 import hashlib
+import httpx
 import json
 import os
 import secrets
@@ -1286,6 +1287,50 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             body = chief.training_jsonl(session)
         return Response(body, media_type="application/x-ndjson", headers={"Content-Disposition": 'attachment; filename="cerebra-training.jsonl"'})
+
+    # ---- Prospector: US local businesses that could use what the owner sells (public data; nobody is contacted) ----
+    from . import prospects as prospects_module
+    prospector = prospects_module.Finder(db)
+    prospect_state = {"running": False, "message": "", "result": None}
+    app.state.prospector, app.state.prospect_state = prospector, prospect_state
+
+    def run_prospect_search(kind, city, state):
+        prospect_state.update(running=True, message=f"Looking for {prospects_module.KINDS[kind][0].lower()} in {city}, {state}…", result=None)
+        try:
+            result = prospector.search(kind, city, state)
+            prospect_state.update(message=f"{result['found']} found, {result['chains']} chains left out, {result['kept']} worth contacting", result=result)
+        except (ValueError, httpx.HTTPError) as exc:
+            prospect_state.update(message=f"The search stopped: {redact(str(exc))[:300]}")
+        finally:
+            prospect_state["running"] = False
+
+    @app.get("/api/prospects")
+    def prospects_overview():
+        with db.Session() as session:
+            return {**prospects_module.overview(session), "search": {key: value for key, value in prospect_state.items()}}
+
+    @app.post("/api/prospects/search")
+    def prospects_search(payload: dict):
+        kind, city, state = str(payload.get("kind") or ""), str(payload.get("city") or "").strip(), str(payload.get("state") or "").strip()
+        if kind not in prospects_module.KINDS:
+            raise HTTPException(400, "Choose a kind of business")
+        if not city or not state:
+            raise HTTPException(400, "Name the city and the state, such as Austin, Texas")
+        if prospect_state["running"]:
+            raise HTTPException(409, "A search is already running")
+        if payload.get("wait"):
+            run_prospect_search(kind, city, state)
+            return dict(prospect_state)
+        threading.Thread(target=run_prospect_search, args=(kind, city, state), name="cerebra-prospects", daemon=True).start()
+        return {"started": True, "message": "Searching. Each business's site is read politely, so this takes a few minutes."}
+
+    @app.patch("/api/prospects/{prospect_id}")
+    def prospects_update(prospect_id: str, payload: dict):
+        try:
+            with db.Session.begin() as session:
+                return prospects_module.update(session, prospect_id, payload)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
 
     @app.get("/api/freelance/insights")
     def freelance_insights():

@@ -15,6 +15,7 @@
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     marketing: ["WORK", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
+    prospects: ["WORK", "Prospects", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
     books: ["WORK", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
     freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
@@ -165,7 +166,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, chief: chiefView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, chief: chiefView, prospects: prospectsView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1250,6 +1251,59 @@
       closeDialog(); toast("Saved."); render();
     });
     showDialog(goal ? goal.title : "New goal", form);
+  }
+
+  // ---------- prospects: US local businesses that could use what you sell ----------
+  const PROSPECT_STYLE = {kept: "blue", contacted: "amber", replied: "cyan", won: "green", lost: "muted", new: "muted", dropped: "muted"};
+  let prospectFilter = "kept";
+  function prospectsView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading…")));
+    (async () => {
+      let state; try { state = await api("/api/prospects"); } catch (issue) { root.replaceChildren(body(empty("Prospects unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const counts = state.counts || {}, stats = el("div", "grid stats");
+      [["Worth contacting", counts.kept || 0, "each with a reason", "blue"], ["Contacted", counts.contacted || 0, "waiting to hear", "amber"],
+       ["Replied", counts.replied || 0, "talking with you", "cyan"], ["Won", counts.won || 0, "became clients", "green"]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const form = el("form"), go = submitButton("Find businesses");
+      const kind = select(Object.entries(state.kinds).map(([key, label]) => [key, label]), "dentists"), city = input("Austin"), where = input("Texas");
+      city.required = true; where.required = true;
+      append(form, append(el("div", "form-grid"), field("Kind of business", kind), field("City", city), field("State", where)), actionsRow(go));
+      wireForm(form, go, async () => { const result = await mutate("/api/prospects/search", {kind: kind.value, city: city.value, state: where.value}); toast(result.message); render(); });
+      const search = state.search || {};
+      if (search.running) { go.disabled = true; setTimeout(() => { if (token === renderToken) render(); }, 5000); }
+      const filters = {kept: "Worth contacting", new: `To check by hand (${counts.new || 0})`, contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", all: "Everything"};
+      const pick = select(Object.entries(filters), prospectFilter); pick.addEventListener("change", () => { prospectFilter = pick.value; render(); });
+      const shown = array(state.prospects).filter(item => prospectFilter === "all" || item.status === prospectFilter);
+      const list = el("div", "row-list");
+      shown.slice(0, 200).forEach(item => { const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name),
+        el("div", "row-meta", [item.kind_label, `${item.city}, ${item.state}`, item.website ? item.website.replace(/^https?:\/\//, "").replace(/\/$/, "") : "no website"].join(" · ")),
+        el("div", "row-meta", array(item.facts).map(fact => fact.text).slice(0, 2).join(" · "))), badge(item.status, PROSPECT_STYLE[item.status]));
+        row.addEventListener("click", () => prospectDialog(item)); list.append(row); });
+      const searches = array(state.searches).slice(0, 8).map(item => [`${item.kind_label} in ${item.city}, ${item.state}`, `${item.counts.found ?? "…"} found · ${item.counts.chains ?? 0} chains left out · ${item.counts.kept ?? 0} kept`]);
+      const left = append(el("div"), panel("Businesses", append(el("div"), body(append(el("div", "actions"), pick)),
+        shown.length ? list : body(empty(prospectFilter === "kept" ? "None yet" : "Nothing here", "Run a search: Cerebra lists local businesses from OpenStreetMap, leaves out chains, reads each one's own home page once, and keeps those with a concrete reason to talk to you.", null, "⌖"))), null, shown.length));
+      const side = append(el("div"),
+        panel("Find businesses", body(form, search.message ? hint(search.running ? `${search.message} This page refreshes itself.` : search.message) : null,
+          hint("Public data only. Nobody is contacted: you decide who to approach, and how."))),
+        searches.length ? panel("Recent searches", body(kv(searches))) : null,
+        panel("How it works", body(hint("Each fact comes from the business's own home page, read once where its robots.txt allows, and shows where it was seen. A site that turns robots away gets no claim at all. Chains (brand-tagged, or 3 or more locations in the city) are left out."),
+          el("p", "row-meta", state.attribution))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  function prospectDialog(item) {
+    const root = el("div"), notes = textarea("What you did, who you spoke to, next step…", item.notes || "");
+    const status = select([["new", "To check by hand"], ["kept", "Worth contacting"], ["contacted", "Contacted"], ["replied", "Replied"], ["won", "Won: became a client"], ["lost", "Lost"], ["dropped", "Not a fit"]], item.status);
+    const facts = el("ul", "tips"); array(item.facts).forEach(fact => facts.append(append(el("li"), document.createTextNode(fact.text), el("span", "row-meta", ` (seen at ${fact.seen})`))));
+    append(root, kv([["Business", item.kind_label], ["Where", [item.address, `${item.city}, ${item.state}`].filter(Boolean).join(", ")], ["Website", item.website || "None listed"], ["Phone", item.phone || "Not listed"]]),
+      el("h3", "", "What Cerebra saw"), array(item.facts).length ? facts : hint(item.notes || "No issue seen on the home page."),
+      append(el("div", "form-grid"), field("Status", status)), field("Notes", notes),
+      hint("Contact them in your own name. In the US, cold emails need your real postal address and a way to opt out (CAN-SPAM)."),
+      actionsRow(button("Save", () => act("Saved.", () => mutate(`/api/prospects/${item.id}`, {status: status.value, notes: notes.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+    showDialog(item.name, root);
   }
 
   // ---------- books: short nonfiction for Amazon KDP ----------

@@ -444,6 +444,37 @@ class ChiefRun(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     by: Mapped[str] = mapped_column(String, default="schedule")  # schedule | owner
 
+class ProspectSearch(Base):
+    """One search for local businesses: what kind, which US city, and what it found."""
+    __tablename__ = "prospect_searches"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    kind: Mapped[str] = mapped_column(String, default="")
+    city: Mapped[str] = mapped_column(String, default="")
+    state: Mapped[str] = mapped_column(String, default="")
+    place: Mapped[str] = mapped_column(String, default="")
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+class Prospect(Base):
+    """A local business that could use what the owner sells, with the facts seen on its own website and where."""
+    __tablename__ = "prospects"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    search_id: Mapped[str] = mapped_column(String, default="", index=True)
+    osm: Mapped[str] = mapped_column(String, default="", index=True)  # its OpenStreetMap id, so a business is found once
+    name: Mapped[str] = mapped_column(String, default="")
+    kind: Mapped[str] = mapped_column(String, default="")
+    city: Mapped[str] = mapped_column(String, default="")
+    state: Mapped[str] = mapped_column(String, default="")
+    website: Mapped[str] = mapped_column(String, default="")
+    phone: Mapped[str] = mapped_column(String, default="")
+    address: Mapped[str] = mapped_column(String, default="")
+    facts: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="new")  # new | kept | dropped | contacted | replied | won | lost
+    opener: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)
