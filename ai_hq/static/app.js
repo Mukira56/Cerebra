@@ -1172,7 +1172,8 @@
       const goalList = el("div", "row-list");
       goals.forEach(goal => { const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", goal.title),
         el("div", "row-meta", [goal.rules.public_data_only ? "public data only" : "", goal.rules.ask_before_contact ? "asks before contacting anyone" : "", goal.monthly_cap ? `spend at most USD ${goal.monthly_cap} a month` : ""].filter(Boolean).join(" · "))),
-        badge(goal.status, goal.status === "active" ? "green" : "muted")); row.addEventListener("click", () => goalDialog(goal)); goalList.append(row); });
+        (state.plans || {})[goal.id] ? badge(`plan ${(state.plans || {})[goal.id].status}`, {proposed: "amber", approved: "green", declined: "muted"}[(state.plans || {})[goal.id].status]) : null,
+        badge(goal.status, goal.status === "active" ? "green" : "muted")); row.addEventListener("click", () => goalDialog(goal, (state.plans || {})[goal.id])); goalList.append(row); });
       const jobRows = el("div", "row-list");
       jobs.forEach(job => {
         const toggle = check(job.enabled ? "On" : "Off", job.enabled);
@@ -1202,7 +1203,7 @@
     })();
     return root;
   }
-  const CALL_ICON = {approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠"};
+  const CALL_ICON = {plan: "◈", approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠"};
   function callList(items, emptyText = "Nothing waits for you.") {
     if (!array(items).length) return body(empty("All clear", emptyText, null, "✓"));
     const list = el("div", "row-list");
@@ -1235,7 +1236,22 @@
       hint("Your proposals with the job post and whether they won, and your posts that went out. Clients' deliverables are never included. When there are enough, Cerebra fine-tunes an open model on them, tests it against your paid model, and runs it on this computer."));
     return root;
   }
-  function goalDialog(goal) {
+  function planSection(goal, plan) {
+    const root = el("div");
+    root.append(el("h3", "", "Plan"));
+    const draft = () => act("Plan proposed. Read it before you approve.", () => mutate(`/api/chief/goals/${goal.id}/plan`, {}, "POST", 300000)).then(result => { if (result) goalDialog(goal, result); });
+    if (!plan) return append(root, hint("Your AI looks at this goal, your rules and what has worked, and proposes which workers to run and how often. Nothing changes until you approve."), actionsRow(button("Plan it with my AI", draft, "button primary")));
+    const jobs = table(["Worker", "Run", "How often", "Why"], array(plan.plan.jobs).map(job => [append(el("span"), document.createTextNode(job.label), job.outward ? el("span", "badge amber", " ACTS OUTSIDE") : null),
+      job.run ? "Yes" : "No", everyText(job.every_minutes), job.why]));
+    append(root, hint(plan.plan.summary || ""), jobs,
+      array(plan.plan.owner_steps).length ? append(el("div"), el("h4", "", "Only you can do these"), append(el("ul", "tips"), ...plan.plan.owner_steps.map(step => el("li", "", step)))) : null,
+      el("p", "row-meta", `Plan ${plan.status}${plan.model ? ` · written by ${plan.model}` : ""}. Workers that act outside still follow your own rules on their pages.`));
+    if (plan.status === "proposed") root.append(actionsRow(button("Decline", () => act("Declined: nothing changed.", () => mutate(`/api/chief/goals/${goal.id}/plan/decline`, {})).then(result => { if (result) { closeDialog(); render(); } }), "button ghost"),
+      button("Approve and apply", () => act("Approved: the workers are set.", () => mutate(`/api/chief/goals/${goal.id}/plan/approve`, {})).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+    else root.append(actionsRow(button("Plan again", draft, "button")));
+    return root;
+  }
+  function goalDialog(goal, plan) {
     const form = el("form"), save = submitButton(goal ? "Save" : "Set the goal"), value = goal || {rules: {public_data_only: true, ask_before_contact: true}};
     const title = input("e.g. $5,000 a month of new client work", value.title || ""), target = textarea("What counts, where to look, who you sell to", value.target || "");
     const publicOnly = check("Public data only", value.rules.public_data_only !== false), ask = check("Contact nobody without my yes", value.rules.ask_before_contact !== false);
@@ -1251,6 +1267,7 @@
       if (goal) await mutate(`/api/chief/goals/${goal.id}`, payload, "PATCH"); else await mutate("/api/chief/goals", payload);
       closeDialog(); toast("Saved."); render();
     });
+    if (goal) form.append(planSection(goal, plan));
     showDialog(goal ? goal.title : "New goal", form);
   }
 

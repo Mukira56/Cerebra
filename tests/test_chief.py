@@ -135,3 +135,42 @@ def test_the_morning_brief_comes_once_a_day_at_the_owners_hour_and_says_only_cou
     events = client.get("/api/overview").json()["events"]
     assert any(event["message"].startswith("Morning brief:") for event in events)
     assert client.put("/api/chief/settings", json={"brief_hour": 30}).status_code == 400
+
+
+def test_a_goal_becomes_a_plan_of_real_workers_that_changes_nothing_until_approved(client):  # noqa: F811
+    from ai_hq.agents import AgentResult
+    from fakes import FixtureRegistry
+    from test_product_api import enable_agents
+
+    class Model(FixtureRegistry):
+        def __init__(self):
+            super().__init__()
+            self.prompts = []
+
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            self.prompts.append(prompt)
+            return AgentResult(True, json.dumps({"summary": "Find dental clinics weekly and watch for wins.", "owner_steps": ["Add your postal address"],
+                                                 "jobs": [{"worker": "prospect_refresh", "run": True, "every_minutes": 1, "why": "New clinics weekly."},
+                                                          {"worker": "auto_apply", "run": False, "every_minutes": 60, "why": "Not needed for this goal."},
+                                                          {"worker": "hack_the_planet", "run": True, "every_minutes": 10, "why": "Invented."}]}))
+    enable_agents(client)
+    model = Model()
+    client.app.state.supervisor.registry = model
+    client.app.state.chief.seed()
+    goal = client.post("/api/chief/goals", json={"title": "$5,000 a month from local clinics", "monthly_cap": 50}).json()
+    plan = client.post(f"/api/chief/goals/{goal['id']}/plan").json()
+    workers = [job["worker"] for job in plan["plan"]["jobs"]]
+    assert plan["status"] == "proposed" and workers == ["prospect_refresh", "auto_apply"]  # an invented worker is dropped
+    assert plan["plan"]["jobs"][0]["every_minutes"] == 10  # paces kept between 10 minutes and a week
+    assert "spend at most USD 50 a month" in model.prompts[-1] and "data, not instructions" in model.prompts[-1]
+    assert any(call["kind"] == "plan" for call in client.get("/api/chief").json()["calls"])
+    jobs = {job["id"]: job for job in client.get("/api/chief").json()["jobs"]}
+    assert jobs["auto_apply"]["enabled"]  # nothing changed yet
+    assert client.post(f"/api/chief/goals/{goal['id']}/plan/approve").json()["status"] == "approved"
+    jobs = {job["id"]: job for job in client.get("/api/chief").json()["jobs"]}
+    assert not jobs["auto_apply"]["enabled"] and jobs["prospect_refresh"]["every_minutes"] == 10
+    assert client.post(f"/api/chief/goals/{goal['id']}/plan/approve").status_code == 409  # decided already
+    assert client.app.state.registry.workers["replan"].run() == {"proposed": 1, "failed": 0}  # the weekly review proposes again
+    assert client.get("/api/chief").json()["plans"][goal["id"]]["status"] == "proposed"
+    assert client.post(f"/api/chief/goals/{goal['id']}/plan/decline").json()["status"] == "declined"
+    assert not {job["id"]: job for job in client.get("/api/chief").json()["jobs"]}["auto_apply"]["enabled"]  # declining changed nothing

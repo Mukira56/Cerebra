@@ -1158,6 +1158,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     registry.add("won_work", "Start won work", "Turns each won job into Business Studio work and keeps it moving; delivery waits for you.", keep_won_work, 10)
     registry.add("morning_brief", "Morning brief", "Once a day at your hour: what ran, what it found and what waits for you, in Cerebra and on your phone (counts only).",
                  lambda: chief.send_brief(db, notifier), 60)
+    planner = chief.Planner(db, settings, chat_registry, registry)
+    registry.add("replan", "Review the plan weekly", "Once a week, your AI looks at what worked and proposes changes to each approved goal's plan; nothing changes until you approve.",
+                 planner.replan, 7 * 24 * 60)
     scheduler = chief.Scheduler(db, registry)
     app.state.chief, app.state.registry = scheduler, registry
 
@@ -1218,11 +1221,29 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         scheduler.seed()
         with db.Session() as session:
             return {"jobs": chief.jobs(session, registry, scheduler.running), "runs": chief.runs(session), "goals": chief.goals(session),
-                    "calls": chief.calls(session), "brief": chief.brief(session), "settings": chief.chief_settings(session),
+                    "calls": chief.calls(session), "brief": chief.brief(session), "settings": chief.chief_settings(session), "plans": chief.plans(session),
                     "overnight": chief.overnight(session), "training": chief.training_summary(session),
                     "built_in": [{"label": "Find freelance work", "about": "Reads each job source on its own polite schedule (30 minutes to 6 hours).", "status": dict(finder.status) if hasattr(finder, "status") else {}},
                                  {"label": "Post approved social posts", "about": "Every minute, within your monthly budget and daily limits."},
                                  {"label": "Money and Stripe", "about": "Payments every 10 minutes; recurring invoices and imports every 6 hours."}]}
+
+    @app.post("/api/chief/goals/{goal_id}/plan")
+    def chief_plan_draft(goal_id: str):
+        """Your AI proposes which workers to run, and how often, for this goal (a minute or so). Nothing changes yet."""
+        try:
+            return planner.draft(goal_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/chief/goals/{goal_id}/plan/{decision}")
+    def chief_plan_decide(goal_id: str, decision: str):
+        if decision not in {"approve", "decline"}:
+            raise HTTPException(404, "Approve or decline")
+        try:
+            with db.Session.begin() as session:
+                return chief.decide_plan(session, registry, goal_id, decision == "approve")
+        except LookupError as exc:
+            raise HTTPException(409, str(exc))
 
     @app.put("/api/chief/settings")
     def chief_settings_save(payload: dict):
