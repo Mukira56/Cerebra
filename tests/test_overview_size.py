@@ -23,4 +23,4 @@ def test_the_overview_says_what_freelance_work_needs_the_owner(client):  # noqa:
         for number, (status, score) in enumerate([("new", 70), ("new", 45), ("new", 20), ("applied", 60), ("awarded", 60), ("hidden", 90)]):
             session.add(FreelanceLead(id=f"freelancer:{number}", source="freelancer", title=f"Job {number}", status=status, score=score))
     work = client.get("/api/overview").json()["freelance"]
-    assert work["strong"] == 2 and work["min_score"] == 40 and work["applied"] == 1 and work["awarded"] == 1 and work["auto"] is False
+    assert work["strong"] == 1 and work["good"] == 50 and work["min_score"] == 40  # strong is 50+, as on the Freelance page and work["applied"] == 1 and work["awarded"] == 1 and work["auto"] is False

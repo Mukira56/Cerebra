@@ -272,7 +272,7 @@
       ["Quotes out", cash(glance.pipeline, main)], ...(glance.won_unbilled ? [["Won, not invoiced", cash(glance.won_unbilled, main)]] : [])]), link("Open Money →", "money"));
     const work = data.freelance || {}, workRows = [];
     if (work.awarded) workRows.push(["Clients chose you", `${work.awarded}: accept on the Freelance page`]);
-    workRows.push(["Strong matches waiting", `${work.strong || 0} (score ${work.min_score || 40}+)`], ["Applied, waiting to hear", String(work.applied || 0)]);
+    workRows.push(["Strong matches waiting", `${work.strong || 0} (score ${work.good || 50}+)`], ["Applied, waiting to hear", String(work.applied || 0)]);
     if (work.won) workRows.push(["Won", String(work.won)]);
     workRows.push(["Automatic bidding", work.auto ? `On · up to ${work.per_day} a day on Freelancer.com` : "Off"]);
     const workCard = body(kv(workRows), link("Open Freelance →", "freelance"));
