@@ -1291,6 +1291,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     # ---- Prospector: US local businesses that could use what the owner sells (public data; nobody is contacted) ----
     from . import prospects as prospects_module
     prospector = prospects_module.Finder(db)
+    prospect_writer = prospects_module.Writer(db, settings, chat_registry)
+    app.state.prospect_writer = prospect_writer
     prospect_state = {"running": False, "message": "", "result": None}
     app.state.prospector, app.state.prospect_state = prospector, prospect_state
 
@@ -1307,7 +1309,30 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.get("/api/prospects")
     def prospects_overview():
         with db.Session() as session:
-            return {**prospects_module.overview(session), "search": {key: value for key, value in prospect_state.items()}}
+            return {**prospects_module.overview(session), "search": {key: value for key, value in prospect_state.items()},
+                    "offers": prospects_module.offers(session), "sender_missing": prospects_module.footer(session)[1]}
+
+    def writing(work):
+        try:
+            return work()
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/prospects/{prospect_id}/opener")
+    def prospects_opener(prospect_id: str):
+        """Draft a first email about what was seen on their site (a minute or so). Nothing is sent."""
+        return writing(lambda: prospect_writer.opener(prospect_id))
+
+    @app.post("/api/prospects/offer/{kind}")
+    def prospects_offer_draft(kind: str):
+        if kind not in prospects_module.KINDS:
+            raise HTTPException(404, "Unknown kind of business")
+        return writing(lambda: prospect_writer.offer(kind))
+
+    @app.put("/api/prospects/offer/{kind}")
+    def prospects_offer_save(kind: str, payload: dict):
+        with db.Session.begin() as session:
+            return prospects_module.save_offer(session, kind, {key: payload[key] for key in ("headline", "problem", "included", "steps", "timeline", "price") if key in payload})
 
     @app.post("/api/prospects/search")
     def prospects_search(payload: dict):

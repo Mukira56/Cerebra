@@ -1255,7 +1255,7 @@
 
   // ---------- prospects: US local businesses that could use what you sell ----------
   const PROSPECT_STYLE = {kept: "blue", contacted: "amber", replied: "cyan", won: "green", lost: "muted", new: "muted", dropped: "muted"};
-  let prospectFilter = "kept";
+  let prospectFilter = "kept", prospectSender = [];
   function prospectsView() {
     const root = el("div"), token = renderToken;
     root.append(body(el("p", "", "Loading…")));
@@ -1271,7 +1271,7 @@
       city.required = true; where.required = true;
       append(form, append(el("div", "form-grid"), field("Kind of business", kind), field("City", city), field("State", where)), actionsRow(go));
       wireForm(form, go, async () => { const result = await mutate("/api/prospects/search", {kind: kind.value, city: city.value, state: where.value}); toast(result.message); render(); });
-      const search = state.search || {};
+      const search = state.search || {}; prospectSender = array(state.sender_missing);
       if (search.running) { go.disabled = true; setTimeout(() => { if (token === renderToken) render(); }, 5000); }
       const filters = {kept: "Worth contacting", new: `To check by hand (${counts.new || 0})`, contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", all: "Everything"};
       const pick = select(Object.entries(filters), prospectFilter); pick.addEventListener("change", () => { prospectFilter = pick.value; render(); });
@@ -1288,21 +1288,51 @@
         panel("Find businesses", body(form, search.message ? hint(search.running ? `${search.message} This page refreshes itself.` : search.message) : null,
           hint("Public data only. Nobody is contacted: you decide who to approach, and how."))),
         searches.length ? panel("Recent searches", body(kv(searches))) : null,
+        searches.length ? panel("Your offer", body(offerPanel(state))) : null,
         panel("How it works", body(hint("Each fact comes from the business's own home page, read once where its robots.txt allows, and shows where it was seen. A site that turns robots away gets no claim at all. Chains (brand-tagged, or 3 or more locations in the city) are left out."),
           el("p", "row-meta", state.attribution))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
     return root;
   }
-  function prospectDialog(item) {
+  function offerPanel(state) {
+    const root = el("div"), kinds = [...new Set(array(state.searches).map(item => item.kind))];
+    const kind = select(kinds.map(key => [key, state.kinds[key]]), kinds[0]), out = el("div");
+    const show = () => {
+      const offer = (state.offers || {})[kind.value] || {}, price = input("Your price, e.g. USD 1,500 setup + USD 150 a month", offer.price || "");
+      const headline = input("Headline", offer.headline || ""), problem = textarea("The problem", offer.problem || ""), included = textarea("What's included, one per line", array(offer.included).join("\n"));
+      const steps = textarea("How it works, one step per line", array(offer.steps).join("\n")), timeline = input("Timeline", offer.timeline || "");
+      problem.rows = 3; included.rows = 4; steps.rows = 3;
+      const payload = () => ({headline: headline.value, problem: problem.value, included: included.value.split("\n"), steps: steps.value.split("\n"), timeline: timeline.value, price: price.value});
+      const text = () => [headline.value, "", problem.value, "", "What's included:", ...included.value.split("\n").filter(Boolean).map(line => `- ${line}`), "", "How it works:",
+        ...steps.value.split("\n").filter(Boolean).map((line, index) => `${index + 1}. ${line}`), "", `Timeline: ${timeline.value}`, `Price: ${price.value || "(set your price)"}`].join("\n");
+      out.replaceChildren(offer.headline ? append(el("div"), field("Headline", headline), field("The problem (from what Cerebra saw)", problem), field("What's included", included), field("How it works", steps),
+          append(el("div", "form-grid"), field("Timeline", timeline), field("Price (yours to set)", price))) : hint("No offer yet for these businesses."),
+        actionsRow(button(offer.headline ? "Draft again" : "Draft the offer", () => act("Drafted. Set your price.", () => mutate(`/api/prospects/offer/${kind.value}`, {}, "POST", 300000)).then(result => { if (result) render(); }), "button"),
+          offer.headline ? button("Copy as text", () => navigator.clipboard.writeText(text()).then(() => toast("Copied.")), "button ghost") : null,
+          offer.headline ? button("Save", () => act("Saved.", () => mutate(`/api/prospects/offer/${kind.value}`, payload(), "PUT")), "button primary") : null),
+        offer.headline && !offer.price ? hint("The price is blank on purpose: it's your call.", true) : null);
+    };
+    kind.addEventListener("change", show); show();
+    append(root, field("For", kind), out, hint("Built from what Cerebra saw on these businesses' sites and from your own services. No invented results or testimonials."));
+    return root;
+  }
+  function prospectDialog(item, missing = array(prospectSender)) {
     const root = el("div"), notes = textarea("What you did, who you spoke to, next step…", item.notes || "");
+    const opener = textarea("Draft a first email about what Cerebra saw on their site", item.opener || ""); opener.rows = 9;
+    const draft = button(item.opener ? "Draft again" : "Draft a first email", () => act(result => result.missing?.length ? "Drafted. Add the missing details before sending." : "Drafted. Read it before you send it.",
+      () => mutate(`/api/prospects/${item.id}/opener`, {}, "POST", 300000)).then(result => { if (result) { opener.value = result.opener; prospectSender = result.missing; } }), "button");
+    const copy = button("Copy", () => navigator.clipboard.writeText(opener.value).then(() => toast("Copied. Paste it into your email.")), "button ghost");
     const status = select([["new", "To check by hand"], ["kept", "Worth contacting"], ["contacted", "Contacted"], ["replied", "Replied"], ["won", "Won: became a client"], ["lost", "Lost"], ["dropped", "Not a fit"]], item.status);
     const facts = el("ul", "tips"); array(item.facts).forEach(fact => facts.append(append(el("li"), document.createTextNode(fact.text), el("span", "row-meta", ` (seen at ${fact.seen})`))));
     append(root, kv([["Business", item.kind_label], ["Where", [item.address, `${item.city}, ${item.state}`].filter(Boolean).join(", ")], ["Website", item.website || "None listed"], ["Phone", item.phone || "Not listed"]]),
       el("h3", "", "What Cerebra saw"), array(item.facts).length ? facts : hint(item.notes || "No issue seen on the home page."),
       append(el("div", "form-grid"), field("Status", status)), field("Notes", notes),
-      hint("Contact them in your own name. In the US, cold emails need your real postal address and a way to opt out (CAN-SPAM)."),
-      actionsRow(button("Save", () => act("Saved.", () => mutate(`/api/prospects/${item.id}`, {status: status.value, notes: notes.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+      el("h3", "", "First email"), opener,
+      missing.length ? hint(`Before sending, add ${missing.join(" and ")} in Money › Your business details.`, true) : null,
+      hint("Read it, change anything, then send it yourself from your own email. In the US, cold emails need your real postal address and a way to opt out (CAN-SPAM); Cerebra adds both."),
+      actionsRow(array(item.facts).length ? draft : null, copy,
+        button("Save", () => act("Saved.", () => mutate(`/api/prospects/${item.id}`, {status: status.value, notes: notes.value, opener: opener.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
     showDialog(item.name, root);
   }
 

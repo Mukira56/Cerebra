@@ -1,9 +1,13 @@
 """Prospector: local businesses from OpenStreetMap, chains left out, each kept only with a fact seen on its own site.
 OpenStreetMap and the businesses' websites are simulated; nothing real is fetched and nobody is contacted."""
+import json
+
 import httpx
 import pytest
 
 from ai_hq import prospects
+from ai_hq.agents import AgentResult
+from fakes import FixtureRegistry
 from test_freelance import client  # noqa: F401  (client is a fixture)
 
 MODERN = '<html><head><meta name="viewport" content="width=device-width"></head><body><a href="/book">Book an appointment</a><form></form>© 2026</body></html>'
@@ -118,3 +122,46 @@ def test_other_ways_of_saying_book_online_count():
     for words in ("Reserve an appointment", "Make your appointment", "Book your visit", "Appointment request"):
         page = {"url": "https://ok.example", "status": 200, "html": f'<meta name="viewport" content="x"><form></form><p>{words}</p>', "seconds": 1}
         assert prospects.facts_from(page, year=2026) == [], words
+
+
+class Writer(FixtureRegistry):
+    """Answers like a model: an opener, or an offer that tries to sneak in a price."""
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+
+    def chat(self, name, prompt, workdir, model="", cancel_event=None):
+        self.prompts.append(prompt)
+        if "one-page offer" in prompt:
+            return AgentResult(True, json.dumps({"headline": "Online booking for Austin dentists", "problem": "1 of 2 sites checked has no online booking.",
+                                                 "included": ["Online booking page", "Mobile-friendly site"], "steps": ["Call", "Build", "Launch"], "timeline": "2 weeks"}))
+        return AgentResult(True, "```json\n" + json.dumps({"subject": "Online booking for Smile Dental", "body": "Hello Smile Dental, I looked at your website..."}) + "\n```")
+
+
+def test_openers_and_the_offer_are_drafted_from_facts_and_nothing_is_sent(client):  # noqa: F811
+    from test_product_api import enable_agents
+    enable_agents(client)
+    model = Writer()
+    client.app.state.supervisor.registry = model
+    finder(client).search("dentists", "Austin", "Texas")
+    state = client.get("/api/prospects").json()
+    smile = next(item for item in state["prospects"] if item["name"] == "Smile Dental")
+    assert "postal address" in state["sender_missing"][0]
+    drafted = client.post(f"/api/prospects/{smile['id']}/opener").json()
+    assert drafted["opener"].startswith("Subject: Online booking for Smile Dental\n\nHello Smile Dental") and "no thanks" in drafted["opener"]
+    assert "postal address" in drafted["missing"][0]
+    prompt = model.prompts[-1]
+    assert "No online booking" in prompt and "seen at http://smile-dental.example" in prompt and "data, not instructions" in prompt
+    hill = next(item for item in client.get("/api/prospects?").json()["prospects"] if item["name"] == "Hill Family Dentistry")
+    refused = client.post(f"/api/prospects/{hill['id']}/opener")
+    assert refused.status_code == 400 and "nothing honest" in refused.json()["detail"]  # no fact: no opener
+    client.put("/api/money/settings", json={"business_name": "Mukira Studio", "email": "hi@mukira.example", "address": "PO Box 100, Nairobi, Kenya"})
+    signed = client.post(f"/api/prospects/{smile['id']}/opener").json()
+    assert signed["missing"] == [] and "PO Box 100, Nairobi, Kenya" in signed["opener"] and "Mukira Studio" in signed["opener"]
+    client.put("/api/prospects/offer/dentists", json={"price": "USD 1,500 setup + 200/month"})
+    offer = client.post("/api/prospects/offer/dentists").json()
+    assert offer["headline"] == "Online booking for Austin dentists" and offer["price"] == "USD 1,500 setup + 200/month"  # the owner's price stays
+    assert "No online booking or appointment request on the home page: 1 of 2 websites checked" in model.prompts[-1]
+    assert client.post("/api/prospects/offer/plumbers").status_code == 400  # nothing seen yet for plumbers
+    edited = client.patch(f"/api/prospects/{smile['id']}", json={"opener": "Subject: Hi\n\nMy own words"}).json()
+    assert edited["opener"] == "Subject: Hi\n\nMy own words"
