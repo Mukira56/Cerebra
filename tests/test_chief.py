@@ -99,3 +99,39 @@ def test_the_training_set_is_the_owners_work_and_what_came_of_it(client):  # noq
     assert won["messages"][1]["content"].startswith("React site 0") and won["messages"][0]["role"] == "system"
     client.put("/api/chief/training", json={"collect": False})
     assert client.get("/api/chief").json()["training"]["total"] == 0 and client.get("/api/chief/training.jsonl").text == ""
+
+
+def test_your_calls_gather_every_decision_that_is_the_owners(client):  # noqa: F811
+    from ai_hq.models import Book, MoneyDocument
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id="freelancer:9", source="freelancer", title="Shop redesign", status="awarded"))
+        session.add(FreelanceLead(id="remoteok:1", source="remoteok", title="React dashboard", status="new", proposal={"status": "ready", "text": "Hi"}))
+        session.add(FreelanceLead(id="freelancer:8", source="freelancer", title="Auto job", status="new", proposal={"status": "ready", "text": "Hi"}))  # the bidder's
+        session.add(SocialPost(text="Fast sites for clinics", status="draft", origin="ai"))
+        session.add(MoneyDocument(kind="invoice", number="INV-7", client="Ann", status="sent", due_date="2020-01-01", items=[]))
+        session.add(Book(title="Sleep Again", status="files_ready"))
+    kinds = sorted(item["kind"] for item in client.get("/api/chief").json()["calls"])
+    assert kinds == ["award", "book", "overdue", "post", "proposal"]
+    overview = client.get("/api/overview").json()["calls"]
+    assert overview["count"] == 5 and len(overview["items"]) == 5 and all(item["page"] for item in overview["items"])
+
+
+def test_the_morning_brief_comes_once_a_day_at_the_owners_hour_and_says_only_counts_on_the_phone(client):  # noqa: F811
+    sent = []
+
+    class Phone:
+        def send(self, title, text, settings=None, tags=""):
+            sent.append(text)
+            return {"sent": ["ntfy"]}
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id="freelancer:5", source="freelancer", title="Secret Client Inc. website", status="awarded"))
+    client.put("/api/chief/settings", json={"brief_hour": 8})
+    early, morning = datetime(2026, 11, 2, 6, 0).astimezone(), datetime(2026, 11, 2, 8, 30).astimezone()
+    db = client.app.state.db
+    assert chief.send_brief(db, Phone(), early) == {"skipped": "not time yet"} and sent == []
+    assert chief.send_brief(db, Phone(), morning)["calls"] == 1 and len(sent) == 1
+    assert chief.send_brief(db, Phone(), morning.replace(hour=14)) == {"skipped": "not time yet"}  # once a day
+    assert "1 decision(s) wait for you" in sent[0] and "Secret Client" not in sent[0]
+    events = client.get("/api/overview").json()["events"]
+    assert any(event["message"].startswith("Morning brief:") for event in events)
+    assert client.put("/api/chief/settings", json={"brief_hour": 30}).status_code == 400

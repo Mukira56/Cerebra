@@ -302,10 +302,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             freelance_glance = freelance.glance(session)
             from . import books as books_glance_module
             books_glance = books_glance_module.glance(session)
+            from . import chief as chief_glance_module
+            waiting = chief_glance_module.calls(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -1153,6 +1155,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                  applier.tick, 10, outward=True)
     registry.add("win_watch", "Notice what you won", "Checks your Freelancer.com bids and your Gmail for awards, hires and orders.", watcher.tick, 10)
     registry.add("won_work", "Start won work", "Turns each won job into Business Studio work and keeps it moving; delivery waits for you.", keep_won_work, 10)
+    registry.add("morning_brief", "Morning brief", "Once a day at your hour: what ran, what it found and what waits for you, in Cerebra and on your phone (counts only).",
+                 lambda: chief.send_brief(db, notifier), 60)
     scheduler = chief.Scheduler(db, registry)
     app.state.chief, app.state.registry = scheduler, registry
 
@@ -1213,10 +1217,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         scheduler.seed()
         with db.Session() as session:
             return {"jobs": chief.jobs(session, registry, scheduler.running), "runs": chief.runs(session), "goals": chief.goals(session),
+                    "calls": chief.calls(session), "brief": chief.brief(session), "settings": chief.chief_settings(session),
                     "overnight": chief.overnight(session), "training": chief.training_summary(session),
                     "built_in": [{"label": "Find freelance work", "about": "Reads each job source on its own polite schedule (30 minutes to 6 hours).", "status": dict(finder.status) if hasattr(finder, "status") else {}},
                                  {"label": "Post approved social posts", "about": "Every minute, within your monthly budget and daily limits."},
                                  {"label": "Money and Stripe", "about": "Payments every 10 minutes; recurring invoices and imports every 6 hours."}]}
+
+    @app.put("/api/chief/settings")
+    def chief_settings_save(payload: dict):
+        with db.Session.begin() as session:
+            return chief.save_chief_settings(session, {key: payload[key] for key in ("brief", "brief_hour") if key in payload})
+
+    @app.post("/api/chief/brief/send")
+    def chief_brief_send():
+        """Send the morning brief now (to test the phone notification)."""
+        return chief.send_brief(db, notifier, force=True)
 
     @app.patch("/api/chief/jobs/{job_id}")
     def chief_job_update(job_id: str, payload: dict):

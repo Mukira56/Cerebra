@@ -330,3 +330,108 @@ def training_jsonl(session, only_proven=True):
         messages.append({"role": "assistant", "content": item["output"]})
         lines.append(json.dumps({"messages": messages}, ensure_ascii=False))
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+# ---- "Your calls": every decision that is the owner's, in one place ----
+def calls(session):
+    """What waits for the owner across Cerebra, newest first: each with where to answer it. Nothing is decided here."""
+    from .models import Approval, Book, MoneyDocument, Task
+    items = []
+    for approval in session.scalars(select(Approval).where(Approval.status.in_(["pending", "PENDING"]))).all():
+        task = session.get(Task, approval.task_id)
+        what = {"merge": "Merge finished work", "plan": "Approve a plan", "live_execution": "Let the AI team start",
+                "review_findings": "Decide on review findings"}.get(approval.kind, approval.kind.replace("_", " ").capitalize())
+        items.append({"kind": "approval", "title": what, "detail": " ".join((task.description if task else "").split())[:140], "page": "approvals",
+                      "at": approval.created_at})
+    # Only the columns needed: the Overview asks for this every few seconds, and job posts are long.
+    leads = session.execute(select(FreelanceLead.title, FreelanceLead.status, FreelanceLead.source, FreelanceLead.proposal, FreelanceLead.updated_at)
+                            .where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
+    for title, status, source, proposal, updated in leads:
+        proposal = proposal or {}
+        if status == "awarded":
+            items.append({"kind": "award", "title": "A client chose you", "detail": f"{title[:120]}: accept or decline", "page": "freelance", "at": updated})
+        elif proposal.get("status") == "ready" and not proposal.get("sent_at") and not proposal.get("skipped") and source != "freelancer":
+            items.append({"kind": "proposal", "title": "A proposal is ready to send", "detail": f"{title[:120]}: apply in your own name", "page": "freelance",
+                          "at": proposal.get("drafted_at") or updated})
+    for post in session.scalars(select(SocialPost).where(SocialPost.status == "draft", SocialPost.origin == "ai")).all():
+        items.append({"kind": "post", "title": "A post waits for your approval", "detail": " ".join(post.text.split())[:140], "page": "marketing", "at": post.created_at})
+    today = now()[:10]
+    for doc in session.scalars(select(MoneyDocument).where(MoneyDocument.kind == "invoice", MoneyDocument.status == "sent")).all():
+        if doc.due_date and doc.due_date < today:
+            items.append({"kind": "overdue", "title": "An invoice is overdue", "detail": f"{doc.number} for {doc.client}: send a reminder", "page": "money", "at": doc.due_date})
+    for doc in session.scalars(select(MoneyDocument).where(MoneyDocument.kind == "invoice", MoneyDocument.status == "draft")).all():
+        items.append({"kind": "invoice", "title": "An invoice is ready to send", "detail": f"{doc.client or 'A client'}: check and send it", "page": "money", "at": doc.created_at})
+    for book in session.scalars(select(Book).where(Book.status == "files_ready")).all():
+        items.append({"kind": "book", "title": "A book is ready to upload", "detail": f"{book.title[:120]}: upload it on KDP", "page": "books", "at": book.updated_at})
+    since = _stamp(datetime.now(timezone.utc) - timedelta(hours=24))
+    failed = {row.job_id for row in session.scalars(select(ChiefRun).where(ChiefRun.status == "failed", ChiefRun.started_at >= since)).all()}
+    for job_id in sorted(failed):
+        items.append({"kind": "problem", "title": "A worker failed", "detail": f"{job_id.replace('_', ' ')}: see its last run", "page": "chief", "at": since})
+    return sorted(items, key=lambda item: str(item["at"]), reverse=True)
+
+
+# ---- the morning brief ----
+BRIEF_KEY = "chief_settings"
+BRIEF_DEFAULTS = {"brief": True, "brief_hour": 8, "last_brief": ""}
+
+
+def chief_settings(session):
+    row = session.get(Metadata, BRIEF_KEY)
+    return {**BRIEF_DEFAULTS, **(row.value if row else {})}
+
+
+def save_chief_settings(session, fields):
+    value = chief_settings(session)
+    if "brief" in fields:
+        value["brief"] = bool(fields["brief"])
+    if "brief_hour" in fields:
+        hour = int(fields["brief_hour"])
+        if not 0 <= hour <= 23:
+            raise ValueError("Choose an hour from 0 to 23")
+        value["brief_hour"] = hour
+    if "last_brief" in fields:
+        value["last_brief"] = str(fields["last_brief"])
+    row = session.get(Metadata, BRIEF_KEY)
+    if row is None:
+        session.add(Metadata(key=BRIEF_KEY, value=value))
+    else:
+        row.value = value
+    return value
+
+
+def brief(session):
+    """What happened and what waits: detailed on the page; the phone gets counts only (ntfy travels through a public server)."""
+    from . import books as books_module, freelance, money
+    day = overnight(session)
+    waiting = calls(session)
+    work = freelance.glance(session)
+    shelf = books_module.glance(session)
+    summary = money.summary(session)
+    glance = summary.get("by_currency", {}).get(summary.get("currency"), {})
+    lines = [f"Workers ran {day['runs']} time(s) in the last 24 hours" + (f", {day['failed']} failed." if day["failed"] else ", with no failures."),
+             f"{len(waiting)} decision(s) wait for you." if waiting else "Nothing waits for you.",
+             f"Freelance: {work['strong']} strong match(es) waiting, {work['applied']} application(s) out" + (f", {work['awarded']} client(s) chose you." if work["awarded"] else "."),
+             f"Money this month: {summary.get('currency', 'USD')} {float(glance.get('earned_month') or 0):,.2f} earned, {float(glance.get('owed') or 0):,.2f} owed."]
+    if shelf.get("files_ready") or shelf.get("published"):
+        lines.append(f"Books: {shelf.get('files_ready', 0)} ready to upload, {shelf.get('published', 0)} published.")
+    phone = (f"{len(waiting)} decision(s) wait for you. " if waiting else "Nothing waits for you. ") + \
+            f"{day['runs']} worker run(s) overnight" + (f", {day['failed']} failed." if day["failed"] else ".") + " Open Cerebra for details."
+    return {"lines": lines, "calls": waiting[:10], "phone": phone, "at": now()}
+
+
+def brief_due(settings, local_now):
+    return settings["brief"] and local_now.hour >= settings["brief_hour"] and settings["last_brief"] != local_now.date().isoformat()
+
+
+def send_brief(db, notifier, local_now=None, force=False):
+    """Once a day at the owner's hour (or now, when asked): record the brief in the activity log and send it to the phone."""
+    local_now = local_now or datetime.now().astimezone()
+    with db.Session.begin() as session:
+        settings = chief_settings(session)
+        if not force and not brief_due(settings, local_now):
+            return {"skipped": "not time yet" if settings["brief"] else "off"}
+        content = brief(session)
+        save_chief_settings(session, {"last_brief": local_now.date().isoformat()})
+        session.add(Event(kind="chief", message="Morning brief: " + " ".join(content["lines"])[:900], data={"brief": True}))
+    sent = notifier.send("Cerebra · morning brief", content["phone"], tags="sunrise") if notifier else {"sent": []}
+    return {"sent": len(sent.get("sent", [])), "calls": len(content["calls"])}

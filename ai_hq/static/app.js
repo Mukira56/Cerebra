@@ -256,6 +256,7 @@
       });
     node.append(stats);
     const grid = el("div", "grid two"), left = el("div"), right = el("div");
+    if (data.calls?.count) left.append(panel("Your calls", callList(data.calls.items), link("All →", "chief"), data.calls.count));
     left.append(panel("Recent tasks", tasks.length ? taskRows(tasks.slice(0, 8)) : body(empty("No tasks yet", "Create a task: describe what you want, and the AI team plans, codes, tests and reviews it.", button("+ New task", () => taskForm(), "button primary"), "#")), link("All tasks →", "tasks"), tasks.length));
     const waiting = pendingApprovals(), merges = finishedTasks();
     if (waiting.length) left.append(panel("Waiting for your decision", approvalCards(waiting.slice(0, 3)), link("All approvals →", "approvals"), waiting.length));
@@ -1192,10 +1193,29 @@
           goals.length ? goalList : body(empty("No goals yet", "Set your first money goal and its rules.", null, "◎"))), null, goals.length),
         panel("Workers", append(el("div"), jobRows, body(hint("Each worker is part of Cerebra itself; nothing here runs code an AI wrote. Workers that act outside this computer follow the standing rules you set on their own pages (Apply automatically, approved posts)."))), null, jobs.length),
         panel("Recent runs", runTable, null, runs.length));
-      const side = append(el("div"), panel("Training data for Cerebra's own model", body(trainingPanel(state.training))),
+      const side = append(el("div"), panel("Your calls", callList(state.calls), null, array(state.calls).length), panel("Morning brief", body(briefPanel(state))),
+        panel("Training data for Cerebra's own model", body(trainingPanel(state.training))),
         panel("Also running", body(kv(array(state.built_in).map(item => [item.label, item.about])))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
+    return root;
+  }
+  const CALL_ICON = {approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠"};
+  function callList(items, emptyText = "Nothing waits for you.") {
+    if (!array(items).length) return body(empty("All clear", emptyText, null, "✓"));
+    const list = el("div", "row-list");
+    array(items).forEach(item => { const row = append(el("a", "row clickable"), el("span", "call-icon", CALL_ICON[item.kind] || "•"), append(el("div", "row-main"), el("strong", "", item.title), el("div", "row-meta", item.detail)), el("span", "row-meta", relative(item.at)));
+      row.href = `#${item.page}`; list.append(row); });
+    return list;
+  }
+  function briefPanel(state) {
+    const settings = state.settings || {}, root = el("div"), on = check("Send me a morning brief", settings.brief !== false);
+    const hour = select(Array.from({length: 24}, (_, value) => [String(value), `${String(value).padStart(2, "0")}:00`]), String(settings.brief_hour ?? 8));
+    on.control.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief: on.control.checked}, "PUT")));
+    hour.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief_hour: Number(hour.value)}, "PUT")));
+    append(root, append(el("ul", "tips"), ...array(state.brief?.lines).map(line => el("li", "", line))), append(el("div", "form-grid"), field("At", hour), on.wrap),
+      actionsRow(button("Send it to my phone now", () => act(result => result.sent ? "Sent." : "Recorded. Set up phone notifications in Settings to receive it.", () => mutate("/api/chief/brief/send", {})), "button small")),
+      hint("On your phone it says only how many decisions wait and how many runs happened: phone notifications can pass through a public server, so names and amounts stay in Cerebra."));
     return root;
   }
   function trainingPanel(training) {
