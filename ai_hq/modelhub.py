@@ -44,6 +44,7 @@ CATEGORIES = {
 }
 FALLBACK = "openrouter/free"  # OpenRouter's own free router: picks any free model that is up
 OLLAMA = "http://127.0.0.1:11434"  # local models on the owner's own computer: free, no daily limit; only this loopback address
+LOCAL_TTL = 30  # seconds the list of local models is remembered
 LOCAL = "local:"  # a route to one of those local models, e.g. "local:qwen3:14b"
 DEFAULTS = {"api_key": "", "routes": {}, "enabled": True}
 
@@ -148,13 +149,20 @@ class Hub:
             return set()
 
     def local_models(self):
-        """Models pulled into Ollama on this computer (empty when Ollama isn't running). Never starts Ollama or downloads anything."""
+        """Models pulled into Ollama on this computer (empty when Ollama isn't running). Never starts Ollama or downloads anything.
+        Remembered for half a minute, and a closed port is given up on quickly: Windows takes about 2 s to refuse a connection
+        to a port nobody listens on, which made the Models page slow whenever Ollama wasn't running."""
+        cached = getattr(self, "_local", None)
+        if cached is not None and time.monotonic() - cached[0] < LOCAL_TTL:
+            return list(cached[1])
         try:
-            response = self.client.get(f"{OLLAMA}/api/tags", timeout=3)
+            response = self.client.get(f"{OLLAMA}/api/tags", timeout=httpx.Timeout(3, connect=0.5))
             response.raise_for_status()
+            names = sorted(item.get("name", "") for item in response.json().get("models", []) if item.get("name"))
         except (httpx.HTTPError, ValueError):
-            return []
-        return sorted(item.get("name", "") for item in response.json().get("models", []) if item.get("name"))
+            names = []
+        self._local = (time.monotonic(), names)
+        return list(names)
 
     def chat_local(self, category, model, prompt, max_tokens=4000):
         """One turn with a model on this computer, through Ollama (free; as fast as the computer allows)."""

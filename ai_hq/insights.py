@@ -19,21 +19,31 @@ MIN_FOR_ADVICE = 5  # applications in a group before a rate is worth acting on
 
 
 @functools.cache
-def _pattern(key):
-    """One search for all of a service's words (longest first), instead of one search per word."""
+def _combined(services):
+    """One search for every service's words at once (a word can belong to several services), so each job's text is read
+    once instead of once per service: "What works" took about a second for 900 jobs."""
     from .freelance import SERVICES
-    words = sorted({word.strip().lower() for word in SERVICES[key][1] if word.strip()}, key=len, reverse=True)
-    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, words)) + r")(?![a-z0-9])")
+    owners = {}
+    for key in services:
+        for word in SERVICES[key][1]:
+            if word.strip():
+                owners.setdefault(word.strip().lower(), set()).add(key)
+    words = sorted(owners, key=len, reverse=True)
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, words)) + r")(?![a-z0-9])"), owners
 
 
 def _service(row, services):
-    """The service a job fits best: the one with the most different words in its title and description."""
+    """The service a job fits best: the one with the most different words in its title and description (the first listed wins a tie)."""
     text = f"{row.title} {' '.join(row.skills or [])} {row.description}".lower()  # the same text the score read, and the platform's skill tags
-    best, hits = "other", 0
+    pattern, owners = _combined(tuple(services))
+    hits = {}
+    for word in set(pattern.findall(text)):
+        for key in owners.get(word, ()):
+            hits[key] = hits.get(key, 0) + 1
+    best, most = "other", 0
     for key in services:
-        found = len(set(_pattern(key).findall(text)))
-        if found > hits:
-            best, hits = key, found
+        if hits.get(key, 0) > most:
+            best, most = key, hits[key]
     return best
 
 
