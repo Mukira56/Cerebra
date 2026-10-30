@@ -47,7 +47,7 @@ def test_secret_storage_and_settings_validation(client):
     assert "fixture-secret" not in json.dumps(view) and "api_key" not in view["images"]
     with client.app.state.db.Session() as session:
         stored = commerce.load(session)["images"]["api_key"]
-        assert stored.startswith("dpapi:") and vault.unprotect(stored) == "fixture-secret-not-a-real-key"
+        assert stored.startswith((vault.PREFIX, vault.KEYCHAIN)) and vault.unprotect(stored) == "fixture-secret-not-a-real-key"  # DPAPI, or the system keychain
     configure(client, "images", api_key="")
     assert client.get("/api/business/connections").json()["images"]["configured"]
     assert client.put("/api/business/connections/etsy", json={"values":{"redirect_uri":"http://example.com/callback"}}).status_code == 400
