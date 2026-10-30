@@ -26,6 +26,7 @@ import httpx
 from sqlalchemy import select
 
 from . import commerce, vault
+from .network import LazyClient
 from .models import Event, Metadata, SocialPost, now, uid
 from .security import redact
 
@@ -229,7 +230,7 @@ def posted_today(session, channel):
 class Publisher:
     def __init__(self, db, client=None):
         self.db = db
-        self.client = client or httpx.Client(timeout=60)
+        self.client = client or LazyClient(timeout=60)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None

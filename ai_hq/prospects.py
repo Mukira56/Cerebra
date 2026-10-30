@@ -23,6 +23,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from sqlalchemy import select
 
+from .network import LazyClient
 from .models import Event, Prospect, ProspectSearch, now
 
 USER_AGENT = "Cerebra prospect research (one page per business, robots.txt respected; https://github.com/Mukira56/Cerebra)"
@@ -87,7 +88,7 @@ class Reader:
     """Reads one public page per business, politely."""
 
     def __init__(self, client=None, resolve=public_address, robots=True):
-        self.client = client or httpx.Client(timeout=15, follow_redirects=False, headers={"User-Agent": USER_AGENT})
+        self.client = client or LazyClient(timeout=15, headers={"User-Agent": USER_AGENT})
         self.resolve, self.robots = resolve, robots
 
     def _allowed(self, url):
@@ -151,7 +152,7 @@ def facts_from(page, year=None):
 class Finder:
     def __init__(self, db, client=None, reader=None, pause=PAUSE):
         self.db = db
-        self.client = client or httpx.Client(timeout=90, headers={"User-Agent": USER_AGENT})
+        self.client = client or LazyClient(timeout=90, headers={"User-Agent": USER_AGENT})
         self.reader, self.pause = reader or Reader(), pause
 
     def city_area(self, city, state):

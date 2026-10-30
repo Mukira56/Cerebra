@@ -17,6 +17,7 @@ from pathlib import Path
 import httpx
 from sqlalchemy import select
 
+from .network import LazyClient
 from .models import Event, FreelanceLead, Metadata, Project, Task, now
 from .security import redact
 
@@ -458,7 +459,7 @@ class Finder:
     """Checks the enabled sources on their own schedules in the background; one failing source never stops the others."""
     def __init__(self, db, client=None):
         self.db = db
-        self.client = client or httpx.Client(timeout=30, follow_redirects=True, headers={"User-Agent": USER_AGENT})
+        self.client = client or LazyClient(timeout=30, follow_redirects=True, headers={"User-Agent": USER_AGENT})
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
@@ -698,7 +699,7 @@ FREELANCER_API = "https://www.freelancer.com/api"
 class Bidder:
     def __init__(self, db, client=None):
         self.db = db
-        self.client = client or httpx.Client(timeout=30, headers={"User-Agent": USER_AGENT})
+        self.client = client or LazyClient(timeout=30, headers={"User-Agent": USER_AGENT})
 
     def _item(self):
         from . import commerce
