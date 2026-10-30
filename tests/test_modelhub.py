@@ -131,3 +131,23 @@ def test_without_ollama_running_the_message_says_so(client):  # noqa: F811
     client.put("/api/models/hub", json={"routes": {"bulk": "local:qwen3:14b"}})
     result = client.app.state.hub.chat("bulk", "hello")
     assert not result.success and "Ollama isn't running" in result.error
+
+
+def test_a_slow_model_list_never_blocks_the_models_page(client):  # noqa: F811
+    import threading
+    gate = threading.Event()
+
+    def slow(request):
+        if request.url.host == "127.0.0.1":
+            raise httpx.ConnectError("refused")
+        gate.wait(10)  # OpenRouter over a slow connection
+        return httpx.Response(200, json=MODELS)
+    client.app.state.hub.client = httpx.Client(transport=httpx.MockTransport(slow))
+    state = client.get("/api/models/hub").json()  # answers within about 1.5 s instead of waiting
+    assert state["catalog_loading"] and state["free_models"] == [] and state["catalog_reachable"]
+    gate.set()
+    for _ in range(100):
+        state = client.get("/api/models/hub").json()
+        if not state["catalog_loading"]:
+            break
+    assert {item["id"] for item in state["free_models"]} == {"google/gemma-4-31b-it:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter/free"}

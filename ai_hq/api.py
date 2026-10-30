@@ -1477,12 +1477,16 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def models_hub():
         with db.Session() as session:
             value, spent, usage = modelhub.settings(session), modelhub.spent_this_month(session), modelhub.usage_summary(session)
+        loading = False
         try:
-            free = sorted((item for item in hub.catalog() if item["input"] == 0 and item["output"] == 0), key=lambda item: item["id"])
+            listed = hub.catalog_soon()
+            loading = listed is None  # still coming over a slow connection: the page shows it's loading and asks again
+            free = sorted((item for item in listed or [] if item["input"] == 0 and item["output"] == 0), key=lambda item: item["id"])
             reachable = True
         except httpx.HTTPError:
             free, reachable = [], False
-        return {**modelhub.public(value, spent), "free_models": free, "usage": usage, "catalog_reachable": reachable, "local_models": hub.local_models()}
+        return {**modelhub.public(value, spent), "free_models": free, "usage": usage, "catalog_reachable": reachable, "catalog_loading": loading,
+                "local_models": hub.local_models()}
 
     @app.put("/api/models/hub")
     def models_hub_save(payload: dict):

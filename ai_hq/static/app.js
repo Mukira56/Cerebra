@@ -1015,6 +1015,7 @@
     const root = el("div");
     root.append(el("p", "row-meta", "Loading…"));
     api("/api/models/hub").then(state => {
+      if (state.catalog_loading) setTimeout(() => { if (root.isConnected) root.replaceWith(hubPanel()); }, 3000);  // fill in the free models once they've arrived
       const key = input(state.connected ? "Saved: paste a new key to replace it" : "sk-or-v1-…", "", "password"), saveKey = button("Save key", () => act("Saved.", () => mutate("/api/models/hub", {api_key: key.value.trim()}, "PUT")).then(() => render()), "button small");
       const choices = [...Object.entries(state.accounts || {}).map(([id, label]) => [id, label]), ...array(state.local_models).map(name => [`local:${name}`, `${name} (on this computer, free)`]), ...array(state.free_models).map(item => [item.id, /free/i.test(item.name) ? item.name : `${item.name} (free)`])];
       const routes = array(state.categories).map(category => {
@@ -1029,6 +1030,7 @@
         hint("Only what costs you nothing extra: your Claude and Codex accounts (already paid), and free models through OpenRouter. Paid models are refused, so there is no surprise bill."),
         append(el("div", "form-grid"), field("Free OpenRouter key", key, "Make a free account at openrouter.ai › Keys. No card needed for free models."), actionsRow(saveKey)),
         state.catalog_reachable ? null : hint("Couldn't reach OpenRouter to list today's free models; check your internet connection.", true),
+        state.catalog_loading ? hint("Loading today's free models from OpenRouter… this page fills them in by itself.") : null,
         table(["Kind of work", "Uses", ""], routes.map(([label, pick, test]) => [label, pick, test || ""])),
         hint("Free models allow about 20 requests a minute and 50 a day on an account that never bought credits, and they come and go: each request names free backups. Writing in your name and planning stay on your Claude account by default, for quality."),
         array(state.local_models).length ? hint(`On this computer (free, no daily limit): ${state.local_models.join(", ")}.`)

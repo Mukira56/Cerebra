@@ -141,6 +141,33 @@ class Hub:
         found = next((item for item in (self._catalog or []) if item["id"] == model_id), None)
         return (found["input"], found["output"]) if found else (None, None)
 
+    def catalog_soon(self, wait=1.5):
+        """The model list for a page: waits at most `wait` seconds, fetching in the background, so a slow connection never
+        blocks the Models page (the first fetch took about 8 s on the owner's connection). None while it's still coming;
+        raises httpx.HTTPError when OpenRouter couldn't be reached."""
+        with self._lock:
+            if self._catalog and time.monotonic() - self._catalog_at < CATALOG_TTL:
+                return self._catalog
+            fetching = getattr(self, "_fetching", None)
+            if fetching is None or not fetching.is_alive():
+                outcome = {}
+
+                def fetch():
+                    try:
+                        outcome["models"] = self.catalog()
+                    except httpx.HTTPError as exc:
+                        outcome["error"] = exc
+                fetching = threading.Thread(target=fetch, name="cerebra-model-list", daemon=True)
+                self._fetching, self._outcome = fetching, outcome
+                fetching.start()
+            outcome = self._outcome
+        fetching.join(wait)
+        if fetching.is_alive():
+            return None
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome.get("models") or self._catalog
+
     def free_models(self):
         """Ids of the models that cost nothing right now (from the live list)."""
         try:
