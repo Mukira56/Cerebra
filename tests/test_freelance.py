@@ -215,3 +215,17 @@ def test_the_list_carries_previews_and_a_lead_opens_in_full(client):  # noqa: F8
     assert listed["description_cut"] and len(listed["description"]) == freelance.PREVIEW
     full = client.get(f"/api/freelance/leads/{lead['id']}").json()
     assert full["description"] == long.strip() and client.get("/api/freelance/leads/nope").status_code == 404
+
+
+def test_leads_saved_under_older_rules_are_scored_again_once(client):  # noqa: F811
+    with client.app.state.db.Session.begin() as session:
+        session.add(freelance.FreelanceLead(id="freelancer:900", source="freelancer", title="IP Lawyer wanted", status="new", score=49,
+                                            description="Review our SaaS dashboard and UI design terms."))
+        row = session.get(freelance.Metadata, freelance.SCORE_KEY)
+        if row is not None:
+            session.delete(row)
+    client.get("/api/freelance")
+    with client.app.state.db.Session() as session:
+        assert session.get(freelance.FreelanceLead, "freelancer:900").score < 40
+        assert session.get(freelance.Metadata, freelance.SCORE_KEY).value["version"] == freelance.SCORE_VERSION
+        assert freelance.ensure_current_scores(session) is False  # nothing to do the second time

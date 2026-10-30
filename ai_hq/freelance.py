@@ -9,6 +9,7 @@ owner's click (Phase 2 drafts the proposal). RemoteOK and Remotive are credited 
 from __future__ import annotations
 
 import html
+import functools
 import re
 import threading
 from datetime import datetime, timezone
@@ -106,10 +107,16 @@ def keywords(settings):
 def _hits(words, text):
     found = []
     for word in words:
-        pattern = r"(?<![a-z0-9])" + re.escape(word.strip()) + r"(?![a-z0-9])"
-        if re.search(pattern, text):
-            found.append(word.strip())
+        word = word.strip()
+        # A plain substring check first: most words aren't in the text at all, and it's far cheaper than the pattern.
+        if word and word in text and _word_pattern(word).search(text):
+            found.append(word)
     return found
+
+
+@functools.lru_cache(maxsize=4096)
+def _word_pattern(word):
+    return re.compile(r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])")
 
 
 # Broad words that appear in almost any description: they count only in a job's title. ("IP Lawyer wanted" matched
@@ -218,6 +225,25 @@ def score(lead, settings, now_ts=None):
         points = TITLE_CAP
         reasons.append("only the description mentions your work, not the title")
     return max(1, min(100, points)), reasons
+
+
+# Raised whenever the scoring rules change, so leads saved under older rules are scored again once (not only when their
+# source happens to list them again). 4: other professions, title cap, re-posts, unrealistic budgets.
+SCORE_VERSION = 4
+SCORE_KEY = "freelance_score_version"
+
+
+def ensure_current_scores(session):
+    """Score every open lead again when the rules changed since they were scored. Cheap when nothing changed."""
+    row = session.get(Metadata, SCORE_KEY)
+    if row is not None and (row.value or {}).get("version") == SCORE_VERSION:
+        return False
+    rescore(session)
+    if row is None:
+        session.add(Metadata(key=SCORE_KEY, value={"version": SCORE_VERSION, "at": now()}))
+    else:
+        row.value = {"version": SCORE_VERSION, "at": now()}
+    return True
 
 
 def rescore(session):
@@ -514,6 +540,11 @@ class Finder:
         if self._thread is None or not self._thread.is_alive():
             self._stop.clear()
             def loop():
+                try:
+                    with self.db.Session.begin() as session:
+                        ensure_current_scores(session)  # leads saved under older rules, once, at start
+                except Exception:
+                    pass
                 while not self._stop.wait(interval):
                     try:
                         self.check()

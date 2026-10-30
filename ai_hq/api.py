@@ -1494,6 +1494,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.get("/api/freelance")
     def freelance_overview(hidden: bool = False):
+        with db.Session.begin() as session:
+            freelance.ensure_current_scores(session)  # once after the scoring rules change
         def read(session):
             wanted = freelance.profile(session)
             return {"profile": {key: value for key, value in wanted.items() if key != "checked"}, "summary": freelance.summary(session),
