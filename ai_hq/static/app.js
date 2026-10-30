@@ -1233,7 +1233,7 @@
     })();
     return root;
   }
-  const CALL_ICON = {plan: "◈", approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠", rare: "⚡"};
+  const CALL_ICON = {plan: "◈", approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠", rare: "⚡", followup: "↻"};
   function callList(items, emptyText = "Nothing waits for you.") {
     if (!array(items).length) return body(empty("All clear", emptyText, null, "✓"));
     const list = el("div", "row-list");
@@ -1674,6 +1674,14 @@
     if (lead.status === "awarded" && lead.source !== "freelancer") root.append(hint(`The client chose you. Accept the offer on ${lead.source_label}; when the contract starts, Cerebra sees it in your email and starts the work.`));
     if (lead.status === "won") root.append(lead.job_id ? append(hint("Won. Cerebra is building this job by itself; you review it before anything goes to the client."), link("Open the job →", `job/${lead.job_id}`))
       : hint(lead.work_error ? `Won, but the work couldn't start: ${lead.work_error}` : "Won. Cerebra starts the work in its next round (every 10 minutes).", !!lead.work_error));
+    if (lead.status === "applied") {
+      // One polite follow-up after a few quiet days wins more work; the note is the owner's to send, in their own name.
+      const note = `Hi, I wanted to follow up on my proposal for “${lead.title}”. I'm still available and happy to answer any questions or share a short plan for the first steps. Thanks for considering it.`;
+      root.insertBefore(hint(lead.followed_up_at ? `You followed up ${relative(lead.followed_up_at)}. If there's still no reply after a week, mark it as not won so your results stay true.`
+        : lead.applied_at ? `You applied ${relative(lead.applied_at)}. No reply after five days? Send one short follow-up where you applied.` : "No reply after five days? Send one short follow-up where you applied."), root.lastChild);
+      actions.append(button("Copy a follow-up note", () => navigator.clipboard.writeText(note).then(() => toast("Copied. Send it where you applied, then press “I followed up”."), () => toast("Couldn't copy it.", true)), "button"),
+        button("I followed up", () => setLead(lead, {followed_up: true, notes: notes.value}, "Noted. Cerebra reminds you once more in a week if there's no reply."), "button ghost"));
+    }
     if (["applied", "interview"].includes(lead.status)) actions.append(button("I won it", () => setLead(lead, {status: "won", notes: notes.value}, "Congratulations! Quote or invoice it from the Money page."), "button primary"), button("Didn't get it", () => setLead(lead, {status: "lost", notes: notes.value}, "Noted."), "button ghost"));
     if (lead.status !== "hidden") actions.append(button("Hide", () => setLead(lead, {status: "hidden", notes: notes.value}, "Hidden."), "button ghost"));
     else actions.append(button("Show again", () => setLead(lead, {status: "new"}, "Back in the list."), "button"));
@@ -1688,7 +1696,7 @@
     const record = lead.committee || {}, box = el("div", "proposal-box");
     const ask = () => act("The committee is looking at this job (about a minute)…", () => mutate("/api/freelance/committee", {id: lead.id})).then(async result => { if (!result) return; const [fresh, fresher] = await refreshLead(lead.id); leadDialog(fresh, fresher); });
     if (!record.decision) {
-      if (!state.agents_on) return null;
+      if (!state.agents_on || !["new", "saved"].includes(lead.status)) return null;  // only worth asking before applying
       return append(box, el("strong", "", "Decision committee"), el("p", "row-meta", "Five AI roles weigh this job before you spend a bid on it: fit, the case for, the case against, a risk check that can veto, and a decision."),
         button("Ask the committee", ask, "button"));
     }
@@ -1722,6 +1730,7 @@
     const save = () => mutate("/api/freelance/proposal", {id: lead.id, text: text.value, price: Number(price.value || 0), days: Number(days.value || 0)}, "PUT");
     const sending = el("div", "actions");
     if (proposal.sent_at) sending.append(hint(`Sent ${relative(proposal.sent_at)} via ${proposal.sent_via}.`));
+    else if (!["new", "saved"].includes(lead.status)) sending.append(hint("You've applied with this proposal; it stays here for reference."));
     else if (lead.source === "freelancer" && state.freelancer_account?.connected) {
       sending.append(state.freelancer_account?.connected
         ? button("Send bid on Freelancer.com", async () => { if (!await act("", save)) return; showDialog("Send this bid?", append(el("div"),

@@ -358,6 +358,11 @@ def calls(session):
         elif spotted >= fresh and status == "new" and not proposal.get("sent_at") and not proposal.get("skipped"):
             items.append({"kind": "rare", "title": "A rare chance: apply soon", "detail": f"{title[:120]}: a strong match with few bids so far",
                           "page": "freelance", "at": spotted})
+    from .freelance import waiting_replies
+    for item in waiting_replies(session):
+        items.append({"kind": "followup", "title": "Still no reply: close it?" if item["followed_up"] else "No reply yet: follow up",
+                      "detail": f"{item['title'][:120]}: {item['days']} days " + ("since your follow-up; mark it lost or keep waiting" if item["followed_up"] else "since you applied; send one short follow-up"),
+                      "page": "freelance", "at": now()})
     for post in session.scalars(select(SocialPost).where(SocialPost.status == "draft", SocialPost.origin == "ai")).all():
         items.append({"kind": "post", "title": "A post waits for your approval", "detail": " ".join(post.text.split())[:140], "page": "marketing", "at": post.created_at})
     today = now()[:10]

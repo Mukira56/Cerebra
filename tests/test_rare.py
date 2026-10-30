@@ -79,3 +79,30 @@ def test_a_search_that_finds_nothing_strong_leaves_the_activity_log_alone(client
     client.post("/api/freelance/check")
     events = [event["message"] for event in client.get("/api/overview").json()["events"]]
     assert not any(message.startswith("Found ") for message in events)
+
+
+def test_an_application_with_no_reply_gets_one_follow_up_then_a_nudge_to_close_it(client):  # noqa: F811
+    from datetime import datetime, timedelta, timezone
+    from ai_hq.models import FreelanceLead
+    client.post("/api/freelance/check")
+    lead = by_title(client, "React landing page for my bakery")
+    assert client.patch(f"/api/freelance/leads/{lead['id']}", json={"status": "applied"}).json()["applied_at"]
+
+    def waiting():
+        with client.app.state.db.Session() as session:
+            return [item for item in chief.calls(session) if item["kind"] == "followup"]
+
+    def age(key, days):
+        with client.app.state.db.Session.begin() as session:
+            row = session.get(FreelanceLead, lead["id"])
+            row.extra = {**row.extra, key: (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()}
+
+    assert waiting() == []  # just applied: nothing to do yet
+    age("applied_at", 6)
+    assert [item["title"] for item in waiting()] == ["No reply yet: follow up"] and "6 days since you applied" in waiting()[0]["detail"]
+    client.patch(f"/api/freelance/leads/{lead['id']}", json={"followed_up": True})
+    assert waiting() == []  # followed up today: wait a week
+    age("followed_up_at", 8)
+    assert [item["title"] for item in waiting()] == ["Still no reply: close it?"]
+    client.patch(f"/api/freelance/leads/{lead['id']}", json={"status": "lost"})
+    assert waiting() == []

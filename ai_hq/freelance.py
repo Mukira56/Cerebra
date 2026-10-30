@@ -377,11 +377,37 @@ def update(session, lead_id, changes):
     if "status" in changes:
         if changes["status"] not in STATUSES:
             raise ValueError("Unknown status")
+        if changes["status"] == "applied" and row.status != "applied":
+            row.extra = {**(row.extra or {}), "applied_at": now()}  # when the follow-up clock starts
         row.status = changes["status"]
+    if changes.get("followed_up"):
+        row.extra = {**(row.extra or {}), "followed_up_at": now()}
     if "notes" in changes:
         row.notes = str(changes["notes"] or "")[:2000]
     row.updated_at = now()
     return row
+
+
+FOLLOW_UP_DAYS, CLOSE_AFTER_DAYS = 5, 7  # one polite follow-up after five quiet days; a week after it, suggest closing
+
+
+def waiting_replies(session, moment=None):
+    """Applications with no reply for a while: follow up once, then close them, so the pipeline and the win rates stay true."""
+    moment = moment or datetime.now(timezone.utc)
+    items = []
+    for lead_id, title, proposal, extra, updated in session.execute(
+            select(FreelanceLead.id, FreelanceLead.title, FreelanceLead.proposal, FreelanceLead.extra, FreelanceLead.updated_at)
+            .where(FreelanceLead.status == "applied")).all():
+        extra, proposal = extra or {}, proposal or {}
+        followed = extra.get("followed_up_at")
+        start = followed or extra.get("applied_at") or proposal.get("sent_at") or updated
+        try:
+            days = (moment - datetime.fromisoformat(str(start))).days
+        except ValueError:
+            continue
+        if days >= (CLOSE_AFTER_DAYS if followed else FOLLOW_UP_DAYS):
+            items.append({"id": lead_id, "title": title, "days": days, "followed_up": bool(followed)})
+    return items
 
 
 APPLICANT_CHECK = re.compile(r"mention the word \**\s*([A-Za-z0-9-]{2,40})\s*\**(?:\s+and tag\s+([A-Za-z0-9=_-]{4,80}))?", re.I)
@@ -406,7 +432,8 @@ def public(row):
             "reasons": row.reasons or [], "status": row.status, "notes": row.notes, "company": extra.get("company", ""), "bids": extra.get("bids"),
             "credit": extra.get("credit", ""), "proposal": row.proposal or {}, "created_at": row.created_at,
             "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", ""), "checks": applicant_checks(row.description),
-            "committee": extra.get("committee") or {}, "rare": extra.get("rare", "")}
+            "committee": extra.get("committee") or {}, "rare": extra.get("rare", ""), "applied_at": extra.get("applied_at", ""),
+            "followed_up_at": extra.get("followed_up_at", "")}
 
 
 PREVIEW = 600  # characters of a job post in the list; the full post is fetched when a lead is opened
