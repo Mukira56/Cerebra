@@ -206,3 +206,12 @@ def test_a_fortune_for_a_small_job_is_flagged_not_rewarded():
     bait, why = freelance.score({**lead, "budget_min": 100_000, "budget_max": 100_000}, settings)
     fair, _ = freelance.score({**lead, "budget_min": 100, "budget_max": 300}, settings)
     assert bait < fair and any("looks unrealistic" in reason for reason in why)
+
+
+def test_the_list_carries_previews_and_a_lead_opens_in_full(client):  # noqa: F811
+    long = "We need a booking website. " * 60
+    lead = client.post("/api/freelance/leads", json={"title": "Booking website for a salon", "platform": "Upwork", "description": long}).json()
+    listed = next(item for item in client.get("/api/freelance?hidden=true").json()["leads"] if item["id"] == lead["id"])
+    assert listed["description_cut"] and len(listed["description"]) == freelance.PREVIEW
+    full = client.get(f"/api/freelance/leads/{lead['id']}").json()
+    assert full["description"] == long.strip() and client.get("/api/freelance/leads/nope").status_code == 404

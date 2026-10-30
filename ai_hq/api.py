@@ -1482,12 +1482,22 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     app.state.applier, app.state.watcher, app.state.keep_won_work = applier, watcher, keep_won_work
 
+    @app.get("/api/freelance/leads/{lead_id}")
+    def freelance_lead(lead_id: str):
+        """One lead in full (the list carries only the start of each post)."""
+        from .models import FreelanceLead
+        with db.Session() as session:
+            row = session.get(FreelanceLead, lead_id)
+            if row is None:
+                raise HTTPException(404, "Lead not found")
+            return freelance.public(row)
+
     @app.get("/api/freelance")
     def freelance_overview(hidden: bool = False):
         def read(session):
             wanted = freelance.profile(session)
             return {"profile": {key: value for key, value in wanted.items() if key != "checked"}, "summary": freelance.summary(session),
-                    "leads": freelance.leads(session, include_hidden=hidden),
+                    "leads": freelance.leads(session, include_hidden=hidden, brief=True),
                     "services": {key: label for key, (label, _) in freelance.SERVICES.items()},
                     "sources": [{"id": name, **{key: value for key, value in info.items() if key != "every"}, "enabled": wanted["sources"].get(name, True),
                                  "every_minutes": info["every"] // 60, "last": {key: value for key, value in ((wanted.get("checked") or {}).get(name) or {}).items() if key != "at_ts"}}

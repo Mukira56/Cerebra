@@ -324,15 +324,23 @@ def public(row):
             "job_id": extra.get("job_id", ""), "work_error": extra.get("work_error", ""), "checks": applicant_checks(row.description)}
 
 
-def leads(session, include_hidden=False, limit=300):
+PREVIEW = 600  # characters of a job post in the list; the full post is fetched when a lead is opened
+
+
+def leads(session, include_hidden=False, limit=300, brief=False):
     query = select(FreelanceLead).order_by(FreelanceLead.score.desc(), FreelanceLead.posted_at.desc()).limit(limit)
     if not include_hidden:
         query = query.where(FreelanceLead.status != "hidden")
-    return [public(row) for row in session.scalars(query)]
+    found = [public(row) for row in session.scalars(query)]
+    if brief:
+        for item in found:
+            item["description_cut"] = len(item["description"]) > PREVIEW
+            item["description"] = item["description"][:PREVIEW]
+    return found
 
 
 def summary(session):
-    rows = session.scalars(select(FreelanceLead)).all()
+    rows = session.execute(select(FreelanceLead.status, FreelanceLead.score)).all()  # two columns, not every post's text
     counts = {status: sum(1 for row in rows if row.status == status) for status in STATUSES}
     counts["good_matches"] = sum(1 for row in rows if row.status == "new" and row.score >= GOOD)
     return counts

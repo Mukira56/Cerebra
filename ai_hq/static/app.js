@@ -1557,6 +1557,7 @@
     root.append(body(el("p", "", "Loading freelance work…")));
     (async () => {
       let state; try { state = await api("/api/freelance"); } catch (issue) { root.replaceChildren(body(empty("Freelance unavailable", issue.message))); return; }
+      freelanceState = state;
       if (token !== renderToken) return;
       const counts = state.summary, stats = el("div", "grid stats");
       [["Strong matches", counts.good_matches, "new work that fits what you sell", "green"], ["Applied", counts.applied, "waiting for the client", "amber"],
@@ -1598,7 +1599,9 @@
   function leadDialog(lead, state) {
     const root = el("div"), notes = textarea("Your notes: what you offered, the client's name, next step…", lead.notes || "");
     append(root, append(el("div", "detail-top"), scoreBadge(lead.score), badge(lead.status, LEAD_STYLE[lead.status]), el("span", "row-meta", [lead.source_label, leadMoney(lead), lead.posted_at ? relative(lead.posted_at) : ""].filter(Boolean).join(" · "))),
-      hint(array(lead.reasons).join(" · ")), el("pre", "lead-description", lead.description || "No description."),
+      hint(array(lead.reasons).join(" · ")), (() => { const text = el("pre", "lead-description", lead.description || "No description.");
+        if (lead.description_cut) { text.textContent += "…"; api(`/api/freelance/leads/${encodeURIComponent(lead.id)}`).then(full => { text.textContent = full.description; }).catch(() => {}); }
+        return text; })(),
       lead.credit ? el("p", "row-meta", `${lead.credit}. Apply on their page.`) : null,
       array(lead.checks).length ? hint(`This post checks that applicants read it: it asks you to mention the word ${array(lead.checks).map(item => `“${item.word}”${item.tag ? ` (and the tag ${item.tag})` : ""}`).join(", ")}. Cerebra doesn't add it by itself; put it in your application if you apply.`) : null,
       proposalSection(lead, state), field("Notes", notes));
@@ -1622,7 +1625,8 @@
     dialog.dataset.leadId = lead.id;
   }
   // Phase 2: a proposal written by the owner's own model from facts only; the owner edits and sends it.
-  async function refreshLead(id) { const fresh = await api("/api/freelance?hidden=true"); return [fresh.leads.find(item => item.id === id), fresh]; }
+  let freelanceState = null;  // the page's last state; a single lead is fetched on its own, not the whole list
+  async function refreshLead(id) { return [await api(`/api/freelance/leads/${encodeURIComponent(id)}`), freelanceState || await api("/api/freelance")]; }
   function watchDraft(lead) {
     setTimeout(async () => {
       if (!dialog.open || dialog.dataset.leadId !== lead.id) return;
