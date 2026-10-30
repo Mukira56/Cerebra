@@ -1286,7 +1286,7 @@
         shown.length ? list : body(empty(prospectFilter === "kept" ? "None yet" : "Nothing here", "Run a search: Cerebra lists local businesses from OpenStreetMap, leaves out chains, reads each one's own home page once, and keeps those with a concrete reason to talk to you.", null, "⌖"))), null, shown.length));
       const side = append(el("div"),
         panel("Find businesses", body(form, search.message ? hint(search.running ? `${search.message} This page refreshes itself.` : search.message) : null,
-          hint("Public data only. Nobody is contacted: you decide who to approach, and how."))),
+          hint("Public data only. Nobody is contacted: you decide who to approach, and how. Your searches run again every week and add only new businesses (switch it off on the Chief of Staff page)."))),
         searches.length ? panel("Recent searches", body(kv(searches))) : null,
         searches.length ? panel("Your offer", body(offerPanel(state))) : null,
         panel("How it works", body(hint("Each fact comes from the business's own home page, read once where its robots.txt allows, and shows where it was seen. A site that turns robots away gets no claim at all. Chains (brand-tagged, or 3 or more locations in the city) are left out."),

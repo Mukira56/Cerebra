@@ -165,3 +165,13 @@ def test_openers_and_the_offer_are_drafted_from_facts_and_nothing_is_sent(client
     assert client.post("/api/prospects/offer/plumbers").status_code == 400  # nothing seen yet for plumbers
     edited = client.patch(f"/api/prospects/{smile['id']}", json={"opener": "Subject: Hi\n\nMy own words"}).json()
     assert edited["opener"] == "Subject: Hi\n\nMy own words"
+
+
+def test_saved_searches_run_again_every_week_and_add_only_new_businesses(client):  # noqa: F811
+    real = client.app.state.prospector
+    simulated = finder(client)
+    real.client, real.reader, real.pause = simulated.client, simulated.reader, 0
+    assert client.app.state.refresh_prospects() == {"skipped": "no searches yet"}
+    real.search("dentists", "Austin", "Texas")
+    assert client.app.state.refresh_prospects() == {"searches": 1, "new": 0, "kept": 0}  # everything was seen last week
+    assert client.app.state.registry.workers["prospect_refresh"].every_minutes == 7 * 24 * 60

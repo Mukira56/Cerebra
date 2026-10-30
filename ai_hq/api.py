@@ -1306,6 +1306,26 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         finally:
             prospect_state["running"] = False
 
+    def refresh_prospects():
+        """Weekly: run every saved search again; only businesses not seen before are read and added."""
+        with db.Session() as session:
+            from .models import ProspectSearch
+            saved = list(dict.fromkeys((row.kind, row.city, row.state) for row in session.scalars(select(ProspectSearch).order_by(ProspectSearch.created_at.desc())).all()))
+        if not saved:
+            return {"skipped": "no searches yet"}
+        if prospect_state["running"]:
+            return {"skipped": "a search is running"}
+        found = kept = 0
+        for kind, city, state in saved[:10]:
+            run_prospect_search(kind, city, state)
+            result = prospect_state.get("result") or {}
+            found, kept = found + int(result.get("new") or 0), kept + int(result.get("kept") or 0)
+        return {"searches": len(saved[:10]), "new": found, "kept": kept}
+
+    registry.add("prospect_refresh", "Find new local businesses", "Every week, runs your Prospects searches again; only businesses not seen before are read, and nobody is contacted.",
+                 refresh_prospects, 7 * 24 * 60)
+    app.state.refresh_prospects = refresh_prospects
+
     @app.get("/api/prospects")
     def prospects_overview():
         with db.Session() as session:
