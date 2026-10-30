@@ -1377,6 +1377,36 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
+    # ---- Funding: credits, grants and accelerators, and what each still needs (the owner applies) ----
+    from . import funding
+
+    @app.get("/api/funding")
+    def funding_overview():
+        with db.Session() as session:
+            return funding.overview(session)
+
+    @app.put("/api/funding/facts")
+    def funding_facts(payload: dict):
+        with db.Session.begin() as session:
+            return funding.save_facts(session, {key: payload[key] for key in funding.FACT_FIELDS if key in payload})
+
+    @app.post("/api/funding/programs/{key}/open")
+    def funding_open(key: str):
+        """The program's official page in the owner's own browser (only the fixed, checked addresses in the list)."""
+        program = next((item for item in funding.PROGRAMS if item["key"] == key), None)
+        if program is None:
+            raise HTTPException(404, "Unknown program")
+        app.state.open_document(program["url"])
+        return {"opened": program["url"]}
+
+    @app.put("/api/funding/programs/{key}")
+    def funding_mark(key: str, payload: dict):
+        try:
+            with db.Session.begin() as session:
+                return funding.mark(session, key, str(payload.get("status") or ""), payload.get("note", ""))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
     @app.get("/api/freelance/insights")
     def freelance_insights():
         """What works: wins and money by source, service and way of applying, with plain suggestions."""

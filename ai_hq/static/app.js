@@ -16,6 +16,7 @@
     marketing: ["WORK", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
     prospects: ["WORK", "Prospects", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
+    funding: ["WORK", "Funding", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
     books: ["WORK", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
     freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
@@ -166,7 +167,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, chief: chiefView, prospects: prospectsView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, chief: chiefView, prospects: prospectsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1334,6 +1335,54 @@
       actionsRow(array(item.facts).length ? draft : null, copy,
         button("Save", () => act("Saved.", () => mutate(`/api/prospects/${item.id}`, {status: status.value, notes: notes.value, opener: opener.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
     showDialog(item.name, root);
+  }
+
+  // ---------- funding: credits, grants and accelerators ----------
+  const FUND_STYLE = {credits: "cyan", grant: "green", accelerator: "purple"};
+  function fundingView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading…")));
+    (async () => {
+      let state; try { state = await api("/api/funding"); } catch (issue) { root.replaceChildren(body(empty("Funding unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const programs = array(state.programs), proof = state.evidence || {}, stats = el("div", "grid stats");
+      const applied = programs.filter(item => item.applied?.status === "applied").length, accepted = programs.filter(item => item.applied?.status === "accepted").length;
+      [["Ready to apply", state.ready, `of ${programs.length} programs`, "green"], ["Applied", applied, "waiting to hear", "amber"], ["Accepted", accepted, "credits or funding won", "cyan"],
+       ["Paying customers", proof.paying_customers ? "Yes" : "Not yet", proof.jobs_won ? `${proof.jobs_won} job(s) won` : "from your records", ""]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const list = el("div", "row-list");
+      programs.forEach(program => {
+        const status = select([["", "Not started"], ["planned", "Planning to apply"], ["applied", "Applied"], ["accepted", "Accepted"], ["declined", "Declined"]], program.applied?.status || "");
+        status.addEventListener("change", () => act("Saved.", () => mutate(`/api/funding/programs/${program.key}`, {status: status.value}, "PUT")).then(() => render()));
+        list.append(append(el("div", "worker"), append(el("div", "worker-head"), el("strong", "", program.name), badge(program.kind, FUND_STYLE[program.kind]),
+            program.equity ? el("span", "badge amber", "TAKES EQUITY") : el("span", "badge muted", "NO EQUITY"), program.ready ? el("span", "badge green", "READY") : null),
+          el("div", "", program.gives), el("div", "row-meta", program.window),
+          program.ready ? el("div", "row-meta", "You meet what this program asks for.") : el("div", "row-meta", `Still needed: ${program.missing.join(", ")}`),
+          append(el("div", "worker-controls"), status, button("Open the official page", () => act("Opened in your browser.", () => mutate(`/api/funding/programs/${program.key}/open`, {})), "button small"))));
+      });
+      const left = append(el("div"), panel("Programs", append(el("div"), list, body(hint(`Each program was checked against its official page on ${state.checked}. Amounts and deadlines change: open the official page before you apply. Cerebra never applies for you.`))), null, programs.length));
+      const side = append(el("div"), panel("Your facts", body(fundingFacts(state))),
+        panel("What your records show", body(kv([["Earned this year", Object.entries(proof.earned_this_year || {}).map(([currency, amount]) => `${currency} ${Number(amount).toLocaleString(undefined, {minimumFractionDigits: 2})}`).join(" + ") || "Nothing recorded yet"],
+          ["Product sales", String(proof.product_sales || 0)], ["Freelance jobs won", String(proof.jobs_won || 0)]]), hint("Programs that ask for paying customers are checked against these records, not just your word."))),
+        panel("Why this matters", body(hint("Credits pay for the cloud and AI that run Cerebra's own model later; grants and accelerators bring money and mentors. A registered company and a website unlock most of them."))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  function fundingFacts(state) {
+    const value = state.facts, form = el("form"), save = submitButton("Save");
+    const company = check("I have a registered company", value.company), country = input("Where it's registered, e.g. Kenya or Delaware, USA", value.company_country);
+    const website = input("https://your-company.com", value.website), founded = input("2026", value.founded_year || "", "number");
+    const product = check("Something I built is live and people use it", value.product), african = check("I'm an African citizen or resident, 18 or older", value.african);
+    const selfFunded = check("No outside investors yet", value.self_funded), awsPaid = check("My AWS account is on a paid plan", value.aws_paid);
+    append(form, company.wrap, append(el("div", "form-grid"), field("Country", country), field("Founded (year)", founded)), field("Company website", website),
+      product.wrap, african.wrap, selfFunded.wrap, awsPaid.wrap, actionsRow(save));
+    wireForm(form, save, async () => {
+      await mutate("/api/funding/facts", {company: company.control.checked, company_country: country.value, website: website.value, founded_year: Number(founded.value || 0),
+        product: product.control.checked, african: african.control.checked, self_funded: selfFunded.control.checked, aws_paid: awsPaid.control.checked}, "PUT");
+      toast("Saved. Readiness updated."); render();
+    });
+    return form;
   }
 
   // ---------- books: short nonfiction for Amazon KDP ----------
