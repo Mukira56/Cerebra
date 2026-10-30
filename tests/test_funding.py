@@ -44,3 +44,36 @@ def test_the_owner_records_applications_and_bad_facts_are_refused(client):  # no
     assert client.put("/api/funding/programs/nope", json={"status": "applied"}).status_code == 404
     assert client.put("/api/funding/programs/tef", json={"status": "won the lottery"}).status_code == 400
     assert client.put("/api/funding/facts", json={"founded_year": 1800}).status_code == 400
+
+
+def test_an_application_is_drafted_from_records_with_gaps_marked_to_fill(client):  # noqa: F811
+    import json
+    from ai_hq.agents import AgentResult
+    from fakes import FixtureRegistry
+    from test_product_api import enable_agents
+
+    class Model(FixtureRegistry):
+        def __init__(self):
+            super().__init__()
+            self.prompts = []
+
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            self.prompts.append(prompt)
+            return AgentResult(True, json.dumps({"answers": ["We build websites for clinics.", "Clinics without online booking.",
+                                                             "Hosting Cerebra's own model.\nTO FILL: how many users you expect", "One job won so far."]}))
+    enable_agents(client)
+    model = Model()
+    client.app.state.supervisor.registry = model
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id="freelancer:2", source="freelancer", title="Website", status="won"))
+    client.put("/api/funding/facts", json={"company": True, "company_country": "Kenya", "website": "mukira.example"})
+    draft = client.post("/api/funding/programs/microsoft/draft").json()
+    assert [item["question"] for item in draft["answers"]] == ["What does your company build, in one or two sentences?", "Who uses it, and what problem does it solve for them?",
+                                                              "What will you use the credits for?", "Where are you now: product, users, revenue?"]
+    assert draft["to_fill"] == 1 and draft["answers"][2]["answer"].endswith("TO FILL: how many users you expect")
+    prompt = model.prompts[-1]
+    assert "Freelance jobs won: 1" in prompt and "Registered company: yes, in Kenya" in prompt and "Never invent users" in prompt
+    edited = client.put("/api/funding/programs/microsoft/draft", json={"answers": ["Mine", "Two"]}).json()
+    assert [item["answer"] for item in edited["answers"]] == ["Mine", "Two", "", ""]
+    assert client.get("/api/funding").json()["drafts"]["microsoft"]["answers"][0]["answer"] == "Mine"
+    assert client.post("/api/funding/programs/nope/draft").status_code == 404

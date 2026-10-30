@@ -1379,11 +1379,29 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     # ---- Funding: credits, grants and accelerators, and what each still needs (the owner applies) ----
     from . import funding
+    funding_drafter = funding.Drafter(db, settings, chat_registry)
+    app.state.funding_drafter = funding_drafter
 
     @app.get("/api/funding")
     def funding_overview():
         with db.Session() as session:
-            return funding.overview(session)
+            return {**funding.overview(session), "drafts": funding.drafts(session)}
+
+    @app.post("/api/funding/programs/{key}/draft")
+    def funding_draft(key: str):
+        """Draft the application's answers from your records (a minute or so). Nothing is submitted."""
+        try:
+            return funding_drafter.draft(key)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.put("/api/funding/programs/{key}/draft")
+    def funding_draft_save(key: str, payload: dict):
+        try:
+            with db.Session.begin() as session:
+                return funding.save_draft(session, key, payload.get("answers"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
 
     @app.put("/api/funding/facts")
     def funding_facts(payload: dict):

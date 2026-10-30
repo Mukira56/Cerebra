@@ -1358,7 +1358,9 @@
             program.equity ? el("span", "badge amber", "TAKES EQUITY") : el("span", "badge muted", "NO EQUITY"), program.ready ? el("span", "badge green", "READY") : null),
           el("div", "", program.gives), el("div", "row-meta", program.window),
           program.ready ? el("div", "row-meta", "You meet what this program asks for.") : el("div", "row-meta", `Still needed: ${program.missing.join(", ")}`),
-          append(el("div", "worker-controls"), status, button("Open the official page", () => act("Opened in your browser.", () => mutate(`/api/funding/programs/${program.key}/open`, {})), "button small"))));
+          append(el("div", "worker-controls"), status, button("Open the official page", () => act("Opened in your browser.", () => mutate(`/api/funding/programs/${program.key}/open`, {})), "button small"),
+            button((state.drafts || {})[program.key] ? "Your draft answers" : "Draft my answers", () => (state.drafts || {})[program.key] ? fundingDraftDialog(program, state.drafts[program.key])
+              : act("Drafted. Read it and fill in the TO FILL lines.", () => mutate(`/api/funding/programs/${program.key}/draft`, {}, "POST", 300000)).then(result => { if (result) fundingDraftDialog(program, result); }), "button small"))));
       });
       const left = append(el("div"), panel("Programs", append(el("div"), list, body(hint(`Each program was checked against its official page on ${state.checked}. Amounts and deadlines change: open the official page before you apply. Cerebra never applies for you.`))), null, programs.length));
       const side = append(el("div"), panel("Your facts", body(fundingFacts(state))),
@@ -1368,6 +1370,17 @@
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
     return root;
+  }
+  function fundingDraftDialog(program, draft) {
+    const root = el("div"), boxes = array(draft.answers).map(item => { const box = textarea("", item.answer); box.rows = 5; return {question: item.question, box}; });
+    const gaps = boxes.filter(item => item.box.value.includes("TO FILL:")).length;
+    append(root, gaps ? hint(`${gaps} answer(s) have a TO FILL line: replace it with the real detail before you submit.`, true) : hint("Read every answer: it's your application."),
+      ...boxes.map(item => field(item.question, item.box)),
+      hint(`Written from your records${draft.model ? ` by ${draft.model}` : ""}. Never submit anything you can't back up. Paste the answers into the program's own form.`),
+      actionsRow(button("Draft again", () => act("Drafted again.", () => mutate(`/api/funding/programs/${program.key}/draft`, {}, "POST", 300000)).then(result => { if (result) fundingDraftDialog(program, result); }), "button ghost"),
+        button("Copy all", () => navigator.clipboard.writeText(boxes.map(item => `${item.question}\n${item.box.value}`).join("\n\n")).then(() => toast("Copied.")), "button"),
+        button("Save", () => act("Saved.", () => mutate(`/api/funding/programs/${program.key}/draft`, {answers: boxes.map(item => item.box.value)}, "PUT")).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+    showDialog(`${program.name}: your answers`, root);
   }
   function fundingFacts(state) {
     const value = state.facts, form = el("form"), save = submitButton("Save");
