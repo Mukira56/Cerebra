@@ -1006,8 +1006,34 @@
     const rows = profiles().map(profile => [append(el("div"), el("strong", "", profile.label), el("div", "row-meta", profile.id)), append(el("span"), el("span", `icon-tile ${profile.provider}`, PROVIDER_ICON[profile.provider] || "AI")), el("code", "", profile.model || "(CLI default)"), profile.can_run_tasks ? badge("ready", "green") : badge("not runnable yet", "muted"),
       append(el("div", "card-footer"), button("Edit", () => profileForm(profile), "button small"), profile.built_in ? null : button("Remove", () => act("Model removed.", async () => { await api(`/api/models/${profile.id}`, {method: "DELETE"}); await refresh(true); }), "button small danger"))]);
     root.append(panel("Models", table(["Name", "Provider", "Model", "Status", ""], rows), button("+ Add model", () => profileForm(), "button small primary"), profiles().length));
+    root.append(panel("Free models and your accounts", body(hubPanel())));
     return root;
   }
+  function hubPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/models/hub").then(state => {
+      const key = input(state.connected ? "Saved: paste a new key to replace it" : "sk-or-v1-…", "", "password"), saveKey = button("Save key", () => act("Saved.", () => mutate("/api/models/hub", {api_key: key.value.trim()}, "PUT")).then(() => render()), "button small");
+      const choices = [...Object.entries(state.accounts || {}).map(([id, label]) => [id, label]), ...array(state.free_models).map(item => [item.id, /free/i.test(item.name) ? item.name : `${item.name} (free)`])];
+      const routes = array(state.categories).map(category => {
+        const pick = select(choices.length ? choices : [[state.routes[category.key], state.routes[category.key]]], state.routes[category.key]);
+        if (!Array.from(pick.options).some(option => option.value === state.routes[category.key])) { pick.append(option(state.routes[category.key], `${state.routes[category.key]} (no longer free: choose another)`)); pick.value = state.routes[category.key]; }
+        pick.addEventListener("change", () => act("Saved.", () => mutate("/api/models/hub", {routes: {[category.key]: pick.value}}, "PUT")));
+        const test = button("Test", () => act(result => `Answered: ${result.answer}`, () => mutate("/api/models/hub/test", {category: category.key}, "POST", 120000)), "button small ghost");
+        return [append(el("div"), el("strong", "", category.label), el("div", "row-meta", category.about)), pick, String(state.routes[category.key]).startsWith("account:") ? "" : test];
+      });
+      const usage = array(state.usage);
+      root.replaceChildren(
+        hint("Only what costs you nothing extra: your Claude and Codex accounts (already paid), and free models through OpenRouter. Paid models are refused, so there is no surprise bill."),
+        append(el("div", "form-grid"), field("Free OpenRouter key", key, "Make a free account at openrouter.ai › Keys. No card needed for free models."), actionsRow(saveKey)),
+        state.catalog_reachable ? null : hint("Couldn't reach OpenRouter to list today's free models; check your internet connection.", true),
+        table(["Kind of work", "Uses", ""], routes.map(([label, pick, test]) => [label, pick, test || ""])),
+        hint("Free models allow about 20 requests a minute and 50 a day on an account that never bought credits, and they come and go: each request names free backups. Writing in your name and planning stay on your Claude account by default, for quality."),
+        usage.length ? append(el("div"), el("h4", "", "This month"), table(["Kind of work", "Model", "Calls", "Cost"], usage.map(item => [item.category, item.model, String(item.calls), `USD ${item.cost.toFixed(2)}`]))) : null);
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
+
   function profileForm(profile = null) {
     const form = el("form"), provider = select([["codex", "OpenAI Codex"], ["claude", "Claude Code"], ["copilot", "GitHub Copilot CLI"], ["gemini", "Gemini CLI"]], profile?.provider || "claude"), model = input("e.g. opus, sonnet, gpt-5-codex …", profile?.model || ""), label = input("A name you will recognise", profile?.label || ""), suggestions = el("div", "row-meta");
     provider.disabled = !!profile;

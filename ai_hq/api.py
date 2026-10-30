@@ -115,6 +115,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         finder.client.close()
         bidder.client.close()
         publisher.client.close()
+        if hasattr(app.state, "hub"):
+            app.state.hub.client.close()
         mailbox.client.close()
         notifier.client.close()
         db.close()
@@ -1445,6 +1447,41 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 return funding.mark(session, key, str(payload.get("status") or ""), payload.get("note", ""))
         except LookupError as exc:
             raise HTTPException(404, str(exc))
+
+    # ---- The model hub: free models and the owner's own Claude and Codex accounts, routed by kind of work ----
+    from . import modelhub
+    hub = modelhub.Hub(db)
+    app.state.hub = hub
+    for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer):
+        writer.hub = hub
+
+    @app.get("/api/models/hub")
+    def models_hub():
+        with db.Session() as session:
+            value, spent, usage = modelhub.settings(session), modelhub.spent_this_month(session), modelhub.usage_summary(session)
+        try:
+            free = sorted((item for item in hub.catalog() if item["input"] == 0 and item["output"] == 0), key=lambda item: item["id"])
+            reachable = True
+        except httpx.HTTPError:
+            free, reachable = [], False
+        return {**modelhub.public(value, spent), "free_models": free, "usage": usage, "catalog_reachable": reachable}
+
+    @app.put("/api/models/hub")
+    def models_hub_save(payload: dict):
+        with db.Session.begin() as session:
+            value = modelhub.save_settings(session, {key: payload[key] for key in ("api_key", "routes", "enabled") if key in payload})
+            return modelhub.public(value, modelhub.spent_this_month(session))
+
+    @app.post("/api/models/hub/test")
+    def models_hub_test(payload: dict):
+        """Ask the free model for one kind of work a one-line question, to check the key and the route."""
+        category = str(payload.get("category") or "bulk")
+        if category not in modelhub.CATEGORIES:
+            raise HTTPException(404, "Unknown kind of work")
+        result = hub.chat(category, "Reply with exactly: ready", max_tokens=20)
+        if not result.success:
+            raise HTTPException(400, result.error or "The model didn't answer")
+        return {"ok": True, "answer": result.output.strip()[:200]}
 
     @app.get("/api/freelance/insights")
     def freelance_insights():

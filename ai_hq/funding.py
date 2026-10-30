@@ -233,7 +233,8 @@ class Drafter:
                 prompt, questions = draft_prompt(session, key)
             workdir = self.settings.data_dir / "chat-workspace"
             workdir.mkdir(parents=True, exist_ok=True)
-            result = self.registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))
+            from .modelhub import chat_for
+            result = chat_for(getattr(self, "hub", None), "judgment", self.registry_source, selected, prompt, workdir)
             if not result.success:
                 raise ValueError(result.error or "The model couldn't write it")
             found = re.search(r"\{.*\}", str(result.output or ""), re.S)

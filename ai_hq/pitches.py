@@ -165,7 +165,8 @@ class Writer:
         workdir = self.settings.data_dir / "chat-workspace"
         workdir.mkdir(parents=True, exist_ok=True)
         try:
-            result = self.registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))
+            from .modelhub import chat_for
+            result = chat_for(getattr(self, "hub", None), "writing", self.registry_source, selected, prompt, workdir)
             if not result.success:
                 raise ValueError(result.error or "The model couldn't write it")
             data = parse(result.output, kind)

@@ -475,6 +475,19 @@ class Prospect(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class ModelUsage(Base):
+    """One call through the model hub: which kind of work, which model, the tokens and what it cost (USD)."""
+    __tablename__ = "model_usage"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    at: Mapped[str] = mapped_column(String, default=now, index=True)
+    category: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[float] = mapped_column(default=0.0)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    seconds: Mapped[float] = mapped_column(default=0.0)
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

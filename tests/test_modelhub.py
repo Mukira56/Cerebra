@@ -1,0 +1,90 @@
+"""The model hub: only the owner's Claude and Codex accounts and free models; anything with a price is refused.
+OpenRouter is simulated; no real key or model is used."""
+import json
+
+import httpx
+
+from ai_hq import modelhub
+from ai_hq.agents import AgentResult
+from fakes import FixtureRegistry
+from test_freelance import client  # noqa: F401  (client is a fixture)
+
+KEY = "sk-or-v1-test-key-1234567890abcdef1234567890abcdef"
+MODELS = {"data": [
+    {"id": "google/gemma-4-31b-it:free", "name": "Gemma 4 (free)", "pricing": {"prompt": "0", "completion": "0"}, "context_length": 262144},
+    {"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "name": "Nemotron (free)", "pricing": {"prompt": "0", "completion": "0"}},
+    {"id": "openrouter/free", "name": "Free router", "pricing": {"prompt": "0", "completion": "0"}},
+    {"id": "x-ai/grok-4.7", "name": "Grok 4.7", "pricing": {"prompt": "0.000002", "completion": "0.000006"}},
+]}
+
+
+class OpenRouter:
+    def __init__(self, status=200):
+        self.status, self.bodies = status, []
+
+    def __call__(self, request):
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=MODELS)
+        assert request.headers["Authorization"] == f"Bearer {KEY}"
+        body = json.loads(request.content)
+        self.bodies.append(body)
+        if self.status != 200:
+            return httpx.Response(self.status, json={"error": {"message": "Rate limit exceeded: free-models-per-day"}})
+        return httpx.Response(200, json={"model": body["model"], "choices": [{"message": {"content": "ready"}}],
+                                         "usage": {"prompt_tokens": 12, "completion_tokens": 1, "cost": 0}})
+
+
+def connect(client, status=200):  # noqa: F811
+    site = OpenRouter(status)
+    client.app.state.hub.client = httpx.Client(transport=httpx.MockTransport(site))
+    client.put("/api/models/hub", json={"api_key": KEY})
+    return site
+
+
+def test_only_free_models_and_the_owners_accounts_can_be_chosen(client):  # noqa: F811
+    connect(client)
+    state = client.get("/api/models/hub").json()
+    assert state["connected"] and state["free_only"] and "api_key" not in json.dumps(state).replace('"api_key"', "") and KEY not in json.dumps(state)
+    assert {item["id"] for item in state["free_models"]} == {"google/gemma-4-31b-it:free", "nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter/free"}
+    assert state["routes"]["writing"] == "account:claude" and state["routes"]["judgment"] == "account:claude"
+    refused = client.put("/api/models/hub", json={"routes": {"bulk": "x-ai/grok-4.7"}})
+    assert refused.status_code == 400 and "isn't free" in refused.json()["detail"]
+    assert client.put("/api/models/hub", json={"routes": {"bulk": "google/gemma-4-31b-it:free", "writing": "account:codex"}}).json()["routes"]["writing"] == "account:codex"
+    assert client.put("/api/models/hub", json={"api_key": "not-a-key"}).status_code == 400
+
+
+def test_a_free_model_answers_with_fallbacks_and_costs_nothing(client):  # noqa: F811
+    site = connect(client)
+    assert client.post("/api/models/hub/test", json={"category": "verify"}).json() == {"ok": True, "answer": "ready"}
+    body = site.bodies[-1]
+    assert body["model"] == "google/gemma-4-31b-it:free" and body["models"][-1] == "openrouter/free" and "tools" not in body  # no paid web search
+    usage = client.get("/api/models/hub").json()["usage"]
+    assert usage == [{"category": "verify", "model": "google/gemma-4-31b-it:free", "calls": 1, "cost": 0.0}]
+
+
+def test_a_paid_model_is_never_called_even_if_stored(client):  # noqa: F811
+    site = connect(client)
+    with client.app.state.db.Session.begin() as session:  # as if an older setting or a hand edit had named a paid model
+        row = session.get(modelhub.Metadata, modelhub.KEY)
+        row.value = {**row.value, "routes": {"bulk": "x-ai/grok-4.7"}}
+    result = client.app.state.hub.chat("bulk", "hello")
+    assert not result.success and "isn't free right now" in result.error and site.bodies == []
+
+
+def test_the_daily_free_limit_is_explained(client):  # noqa: F811
+    connect(client, status=429)
+    refused = client.post("/api/models/hub/test", json={"category": "bulk"})
+    assert refused.status_code == 400 and "50 requests a day" in refused.json()["detail"]
+
+
+def test_writing_goes_to_the_owners_claude_account(client):  # noqa: F811
+    calls = []
+
+    class Accounts(FixtureRegistry):
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            calls.append(name)
+            return AgentResult(True, "drafted")
+    hub = client.app.state.hub
+    result = modelhub.chat_for(hub, "writing", lambda: Accounts(), {"provider": "codex", "model": "gpt-x"}, "Write a proposal", ".")
+    assert result.output == "drafted" and calls == ["claude"]
+    assert modelhub.chat_for(None, "writing", lambda: Accounts(), {"provider": "codex"}, "x", ".").output == "drafted" and calls[-1] == "codex"  # no hub: as before
