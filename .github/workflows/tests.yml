@@ -1,0 +1,40 @@
+# Cerebra's tests on Linux and macOS (docs/MAC_LINUX.md): started by hand from the Actions tab or `gh workflow run tests.yml`,
+# never on every push, so the free Actions minutes last. Fixture models only; nothing here calls an AI provider or a real account.
+name: Tests (Linux and macOS)
+on:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: "Also run on macOS (macOS minutes count ten times against the free allowance)"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Skip macOS unless asked
+        if: matrix.os == 'macos-latest' && !inputs.macos
+        run: echo "macOS not requested for this run."
+      - uses: actions/checkout@v4
+        if: matrix.os == 'ubuntu-latest' || inputs.macos
+      - uses: actions/setup-python@v5
+        if: matrix.os == 'ubuntu-latest' || inputs.macos
+        with:
+          python-version: "3.13"
+      - name: Set up Cerebra the way an owner would (scripts/setup.sh)
+        if: matrix.os == 'ubuntu-latest' || inputs.macos
+        run: |
+          git config --global user.name "Cerebra CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+          ./scripts/setup.sh
+      - name: Run the tests
+        if: matrix.os == 'ubuntu-latest' || inputs.macos
+        run: .venv/bin/python -m pytest -q -p no:cacheprovider
