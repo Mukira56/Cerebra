@@ -22,7 +22,8 @@ def test_the_install_command_follows_the_lockfile_and_the_test_tool(tmp_path):
     plan = packages.plan(root, [["npm", "test"]])
     assert plan["prefix"] == ["npm"] and plan["steps"] == [["ci"], ["install", "--no-package-lock"]] and not plan["installed"]
     (root / "package-lock.json").unlink(); (root / "pnpm-lock.yaml").write_text("lockfileVersion: 9", encoding="utf-8")
-    node, script = r"C:\cache\node\bin\node.exe", r"C:\cache\node\node_modules\pnpm\bin\pnpm.mjs"
+    node, script = ((r"C:\cache\node\bin\node.exe", r"C:\cache\node\node_modules\pnpm\bin\pnpm.mjs") if sys.platform == "win32"
+                    else ("/opt/cache/node/bin/node", "/opt/cache/node/lib/node_modules/pnpm/bin/pnpm.mjs"))
     plan = packages.plan(root, [[node, script, "check"]])
     assert plan["prefix"] == [node, script] and plan["steps"] == [["install", "--frozen-lockfile"], ["install", "--no-lockfile"]]
     (tmp_path / "yarn-project").mkdir()

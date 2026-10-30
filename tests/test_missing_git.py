@@ -26,8 +26,9 @@ def no_git(tmp_path, monkeypatch):
 
 def fake_git(folder):
     folder.mkdir(parents=True)
-    executable = folder / "git.exe"
+    executable = folder / ("git.exe" if os.name == "nt" else "git")
     executable.write_bytes(b"")  # only located, never run
+    executable.chmod(0o755)  # macOS and Linux only find programs marked executable
     return executable
 
 

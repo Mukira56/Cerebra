@@ -1,6 +1,7 @@
 """In-app updates (fake GitHub CLI, no download or install) and the Business connections setup helpers."""
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,6 +36,9 @@ class FakeGh:
             (target / (name + ".sha256")).write_text(f"{digest}  {name}\n", encoding="utf-8")
             return SimpleNamespace(exit_code=0, stdout="", stderr="")
         return SimpleNamespace(exit_code=1, stdout="", stderr="unexpected")
+
+
+windows_installer = pytest.mark.skipif(os.name != "nt", reason="installer updates are Windows-only; elsewhere Cerebra updates with git pull")
 
 
 @pytest.fixture
@@ -74,6 +78,7 @@ def download(client, tag="v99.0.0"):
     raise AssertionError("download did not finish")
 
 
+@windows_installer
 def test_check_download_verify_and_install_plan(client, tmp_path, monkeypatch):
     info = client.get("/api/updates").json()
     assert info["available"] and info["latest"] == "99.0.0" and "Faster" in info["notes"] and not info["downloaded"]
@@ -96,6 +101,7 @@ def test_check_download_verify_and_install_plan(client, tmp_path, monkeypatch):
     assert "Step 3 of 4" in script and "ProgressBar" in script and "manage stop" in script and "Get-FileHash" in script and "--quiet" in script and "AIHQ.exe" in script
 
 
+@windows_installer
 def test_tampered_or_old_releases_are_refused(client):
     client.app.state.updater.runner = FakeGh(corrupt=True)
     response = download(client)
@@ -155,6 +161,7 @@ def test_printify_single_store_is_selected_automatically(client):
     assert "no store yet" in client.post("/api/business/connections/printify/check").json()["detail"]
 
 
+@windows_installer
 def test_a_finished_download_is_still_ready_after_cerebra_restarts(client, tmp_path):
     assert download(client)["phase"] == "ready"
     reopened = updates.Updater(Settings(data_dir=tmp_path / "data"))  # Cerebra closed and opened again
@@ -164,6 +171,7 @@ def test_a_finished_download_is_still_ready_after_cerebra_restarts(client, tmp_p
     assert updates.Updater(Settings(data_dir=tmp_path / "data")).progress()["phase"] == "idle"  # nothing real waiting
 
 
+@windows_installer
 def test_a_dropped_download_resumes_by_itself(client):
     """One owner's 0.43.0 download got 0 bytes from GitHub and gave up; it now resumes from where it stopped."""
     updater = client.app.state.updater
@@ -186,6 +194,7 @@ def test_a_dropped_download_resumes_by_itself(client):
     assert drops["count"] == 3
 
 
+@windows_installer
 def test_a_download_that_keeps_dropping_says_what_to_do(client):
     updater = client.app.state.updater
     updater.retry_wait = 0
