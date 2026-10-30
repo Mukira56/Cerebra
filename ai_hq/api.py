@@ -1462,7 +1462,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.committee = committee
     ahead = freelance.DraftAhead(db, drafter, bidder, committee)
     app.state.ahead = ahead
-    registry.add("draft_ahead", "Write proposals ahead", "Every hour, for your strongest new matches (up to your number a day), the committee looks first and your AI writes "
+    registry.add("draft_ahead", "Write proposals ahead", "Every hour, for your strongest new match (one a round, up to your number a day), the committee looks first and your AI writes "
                  "the proposal. Nothing is sent: each one waits in Your calls for you to read and send.", ahead.tick, 60)
 
     @app.post("/api/freelance/committee")

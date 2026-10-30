@@ -1078,6 +1078,9 @@ class AutoApplier:
 
 
 
+AHEAD_PER_ROUND = 1  # a proposal written ahead is six model calls; one a round keeps the other workers (wins, bids) on time
+
+
 class DraftAhead:
     """So the owner only reads and sends: for the strongest new matches from every source, up to a number a day, the
     committee looks first and the owner's model writes the proposal. Nothing is sent here; each ready proposal waits in
@@ -1100,7 +1103,7 @@ class DraftAhead:
                 rules = auto_settings(session)
                 if not rules.get("ahead", True):
                     return {"skipped": "off"}
-                room = rules["ahead_per_day"] - self.written_today(session)
+                room = min(AHEAD_PER_ROUND, rules["ahead_per_day"] - self.written_today(session))
                 if room <= 0:
                     return {"skipped": "daily limit"}
                 bidding = rules["enabled"] and self.bidder is not None and self.bidder.status()["connected"]

@@ -90,7 +90,8 @@ def test_proposals_are_written_ahead_for_the_strongest_matches_and_never_sent(cl
     lead(client, "freelancer:801", "freelancer", "Next.js site for a law firm", "A Next.js site with a contact form and a blog.", 85)
     lead(client, "himalayas:3", "himalayas", "Vue dashboard for a gym", "A Vue dashboard of member check-ins.", 70)
     lead(client, "remoteok:4", "remoteok", "Logo for a bakery", "A simple logo.", 20)  # below the score: never written
-    assert client.app.state.ahead.tick() == {"written": 2, "passed": 0}  # two a day, strongest first
+    assert client.app.state.ahead.tick() == {"written": 1, "passed": 0}  # one a round, so other workers aren't held up
+    assert client.app.state.ahead.tick() == {"written": 1, "passed": 0}  # two a day, strongest first
     assert by_title(client, "React developer for a booking widget")["proposal"]["status"] == "ready"
     assert by_title(client, "Next.js site for a law firm")["proposal"]["status"] == "ready"  # no account connected: the owner sends it
     assert not by_title(client, "Vue dashboard for a gym")["proposal"]
