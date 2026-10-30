@@ -31,3 +31,33 @@ def test_rare_chance_alerts_follow_the_owners_thresholds(client):  # noqa: F811
     assert client.put("/api/freelance/auto", json={"alert_usd": 0}).status_code == 400
     client.put("/api/freelance/auto", json={"alert": False})
     assert client.get("/api/freelance/auto").json()["settings"]["alert"] is False
+
+
+def test_scores_age_so_an_old_crowded_job_sinks_within_the_hour(client):  # noqa: F811
+    from datetime import datetime, timedelta, timezone
+    from ai_hq.models import FreelanceLead
+    old = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+    with client.app.state.db.Session.begin() as session:  # scored when it was fresh, with few bids
+        session.add(FreelanceLead(id="freelancer:77", source="freelancer", title="React dashboard for a gym", description="A React dashboard.", status="new",
+                                  score=80, reasons=["posted 1 h ago"], budget_min=300, budget_max=900, currency="USD", kind="fixed", posted_at=old,
+                                  extra={"bids": 140}))
+    client.post("/api/freelance/check")
+    lead = by_title(client, "React dashboard for a gym")
+    assert lead["score"] < 50 and "posted 5 days ago" in lead["reasons"] and "140 bids already" in lead["reasons"]
+
+
+def test_the_morning_brief_puts_what_cant_wait_first_and_picks_todays_jobs(client):  # noqa: F811
+    from ai_hq.models import FreelanceLead
+    client.post("/api/freelance/check")  # the bakery job is a rare chance
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id="remotive:9", source="remotive", title="Next.js shop for a florist", description="A Next.js shop.", status="new", score=95,
+                                  reasons=["matches next.js", "posted 3 h ago"], extra={"committee": {"decision": "skip"}}))  # the committee said no
+        session.add(FreelanceLead(id="remotive:10", source="remotive", title="Vue admin for a school", description="A Vue admin panel.", status="new", score=60,
+                                  reasons=["matches vue", "posted 2 h ago"], proposal={"status": "ready", "text": "Hi"}))
+    with client.app.state.db.Session() as session:
+        content = chief.brief(session)
+    titles = [item["title"] for item in content["today"]]
+    assert "bakery" in titles[0] and titles[1] == "Vue admin for a school" and "Next.js shop for a florist" not in titles
+    assert content["today"][1]["ready"] and "posted 2 h ago" in content["today"][1]["why"]
+    assert [item["kind"] for item in content["first"]] == ["rare"]
+    assert "Top pick today: score" in content["phone"] and "bakery" not in content["phone"].lower() and "Vue" not in content["phone"]

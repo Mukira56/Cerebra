@@ -1231,7 +1231,7 @@
     })();
     return root;
   }
-  const CALL_ICON = {plan: "◈", approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠"};
+  const CALL_ICON = {plan: "◈", approval: "✋", award: "★", proposal: "✎", post: "✉", overdue: "!", invoice: "¤", book: "▤", problem: "⚠", rare: "⚡"};
   function callList(items, emptyText = "Nothing waits for you.") {
     if (!array(items).length) return body(empty("All clear", emptyText, null, "✓"));
     const list = el("div", "row-list");
@@ -1244,9 +1244,20 @@
     const hour = select(Array.from({length: 24}, (_, value) => [String(value), `${String(value).padStart(2, "0")}:00`]), String(settings.brief_hour ?? 8));
     on.control.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief: on.control.checked}, "PUT")));
     hour.addEventListener("change", () => act("Saved.", () => mutate("/api/chief/settings", {brief_hour: Number(hour.value)}, "PUT")));
-    append(root, append(el("ul", "tips"), ...array(state.brief?.lines).map(line => el("li", "", line))), append(el("div", "form-grid"), field("At", hour), on.wrap),
+    const brief = state.brief || {}, picks = el("div", "row-list");
+    array(brief.today).forEach(item => {
+      const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.title),
+        el("div", "row-meta", [item.rare ? "rare chance" : "", item.ready ? "proposal ready to send" : "", item.committee === "bid" ? "the committee says bid" : "", item.why].filter(Boolean).join(" · "))), scoreBadge(item.score));
+      row.tabIndex = 0; row.setAttribute("role", "button");
+      const open = () => act("", () => refreshLead(item.id)).then(result => { if (result) leadDialog(...result); });
+      row.addEventListener("click", open); row.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
+      picks.append(row);
+    });
+    append(root, array(brief.first).length ? append(el("div"), el("h4", "", "First, what can't wait"), callList(brief.first)) : null,
+      append(el("div"), el("h4", "", "Apply today"), array(brief.today).length ? picks : hint("No strong match is open right now. New work is checked all day.")),
+      append(el("div"), el("h4", "", "Overnight"), append(el("ul", "tips"), ...array(brief.lines).map(line => el("li", "", line)))), append(el("div", "form-grid"), field("At", hour), on.wrap),
       actionsRow(button("Send it to my phone now", () => act(result => result.sent ? "Sent." : "Recorded. Set up phone notifications in Settings to receive it.", () => mutate("/api/chief/brief/send", {})), "button small")),
-      hint("On your phone it says only how many decisions wait and how many runs happened: phone notifications can pass through a public server, so names and amounts stay in Cerebra."));
+      hint("On your phone it gives counts and the top pick's score only: phone notifications can pass through a public server, so job titles, names and amounts stay in Cerebra."));
     return root;
   }
   function trainingPanel(training) {

@@ -261,6 +261,26 @@ def rescore(session):
         row.score, row.reasons = score(_as_lead(row), settings)
 
 
+RESCORE_EVERY = 3600  # seconds: freshness is part of the score, so open leads are scored again hourly (under a second for ~1,000)
+
+
+def today(session, limit=3):
+    """The morning's picks: the open jobs most worth applying to now, best first, each with why. A job the committee
+    rejected, or already applied to or passed over, isn't picked."""
+    picks = []
+    for row in session.scalars(select(FreelanceLead).where(FreelanceLead.status.in_(["new", "saved"]), FreelanceLead.score >= GOOD)
+                               .order_by(FreelanceLead.score.desc()).limit(40)).all():
+        proposal, extra = row.proposal or {}, row.extra or {}
+        verdict = (extra.get("committee") or {}).get("decision")
+        if proposal.get("sent_at") or proposal.get("skipped") or verdict == "skip":
+            continue
+        picks.append({"id": row.id, "title": row.title, "score": row.score, "bids": extra.get("bids"), "rare": bool(extra.get("rare")),
+                      "ready": proposal.get("status") == "ready", "committee": verdict or "",
+                      "why": "; ".join(reason for reason in (row.reasons or []) if not reason.startswith("matches"))[:200]})
+    picks.sort(key=lambda item: (not item["rare"], not item["ready"], -item["score"]))  # rare chances, then proposals ready to send
+    return picks[:limit]
+
+
 def _as_lead(row):
     extra = row.extra or {}
     return {"title": row.title, "description": row.description, "budget_min": row.budget_min, "budget_max": row.budget_max,
@@ -535,6 +555,10 @@ class Finder:
                     results[name] = {"error": redact(str(exc))[:200] or "The source could not be read"}
                 with self.db.Session.begin() as session:
                     _remember_check(session, name, {"at": now(), "at_ts": stamp, **results[name]})
+            if stamp - getattr(self, "_rescored", 0) >= RESCORE_EVERY:
+                with self.db.Session.begin() as session:
+                    rescore(session)
+                self._rescored = stamp
             added = sum(item.get("added", 0) for item in results.values())
             if added:
                 with self.db.Session.begin() as session:

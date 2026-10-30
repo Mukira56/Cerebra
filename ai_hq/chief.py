@@ -424,9 +424,16 @@ def brief(session):
              f"Money this month: {summary.get('currency', 'USD')} {float(glance.get('earned_month') or 0):,.2f} earned, {float(glance.get('owed') or 0):,.2f} owed."]
     if shelf.get("files_ready") or shelf.get("published"):
         lines.append(f"Books: {shelf.get('files_ready', 0)} ready to upload, {shelf.get('published', 0)} published.")
-    phone = (f"{len(waiting)} decision(s) wait for you. " if waiting else "Nothing waits for you. ") + \
+    # A decision dashboard, risks first (the daily-analysis design): what can't wait, then what to apply to today and why.
+    first = [item for item in waiting if item["kind"] in URGENT]
+    picks = freelance.today(session)
+    phone = (f"{len(first)} urgent. " if first else "") + (f"{len(waiting)} decision(s) wait for you. " if waiting else "Nothing waits for you. ") + \
+            (f"Top pick today: score {picks[0]['score']}" + (f", {picks[0]['bids']} bids" if picks[0]["bids"] is not None else "") + ". " if picks else "") + \
             f"{day['runs']} worker run(s) overnight" + (f", {day['failed']} failed." if day["failed"] else ".") + " Open Cerebra for details."
-    return {"lines": lines, "calls": waiting[:10], "phone": phone, "at": now()}
+    return {"lines": lines, "first": first[:5], "today": picks, "calls": waiting[:10], "phone": phone, "at": now()}
+
+
+URGENT = {"problem", "overdue", "award", "rare"}  # a failed worker, money owed, a client waiting, a chance that closes soon
 
 
 def brief_due(settings, local_now):
@@ -442,7 +449,8 @@ def send_brief(db, notifier, local_now=None, force=False):
             return {"skipped": "not time yet" if settings["brief"] else "off"}
         content = brief(session)
         save_chief_settings(session, {"last_brief": local_now.date().isoformat()})
-        session.add(Event(kind="chief", message="Morning brief: " + " ".join(content["lines"])[:900], data={"brief": True}))
+        picks = "; ".join(f"{item['title'][:60]} (score {item['score']})" for item in content["today"])
+        session.add(Event(kind="chief", message=("Morning brief: " + " ".join(content["lines"]) + (f" Apply today: {picks}." if picks else ""))[:900], data={"brief": True}))
     sent = notifier.send("Cerebra · morning brief", content["phone"], tags="sunrise") if notifier else {"sent": []}
     return {"sent": len(sent.get("sent", [])), "calls": len(content["calls"])}
 
