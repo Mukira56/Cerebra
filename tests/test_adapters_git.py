@@ -441,7 +441,10 @@ def test_git_disables_configured_clean_filters(repo, tmp_path):
 def test_codex_npm_shim_resolves_to_native_binary(tmp_path, monkeypatch):
     shim = tmp_path / "codex.cmd"
     shim.write_text("@echo off")
-    native = tmp_path / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai" / "codex-win32-x64" / "vendor" / "x86_64-pc-windows-msvc" / "bin" / "codex.exe"
+    import platform
+    arm = platform.machine().lower() in {"arm64", "aarch64"}  # the package for this computer's processor, as Cerebra picks it
+    native = (tmp_path / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai" / f"codex-win32-{'arm64' if arm else 'x64'}" / "vendor"
+              / ("aarch64-pc-windows-msvc" if arm else "x86_64-pc-windows-msvc") / "bin" / "codex.exe")
     native.parent.mkdir(parents=True)
     native.write_bytes(b"")
     monkeypatch.setattr("ai_hq.agents.shutil.which", lambda name: str(shim))

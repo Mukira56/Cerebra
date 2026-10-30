@@ -48,6 +48,6 @@ These macOS and Linux paths are covered by tests that simulate each system's sec
 - **What the first run found:** the tests assumed Windows in a few places (a secret store, a fake Git, paths). They now work on every system.
 - **On a Linux computer without a keyring** (a server or a minimal desktop), saving a key fails with a message saying to install `libsecret-tools` (Debian, Ubuntu) or `libsecret` (Fedora, Arch). Cerebra never stores the key in plain text instead.
 
-**macOS:** the same workflow runs there when started with `-f macos=true`. GitHub had no Mac machine free on 2026-10-30, so that run is still to do.
+**macOS, checked on a real machine (2026-10-30).** The same workflow runs there when started with `-f macos=true`. On GitHub's Apple-silicon Mac, setup worked and 502 of 503 tests passed. The one failure was a Windows-only test that assumed an Intel processor; it now follows the machine's processor. A macOS run takes about 20 minutes, and macOS minutes count ten times against the free allowance.
 
 Still to come: a `.dmg`/`.app` for macOS and an AppImage or `.deb` for Linux, with checksums.
