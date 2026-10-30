@@ -1459,6 +1459,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     committee = committee_module.Committee(db, settings, chat_registry, hub)
     applier.committee = committee
     app.state.committee = committee
+    ahead = freelance.DraftAhead(db, drafter, bidder, committee)
+    app.state.ahead = ahead
+    registry.add("draft_ahead", "Write proposals ahead", "Every hour, for your strongest new matches (up to your number a day), the committee looks first and your AI writes "
+                 "the proposal. Nothing is sent: each one waits in Your calls for you to read and send.", ahead.tick, 60)
 
     @app.post("/api/freelance/committee")
     def freelance_committee(payload: dict):
@@ -1516,8 +1520,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/freelance/auto/run")
     def freelance_auto_run():
-        """Run one round now: bid, look for wins, start won work (the background round does this every 10 minutes)."""
-        result = {"bids": applier.tick(), "wins": watcher.tick(), "work": keep_won_work()}
+        """Run one round now: bid, write proposals ahead, look for wins, start won work (the background rounds do this by themselves)."""
+        result = {"bids": applier.tick(), "ahead": ahead.tick(), "wins": watcher.tick(), "work": keep_won_work()}
         return result
 
     @app.post("/api/freelance/accept-award")

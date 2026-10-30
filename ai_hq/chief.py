@@ -350,7 +350,8 @@ def calls(session):
         proposal = proposal or {}
         if status == "awarded":
             items.append({"kind": "award", "title": "A client chose you", "detail": f"{title[:120]}: accept or decline", "page": "freelance", "at": updated})
-        elif proposal.get("status") == "ready" and not proposal.get("sent_at") and not proposal.get("skipped") and source != "freelancer":
+        elif (proposal.get("status") == "ready" and not proposal.get("sent_at") and not proposal.get("skipped")
+              and (not proposal.get("auto") or proposal.get("bid_error"))):  # an automatic bid is sent at once; only a refused one waits for the owner
             items.append({"kind": "proposal", "title": "A proposal is ready to send", "detail": f"{title[:120]}: apply in your own name", "page": "freelance",
                           "at": proposal.get("drafted_at") or updated})
     for post in session.scalars(select(SocialPost).where(SocialPost.status == "draft", SocialPost.origin == "ai")).all():

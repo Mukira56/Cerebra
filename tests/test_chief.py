@@ -106,7 +106,7 @@ def test_your_calls_gather_every_decision_that_is_the_owners(client):  # noqa: F
     with client.app.state.db.Session.begin() as session:
         session.add(FreelanceLead(id="freelancer:9", source="freelancer", title="Shop redesign", status="awarded"))
         session.add(FreelanceLead(id="remoteok:1", source="remoteok", title="React dashboard", status="new", proposal={"status": "ready", "text": "Hi"}))
-        session.add(FreelanceLead(id="freelancer:8", source="freelancer", title="Auto job", status="new", proposal={"status": "ready", "text": "Hi"}))  # the bidder's
+        session.add(FreelanceLead(id="freelancer:8", source="freelancer", title="Auto job", status="new", proposal={"status": "ready", "text": "Hi", "auto": True}))  # the bidder's
         session.add(SocialPost(text="Fast sites for clinics", status="draft", origin="ai"))
         session.add(MoneyDocument(kind="invoice", number="INV-7", client="Ann", status="sent", due_date="2020-01-01", items=[]))
         session.add(Book(title="Sleep Again", status="files_ready"))

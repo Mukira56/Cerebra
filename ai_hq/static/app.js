@@ -1692,7 +1692,7 @@
     const save = () => mutate("/api/freelance/proposal", {id: lead.id, text: text.value, price: Number(price.value || 0), days: Number(days.value || 0)}, "PUT");
     const sending = el("div", "actions");
     if (proposal.sent_at) sending.append(hint(`Sent ${relative(proposal.sent_at)} via ${proposal.sent_via}.`));
-    else if (lead.source === "freelancer") {
+    else if (lead.source === "freelancer" && state.freelancer_account?.connected) {
       sending.append(state.freelancer_account?.connected
         ? button("Send bid on Freelancer.com", async () => { if (!await act("", save)) return; showDialog("Send this bid?", append(el("div"),
             el("p", "", `Sends your proposal as a bid of ${lead.currency || "USD"} ${Number(price.value || 0).toLocaleString()} with delivery in ${days.value} day(s) on “${lead.title}”, from your Freelancer.com account ${state.freelancer_account.username}.`),
@@ -1700,7 +1700,8 @@
         : hint("Connect your Freelancer.com account (Freelance page › Freelancer.com account) to send bids from here.", true));
     } else {
       sending.append(button("Copy proposal", async () => { if (!await act("", save)) return; navigator.clipboard.writeText(text.value).then(() => toast("Saved and copied. Paste it on the job page and send it."), () => toast("Saved. Couldn't copy; select the text and copy it.", true)); }, "button primary"),
-        hint(`${lead.source_label} doesn't allow automated bids: copy it, open the job page, paste and send it there, then press “I applied”.`));
+        hint(lead.source === "freelancer" ? "Copy it, open the job page and send it as your bid there, then press “I applied”. Or connect your Freelancer.com account (Freelance page) to send bids from here."
+          : `${lead.source_label} doesn't allow automated bids: copy it, open the job page, paste and send it there, then press “I applied”.`));
     }
     append(box, el("strong", "", "Proposal"), proposal.fit ? hint(proposal.fit) : null, field("Text", text), append(el("div", "form-grid"), field(`Price (${proposal.currency || lead.currency || "USD"})`, price), field("Delivery (days)", days)),
       append(el("div", "actions"), button("Save edits", () => act("Proposal saved.", save), "button"), button("Write it again", start, "button ghost")), sending);
@@ -1749,9 +1750,11 @@
       const rules = state.settings, form = el("form"), save = submitButton("Save");
       const on = check("Bid by myself on Freelancer.com", rules.enabled), accept = check("Also accept awards by myself (a commitment to the client's job at your bid)", rules.accept_awards);
       const committee = check("Ask the decision committee before each bid (skips jobs it rejects)", rules.committee !== false);
+      const ahead = check("Write proposals ahead for my strongest matches from every source (nothing is sent; they wait in Your calls)", rules.ahead !== false);
+      const aheadPerDay = input("5", rules.ahead_per_day, "number"); aheadPerDay.min = 1; aheadPerDay.max = 20;
       const score = input("40", rules.min_score, "number"), perDay = input("15", rules.per_day, "number"); score.min = 1; score.max = 100; perDay.min = 1; perDay.max = 50;
-      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), committee.wrap, accept.wrap, actionsRow(save));
-      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, committee: committee.control.checked, min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
+      append(form, on.wrap, append(el("div", "form-grid"), field("Lowest score to bid on", score), field("Bids per day at most", perDay)), committee.wrap, ahead.wrap, append(el("div", "form-grid"), field("Proposals written ahead per day", aheadPerDay)), accept.wrap, actionsRow(save));
+      wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, committee: committee.control.checked, ahead: ahead.control.checked, ahead_per_day: Number(aheadPerDay.value || 5), min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
       const connected = state.freelancer_account?.connected, gmail = state.gmail || {};
       root.replaceChildren(form,
         !connected ? hint("Connect your Freelancer.com account (panel above) so Cerebra can bid.", true) : null,

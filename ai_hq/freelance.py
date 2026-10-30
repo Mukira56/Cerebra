@@ -854,7 +854,7 @@ class Bidder:
 
 # ---- Phase 4b: applying by itself (Freelancer.com only: Upwork and Fiverr ban automated proposals) ----
 AUTO_KEY = "freelance_auto"
-AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True}
+AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True, "ahead": True, "ahead_per_day": 5}
 
 
 def auto_settings(session):
@@ -870,7 +870,9 @@ def save_auto(session, changes):
         value["accept_awards"] = bool(changes["accept_awards"])
     if "committee" in changes:
         value["committee"] = bool(changes["committee"])
-    for key, low, high in (("min_score", 1, 100), ("per_day", 1, 50)):
+    if "ahead" in changes:
+        value["ahead"] = bool(changes["ahead"])
+    for key, low, high in (("min_score", 1, 100), ("per_day", 1, 50), ("ahead_per_day", 1, 20)):
         if key in changes:
             number = int(changes[key])
             if not low <= number <= high:
@@ -965,8 +967,10 @@ class AutoApplier:
                         row.proposal = {**(row.proposal or {}), "skipped": f"A re-post of “{earlier.title[:80]}”, which you already bid on"}
                         repeats += 1
                         continue
+                with self.db.Session() as session:
+                    ready = (session.get(FreelanceLead, lead_id).proposal or {}).get("status") == "ready"  # written ahead: already past the committee
                 committee = getattr(self, "committee", None)
-                if rules.get("committee", True) and committee is not None:
+                if rules.get("committee", True) and committee is not None and not ready:
                     # The committee (analyst, bull, bear, risk, manager) decides before a proposal is written or a bid spent.
                     self._note(f"The committee is reviewing a job ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
                     try:
@@ -980,12 +984,13 @@ class AutoApplier:
                             row.proposal = {**(row.proposal or {}), "skipped": f"Committee: {verdict['reason'] or 'skip'}"}
                         passed += 1
                         continue
-                self._note(f"Writing a proposal ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
-                try:
-                    self.drafter.start(lead_id, wait=True)
-                except ValueError as exc:  # AI agents switched off, or already being written
-                    self._note(str(exc), "waiting")
-                    break
+                if not ready:
+                    self._note(f"Writing a proposal ({sent + passed + 1} of {min(room, len(candidates))})…", "working")
+                    try:
+                        self.drafter.start(lead_id, wait=True)
+                    except ValueError as exc:  # AI agents switched off, or already being written
+                        self._note(str(exc), "waiting")
+                        break
                 with self.db.Session.begin() as session:
                     row = session.get(FreelanceLead, lead_id)
                     proposal = dict(row.proposal or {})
@@ -1018,6 +1023,81 @@ class AutoApplier:
             if self.status["state"] == "working":
                 self._note(f"Sent {sent} bid(s), passed over {passed} poor fit(s)")
             return {"sent": sent, "passed": passed, "repeats": repeats}
+        finally:
+            self._lock.release()
+
+
+
+class DraftAhead:
+    """So the owner only reads and sends: for the strongest new matches from every source, up to a number a day, the
+    committee looks first and the owner's model writes the proposal. Nothing is sent here; each ready proposal waits in
+    Your calls. Freelancer.com jobs are left to automatic bidding while it's on and connected."""
+    def __init__(self, db, drafter, bidder=None, committee=None):
+        self.db, self.drafter, self.bidder, self.committee = db, drafter, bidder, committee
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def written_today(session):
+        since = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - 86400, timezone.utc).isoformat()
+        return sum(1 for (proposal,) in session.execute(select(FreelanceLead.proposal).where(FreelanceLead.proposal.is_not(None))).all()
+                   if (proposal or {}).get("ahead") and str((proposal or {}).get("ahead_at") or "") >= since)
+
+    def tick(self):
+        if not self._lock.acquire(blocking=False):
+            return {"skipped": "already running"}
+        try:
+            with self.db.Session() as session:
+                rules = auto_settings(session)
+                if not rules.get("ahead", True):
+                    return {"skipped": "off"}
+                room = rules["ahead_per_day"] - self.written_today(session)
+                if room <= 0:
+                    return {"skipped": "daily limit"}
+                bidding = rules["enabled"] and self.bidder is not None and self.bidder.status()["connected"]
+                wanted = profile(session)
+                rows = session.scalars(select(FreelanceLead).where(FreelanceLead.status.in_(["new", "saved"]), FreelanceLead.score >= rules["min_score"])
+                                       .order_by(FreelanceLead.score.desc()).limit(80)).all()
+                candidates = [row.id for row in rows if not row.proposal and not (bidding and row.source == "freelancer")
+                              and score(_as_lead(row), wanted)[0] >= rules["min_score"]]
+            written, passed = 0, 0
+            for lead_id in candidates:
+                if written + passed >= room:
+                    break
+                with self.db.Session.begin() as session:
+                    row = session.get(FreelanceLead, lead_id)
+                    earlier = bid_before(session, row)
+                    if earlier is not None:
+                        row.proposal = {"skipped": f"A re-post of “{earlier.title[:80]}”, which you already applied to"}
+                        continue
+                stamp = {"ahead": True, "ahead_at": now()}  # counted against today's number even if the committee says skip
+                if rules.get("committee", True) and self.committee is not None:
+                    try:
+                        verdict = self.committee.review(lead_id)
+                    except (ValueError, LookupError):
+                        break  # AI agents off or a model unavailable: try again next round
+                    if verdict["decision"] != "bid":
+                        with self.db.Session.begin() as session:
+                            session.get(FreelanceLead, lead_id).proposal = {**stamp, "skipped": f"Committee: {verdict['reason'] or 'skip'}"}
+                        passed += 1
+                        continue
+                try:
+                    self.drafter.start(lead_id, wait=True)
+                except ValueError:
+                    break
+                with self.db.Session.begin() as session:
+                    row = session.get(FreelanceLead, lead_id)
+                    proposal = {**(row.proposal or {}), **stamp}
+                    if proposal.get("status") == "ready" and not proposal.get("apply", True):
+                        proposal["skipped"] = proposal.get("fit") or "Your model judged it a poor fit"
+                        passed += 1
+                    elif proposal.get("status") == "ready":
+                        written += 1
+                    row.proposal = proposal
+            if written or passed:
+                with self.db.Session.begin() as session:
+                    session.add(Event(kind="freelance", message=f"Proposals written ahead: {written} ready for you to send, {passed} job(s) passed over",
+                                      data={"written": written, "passed": passed}))
+            return {"written": written, "passed": passed}
         finally:
             self._lock.release()
 

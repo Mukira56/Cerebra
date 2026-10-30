@@ -3,6 +3,7 @@ import json
 
 import httpx
 
+from ai_hq import chief
 from ai_hq.agents import AgentResult
 from ai_hq.models import FreelanceLead
 from fakes import FixtureRegistry
@@ -72,3 +73,46 @@ def test_automatic_bidding_asks_the_committee_and_skips_what_it_rejects(client):
     add(client, 704, "React dashboard for a gym", "A React dashboard showing member check-ins.")
     client.app.state.applier.tick()
     assert 704 in {bid["project_id"] for bid in site.bids}
+
+
+def lead(client, id, source, title, description, score=80):  # noqa: F811
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id=id, source=source, title=title, description=description, status="new", score=score,
+                                  budget_min=300, budget_max=900, currency="USD", kind="fixed", url="https://example.com/job"))
+
+
+def test_proposals_are_written_ahead_for_the_strongest_matches_and_never_sent(client):  # noqa: F811
+    enable_agents(client)
+    model = Committee(decision="bid")
+    client.app.state.supervisor.registry = model
+    client.put("/api/freelance/auto", json={"min_score": 30, "ahead_per_day": 2})
+    lead(client, "remoteok:1", "remoteok", "React developer for a booking widget", "Build a React booking widget for a salon chain.", 90)
+    lead(client, "freelancer:801", "freelancer", "Next.js site for a law firm", "A Next.js site with a contact form and a blog.", 85)
+    lead(client, "himalayas:3", "himalayas", "Vue dashboard for a gym", "A Vue dashboard of member check-ins.", 70)
+    lead(client, "remoteok:4", "remoteok", "Logo for a bakery", "A simple logo.", 20)  # below the score: never written
+    assert client.app.state.ahead.tick() == {"written": 2, "passed": 0}  # two a day, strongest first
+    assert by_title(client, "React developer for a booking widget")["proposal"]["status"] == "ready"
+    assert by_title(client, "Next.js site for a law firm")["proposal"]["status"] == "ready"  # no account connected: the owner sends it
+    assert not by_title(client, "Vue dashboard for a gym")["proposal"]
+    with client.app.state.db.Session() as session:
+
+        waiting = [item for item in chief.calls(session) if item["kind"] == "proposal"]
+    assert len(waiting) == 2  # both wait in Your calls, the Freelancer.com one too
+    assert client.app.state.ahead.tick() == {"skipped": "daily limit"}
+
+
+def test_writing_ahead_follows_the_committee_and_leaves_freelancer_jobs_to_automatic_bidding(client):  # noqa: F811
+    enable_agents(client)
+    model = Committee(decision="skip")
+    client.app.state.supervisor.registry = model
+    site = Freelancer()
+    client.app.state.bidder.client = httpx.Client(transport=httpx.MockTransport(site))
+    client.put("/api/freelance/freelancer-account", json={"token": TOKEN})
+    client.put("/api/freelance/auto", json={"enabled": True, "min_score": 30, "ahead_per_day": 5})
+    lead(client, "freelancer:802", "freelancer", "WordPress plugin fix", "Fix a WordPress plugin conflict.", 90)
+    lead(client, "remoteok:5", "remoteok", "Python API for a clinic", "A FastAPI service for appointments.", 80)
+    assert client.app.state.ahead.tick() == {"written": 0, "passed": 1}  # the Freelancer.com job is left to automatic bidding
+    assert by_title(client, "Python API for a clinic")["proposal"]["skipped"].startswith("Committee:")
+    assert not by_title(client, "WordPress plugin fix")["proposal"] and site.bids == []
+    client.put("/api/freelance/auto", json={"ahead": False})
+    assert client.app.state.ahead.tick() == {"skipped": "off"}
