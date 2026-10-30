@@ -405,6 +405,45 @@ class Book(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class ChiefGoal(Base):
+    """A money goal the owner set for the Chief of Staff, with its rules (public data only, ask before contacting anyone)."""
+    __tablename__ = "chief_goals"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    title: Mapped[str] = mapped_column(String, default="")
+    target: Mapped[str] = mapped_column(Text, default="")
+    rules: Mapped[dict] = mapped_column(JSON, default=dict)
+    monthly_cap: Mapped[float] = mapped_column(default=0.0)
+    status: Mapped[str] = mapped_column(String, default="active")  # active | paused | done
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+class ChiefJob(Base):
+    """A worker on a schedule: which one, how often, on or off, and how its last run went."""
+    __tablename__ = "chief_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    worker: Mapped[str] = mapped_column(String)
+    goal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    inputs: Mapped[dict] = mapped_column(JSON, default=dict)
+    every_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[str] = mapped_column(String, default="")
+    last_run_at: Mapped[str] = mapped_column(String, default="")
+    last_status: Mapped[str] = mapped_column(String, default="")
+    last_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+
+class ChiefRun(Base):
+    """One run of a job: when, how long, what it found or what went wrong."""
+    __tablename__ = "chief_runs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    job_id: Mapped[str] = mapped_column(String, index=True)
+    worker: Mapped[str] = mapped_column(String, default="")
+    started_at: Mapped[str] = mapped_column(String, default=now, index=True)
+    finished_at: Mapped[str] = mapped_column(String, default="")
+    seconds: Mapped[float] = mapped_column(default=0.0)
+    status: Mapped[str] = mapped_column(String, default="ok")  # ok | skipped | failed
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str] = mapped_column(Text, default="")
+    by: Mapped[str] = mapped_column(String, default="schedule")  # schedule | owner
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

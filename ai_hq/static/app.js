@@ -14,6 +14,7 @@
     chat: ["WORK", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
     council: ["WORK", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     marketing: ["WORK", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
+    chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
     books: ["WORK", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
     freelance: ["WORK", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["WORK", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
@@ -164,7 +165,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, chief: chiefView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1152,6 +1153,85 @@
     wireForm(form, save, async () => { await mutate("/api/social/settings", {monthly_cap: Number(cap.value || 0), x_cost_per_post: Number(per.value || 0), x_cost_with_link: Number(withLink.value || 0), per_day: Number(day.value || 1)}, "PUT"); toast("Saved."); render(); });
     return form;
   }
+  // ---------- chief of staff: goals, the workers on their schedules, every run on the record ----------
+  const RUN_STYLE = {ok: "green", skipped: "muted", failed: "red", busy: "amber"};
+  function everyText(minutes) { return minutes % 1440 === 0 ? `every ${minutes / 1440} day(s)` : minutes % 60 === 0 ? `every ${minutes / 60} hour(s)` : `every ${minutes} minutes`; }
+  function chiefView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading…")));
+    (async () => {
+      let state; try { state = await api("/api/chief"); } catch (issue) { root.replaceChildren(body(empty("Chief of Staff unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const jobs = array(state.jobs), goals = array(state.goals), runs = array(state.runs), day = state.overnight || {}, stats = el("div", "grid stats");
+      [["Goals", goals.filter(goal => goal.status === "active").length, "active", "green"], ["Workers", jobs.filter(job => job.enabled).length, `of ${jobs.length} on`, ""],
+       ["Last 24 hours", day.runs || 0, "runs", "cyan"], ["Problems", day.failed || 0, "failed runs", day.failed ? "red" : ""]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const goalList = el("div", "row-list");
+      goals.forEach(goal => { const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", goal.title),
+        el("div", "row-meta", [goal.rules.public_data_only ? "public data only" : "", goal.rules.ask_before_contact ? "asks before contacting anyone" : "", goal.monthly_cap ? `spend at most USD ${goal.monthly_cap} a month` : ""].filter(Boolean).join(" · "))),
+        badge(goal.status, goal.status === "active" ? "green" : "muted")); row.addEventListener("click", () => goalDialog(goal)); goalList.append(row); });
+      const jobRows = el("div", "row-list");
+      jobs.forEach(job => {
+        const toggle = check(job.enabled ? "On" : "Off", job.enabled);
+        toggle.control.addEventListener("change", () => act(toggle.control.checked ? `${job.label}: on.` : `${job.label}: off.`, () => mutate(`/api/chief/jobs/${job.id}`, {enabled: toggle.control.checked}, "PATCH")).then(() => render()));
+        const pace = select([[10, "every 10 minutes"], [30, "every 30 minutes"], [60, "every hour"], [360, "every 6 hours"], [1440, "every day"], [10080, "every week"]].map(([value, label]) => [String(value), label]), String(job.every_minutes));
+        if (!Array.from(pace.options).some(item => item.value === String(job.every_minutes))) pace.append(option(String(job.every_minutes), everyText(job.every_minutes))), pace.value = String(job.every_minutes);
+        pace.addEventListener("change", () => act("Saved.", () => mutate(`/api/chief/jobs/${job.id}`, {every_minutes: Number(pace.value)}, "PATCH")));
+        const last = job.running ? "Running now…" : job.last_run_at ? `${relative(job.last_run_at)}: ${job.last_result}` : "Not run yet";
+        jobRows.append(append(el("div", "worker"), append(el("div", "worker-head"), el("strong", "", job.label), job.outward ? el("span", "badge amber", "ACTS OUTSIDE") : null,
+          job.last_status ? badge(job.last_status, RUN_STYLE[job.last_status]) : null),
+          el("div", "row-meta", job.about), el("div", "row-meta", last),
+          append(el("div", "worker-controls"), pace, toggle.wrap,
+            button("Run now", () => act(result => result.message, () => mutate(`/api/chief/jobs/${job.id}/run`, {})).then(() => setTimeout(() => render(), 1500)), "button small"))));
+      });
+      const runTable = runs.length ? table(["When", "Worker", "Result", "Took"], runs.slice(0, 30).map(run => [relative(run.started_at), jobs.find(job => job.id === run.job_id)?.label || run.job_id,
+        append(el("span"), badge(run.status, RUN_STYLE[run.status]), document.createTextNode(` ${run.result}`)), `${run.seconds}s`])) : body(empty("No runs yet", "Workers run on their schedules; the first runs appear here.", null, "◷"));
+      const left = append(el("div"),
+        panel("Goals", append(el("div"), body(append(el("div", "actions"), button("+ New goal", () => goalDialog(null), "button primary")),
+          hint("Say what you want and the rules: “$5,000 a month of new client work, public data only, contact nobody without my yes”. The planner that turns a goal into jobs comes next; for now, goals keep your target and rules in one place.")),
+          goals.length ? goalList : body(empty("No goals yet", "Set your first money goal and its rules.", null, "◎"))), null, goals.length),
+        panel("Workers", append(el("div"), jobRows, body(hint("Each worker is part of Cerebra itself; nothing here runs code an AI wrote. Workers that act outside this computer follow the standing rules you set on their own pages (Apply automatically, approved posts)."))), null, jobs.length),
+        panel("Recent runs", runTable, null, runs.length));
+      const side = append(el("div"), panel("Training data for Cerebra's own model", body(trainingPanel(state.training))),
+        panel("Also running", body(kv(array(state.built_in).map(item => [item.label, item.about])))));
+      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+    })();
+    return root;
+  }
+  function trainingPanel(training) {
+    const root = el("div"), counts = training.counts || {}, collect = check("Keep collecting my work and its results", training.settings?.collect !== false);
+    collect.control.addEventListener("change", () => act(collect.control.checked ? "Collecting." : "Stopped collecting.", () => mutate("/api/chief/training", {collect: collect.control.checked}, "PUT")).then(() => render()));
+    const progress = el("div", "progress-bar"), fill = el("div", "progress-fill"); fill.style.width = `${Math.min(100, Math.round(100 * (training.proven || 0) / (training.needed || 200)))}%`; progress.append(fill);
+    const rows = Object.entries(counts).flatMap(([kind, outcomes]) => Object.entries(outcomes).map(([outcome, count]) => [`${nice(kind)}s ${outcome}`, String(count)]));
+    const save = button("Save the training file", async () => {
+      const response = await fetch("/api/chief/training.jsonl", {credentials: "same-origin", cache: "no-store"});
+      if (!response.ok) { toast("Couldn't build the file.", true); return; }
+      const link = document.createElement("a"); link.href = URL.createObjectURL(await response.blob()); link.download = "cerebra-training.jsonl"; link.click(); URL.revokeObjectURL(link.href);
+    }, "button small");
+    append(root, kv([["Examples", String(training.total || 0)], ["With a good result", `${training.proven || 0} of the ${training.needed || 200} a first fine-tune needs`], ...rows]), progress,
+      hint(training.note || ""), collect.wrap, actionsRow(save),
+      hint("Your proposals with the job post and whether they won, and your posts that went out. Clients' deliverables are never included. When there are enough, Cerebra fine-tunes an open model on them, tests it against your paid model, and runs it on this computer."));
+    return root;
+  }
+  function goalDialog(goal) {
+    const form = el("form"), save = submitButton(goal ? "Save" : "Set the goal"), value = goal || {rules: {public_data_only: true, ask_before_contact: true}};
+    const title = input("e.g. $5,000 a month of new client work", value.title || ""), target = textarea("What counts, where to look, who you sell to", value.target || "");
+    const publicOnly = check("Public data only", value.rules.public_data_only !== false), ask = check("Contact nobody without my yes", value.rules.ask_before_contact !== false);
+    const notes = textarea("Other rules, e.g. “US businesses only”, “no cold calls”", value.rules.notes || ""), cap = input("100", value.monthly_cap || "", "number");
+    const status = select([["active", "Active"], ["paused", "Paused"], ["done", "Done"]], value.status || "active");
+    title.required = true; cap.min = 0; cap.step = "1"; target.rows = 3; notes.rows = 2;
+    append(form, field("Goal", title), field("Details", target), publicOnly.wrap, ask.wrap, field("Other rules", notes),
+      append(el("div", "form-grid"), field("Spend at most (USD a month, on data and AI)", cap), field("Status", status)),
+      actionsRow(goal ? button("Delete", () => act("Deleted.", () => api(`/api/chief/goals/${goal.id}`, {method: "DELETE"})).then(result => { if (result) { closeDialog(); render(); } }), "button ghost") : null, save));
+    wireForm(form, save, async () => {
+      const payload = {title: title.value, target: target.value, monthly_cap: Number(cap.value || 0), status: status.value,
+        rules: {public_data_only: publicOnly.control.checked, ask_before_contact: ask.control.checked, notes: notes.value}};
+      if (goal) await mutate(`/api/chief/goals/${goal.id}`, payload, "PATCH"); else await mutate("/api/chief/goals", payload);
+      closeDialog(); toast("Saved."); render();
+    });
+    showDialog(goal ? goal.title : "New goal", form);
+  }
+
   // ---------- books: short nonfiction for Amazon KDP ----------
   const BOOK_STYLE = {planned: "blue", writing: "amber", files_ready: "cyan", published: "green", retired: "muted"};
   const NICHE_STYLE = {idea: "blue", researching: "amber", chosen: "green", dropped: "muted"};

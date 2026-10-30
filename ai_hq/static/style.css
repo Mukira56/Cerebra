@@ -478,3 +478,9 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .tips { margin: 8px 0 12px; padding-left: 18px; display: grid; gap: 6px; }
 .steps-item { display: grid; gap: 2px; margin-bottom: 12px; }
 .steps-item small { padding-left: 26px; }
+.progress-bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 8px 0; }
+.progress-fill { height: 100%; background: var(--green); }
+.worker { padding: 14px 18px; border-bottom: 1px solid var(--line); display: grid; gap: 4px; }
+.worker-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.worker-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.worker-controls select { width: auto; min-width: 180px; }

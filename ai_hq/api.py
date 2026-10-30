@@ -99,10 +99,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             payments.start()
             finder.start()
             publisher.start()
-            threading.Thread(target=freelance_loop, name="cerebra-freelance-auto", daemon=True).start()
+            scheduler.start()
         yield
         publisher.stop()
-        freelance_stop.set()
+        scheduler.stop()
         payments.stop()
         finder.stop()
         autofix.stop()
@@ -1146,15 +1146,15 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 continue
         return moved
 
-    freelance_stop = threading.Event()
-
-    def freelance_loop():
-        while not freelance_stop.wait(600):
-            for step in (applier.tick, watcher.tick, keep_won_work):
-                try:
-                    step()
-                except Exception:
-                    pass
+    # ---- Chief of Staff: one scheduler for the money-making workers, every run on the record ----
+    from . import chief
+    registry = chief.Registry()
+    registry.add("auto_apply", "Bid on Freelancer.com", "Writes a tailored proposal for each new match above your score and bids, within your daily number (Apply automatically).",
+                 applier.tick, 10, outward=True)
+    registry.add("win_watch", "Notice what you won", "Checks your Freelancer.com bids and your Gmail for awards, hires and orders.", watcher.tick, 10)
+    registry.add("won_work", "Start won work", "Turns each won job into Business Studio work and keeps it moving; delivery waits for you.", keep_won_work, 10)
+    scheduler = chief.Scheduler(db, registry)
+    app.state.chief, app.state.registry = scheduler, registry
 
     # ---- Books: short nonfiction for Amazon KDP (docs/BOOKS_PLAN.md) ----
     from . import books as books_module
@@ -1207,6 +1207,70 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def books_delete(book_id: str):
         books_call(lambda session: books_module.delete_book(session, book_id))
         return {"deleted": book_id}
+
+    @app.get("/api/chief")
+    def chief_overview():
+        scheduler.seed()
+        with db.Session() as session:
+            return {"jobs": chief.jobs(session, registry, scheduler.running), "runs": chief.runs(session), "goals": chief.goals(session),
+                    "overnight": chief.overnight(session), "training": chief.training_summary(session),
+                    "built_in": [{"label": "Find freelance work", "about": "Reads each job source on its own polite schedule (30 minutes to 6 hours).", "status": dict(finder.status) if hasattr(finder, "status") else {}},
+                                 {"label": "Post approved social posts", "about": "Every minute, within your monthly budget and daily limits."},
+                                 {"label": "Money and Stripe", "about": "Payments every 10 minutes; recurring invoices and imports every 6 hours."}]}
+
+    @app.patch("/api/chief/jobs/{job_id}")
+    def chief_job_update(job_id: str, payload: dict):
+        try:
+            with db.Session.begin() as session:
+                return chief.update_job(session, registry, job_id, payload)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/chief/jobs/{job_id}/run")
+    def chief_job_run(job_id: str):
+        """Run a job now, in the background (a bidding round can take minutes); its run appears in the record."""
+        with db.Session() as session:
+            if session.get(chief.ChiefJob, job_id) is None or job_id not in registry.workers:
+                raise HTTPException(404, "Job not found")
+        if scheduler.running:
+            raise HTTPException(409, f"{scheduler.running} is running; try again when it finishes")
+        threading.Thread(target=scheduler.run, args=(job_id, "owner"), name=f"cerebra-chief-{job_id}", daemon=True).start()
+        return {"started": job_id, "message": f"Started: {registry.workers[job_id].label}"}
+
+    @app.post("/api/chief/goals")
+    def chief_goal_create(payload: dict):
+        with db.Session.begin() as session:
+            return chief.save_goal(session, payload)
+
+    @app.patch("/api/chief/goals/{goal_id}")
+    def chief_goal_update(goal_id: str, payload: dict):
+        try:
+            with db.Session.begin() as session:
+                return chief.save_goal(session, payload, goal_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.delete("/api/chief/goals/{goal_id}")
+    def chief_goal_delete(goal_id: str):
+        try:
+            with db.Session.begin() as session:
+                chief.delete_goal(session, goal_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        return {"deleted": goal_id}
+
+    @app.put("/api/chief/training")
+    def chief_training_settings(payload: dict):
+        with db.Session.begin() as session:
+            return chief.save_training_settings(session, payload)
+
+    @app.get("/api/chief/training.jsonl")
+    def chief_training_export():
+        """The training set as JSON lines (chat format), for fine-tuning Cerebra's own model later."""
+        from fastapi.responses import Response
+        with db.Session() as session:
+            body = chief.training_jsonl(session)
+        return Response(body, media_type="application/x-ndjson", headers={"Content-Disposition": 'attachment; filename="cerebra-training.jsonl"'})
 
     @app.get("/api/freelance/insights")
     def freelance_insights():
