@@ -41,4 +41,13 @@ A secret saved on Windows (DPAPI) can't be read on another computer: enter it ag
 
 ## What has been checked
 
-These macOS and Linux paths are covered by tests that simulate each system's secret store, terminal and dialogs (`tests/test_vault.py`, `tests/test_desktop.py`). They have not yet been run on a real Mac or Linux computer, so report anything that behaves differently. Still to come: a `.dmg`/`.app` for macOS and an AppImage or `.deb` for Linux, with checksums, and a test run on each system.
+These macOS and Linux paths are covered by tests that simulate each system's secret store, terminal and dialogs (`tests/test_vault.py`, `tests/test_desktop.py`).
+
+**Linux, checked on a real machine (2026-10-30).** The whole test suite runs on GitHub's Ubuntu machines through `.github/workflows/tests.yml`: setup with `scripts/setup.sh`, then every test, and all of them pass.
+- **How it runs:** it's started by hand, from the Actions tab or with `gh workflow run tests.yml`, so the free Actions minutes last.
+- **What the first run found:** the tests assumed Windows in a few places (a secret store, a fake Git, paths). They now work on every system.
+- **On a Linux computer without a keyring** (a server or a minimal desktop), saving a key fails with a message saying to install `libsecret-tools` (Debian, Ubuntu) or `libsecret` (Fedora, Arch). Cerebra never stores the key in plain text instead.
+
+**macOS:** the same workflow runs there when started with `-f macos=true`. GitHub had no Mac machine free on 2026-10-30, so that run is still to do.
+
+Still to come: a `.dmg`/`.app` for macOS and an AppImage or `.deb` for Linux, with checksums.
