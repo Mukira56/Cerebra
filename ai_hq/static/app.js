@@ -1729,9 +1729,20 @@
             actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Send bid", async () => { const result = await act(outcome => outcome.message, () => mutate("/api/freelance/bid", {id: lead.id, confirmed: true})); if (result) { closeDialog(); render(); } }, "button primary")))); }, "button primary")
         : hint("Connect your Freelancer.com account (Freelance page › Freelancer.com account) to send bids from here.", true));
     } else {
-      sending.append(button("Copy proposal", async () => { if (!await act("", save)) return; navigator.clipboard.writeText(text.value).then(() => toast("Saved and copied. Paste it on the job page and send it."), () => toast("Saved. Couldn't copy; select the text and copy it.", true)); }, "button primary"),
-        hint(lead.source === "freelancer" ? "Copy it, open the job page and send it as your bid there, then press “I applied”. Or connect your Freelancer.com account (Freelance page) to send bids from here."
-          : `${lead.source_label} doesn't allow automated bids: copy it, open the job page, paste and send it there, then press “I applied”.`));
+      // One step for the owner: copy, open the job page, then a plain question, so the application is on the record and leaves Your calls.
+      const copyAndOpen = async () => {
+        if (!await act("", save)) return;
+        const copied = await navigator.clipboard.writeText(text.value).then(() => true, () => false);
+        if (lead.url) await act("", () => mutate("/api/freelance/open", {id: lead.id}));
+        showDialog("Did you send it?", append(el("div"),
+          el("p", "", copied ? `Your proposal is copied${lead.url ? " and the job page is open in your browser" : ""}. Paste it there and send it in your own name, then come back here.`
+            : "Couldn't copy it by itself: go back, select the text and copy it, then paste it on the job page."),
+          actionsRow(button("Not yet", () => leadDialog(lead, state), "button ghost"),
+            button("Yes, I applied", () => setLead(lead, {status: "applied"}, "Marked as applied. Good luck!"), "button primary"))));
+      };
+      sending.append(button(lead.url ? "Copy and open the job page" : "Copy proposal", copyAndOpen, "button primary"),
+        hint(lead.source === "freelancer" ? "Send it as your bid on the job page. Or connect your Freelancer.com account (Freelance page) to send bids from here."
+          : `${lead.source_label} doesn't allow automated bids, so you send it there yourself; Cerebra then asks whether you did.`));
     }
     append(box, el("strong", "", "Proposal"), proposal.fit ? hint(proposal.fit) : null, field("Text", text), append(el("div", "form-grid"), field(`Price (${proposal.currency || lead.currency || "USD"})`, price), field("Delivery (days)", days)),
       append(el("div", "actions"), button("Save edits", () => act("Proposal saved.", save), "button"), button("Write it again", start, "button ghost")), sending);
