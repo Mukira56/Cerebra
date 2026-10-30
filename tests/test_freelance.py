@@ -198,3 +198,11 @@ def test_other_professions_and_title_less_matches_stay_below_automatic_bidding()
     assert vague == freelance.TITLE_CAP and "not the title" in why[-1]
     real, _ = freelance.score({**fresh, "title": "React landing page for a bakery", "description": "A fast React landing page."}, settings)
     assert real >= 40
+
+
+def test_a_fortune_for_a_small_job_is_flagged_not_rewarded():
+    settings = {"services": ["design"], "keywords": [], "exclude": [], "min_budget": 0}
+    lead = {"title": "Personal portfolio bio copywriter", "description": "Write a short bio for my portfolio website.", "kind": "fixed", "currency": "USD"}
+    bait, why = freelance.score({**lead, "budget_min": 100_000, "budget_max": 100_000}, settings)
+    fair, _ = freelance.score({**lead, "budget_min": 100, "budget_max": 300}, settings)
+    assert bait < fair and any("looks unrealistic" in reason for reason in why)

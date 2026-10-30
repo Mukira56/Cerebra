@@ -123,6 +123,7 @@ OTHER_ROLE = re.compile(r"\b(lawyer|attorney|legal (expert|advisor|counsel)|para
                         r"business development|cold call(er|ing)|telemarket(er|ing)|appointment setter|"
                         r"translator|transcri(ber|ption)|voice ?over|voice actor|tutor|nurse|therapist|massage|"
                         r"structural engineer|licensed (engineer|architect)|interior design(er)?|autocad|real estate agent)\b", re.I)
+UNREAL_FIXED, UNREAL_HOURLY = 25_000, 500  # USD: beyond this, a short post's budget is more likely a typo or bait than a real job
 TITLE_CAP = 35  # a job whose title names none of the owner's work stays below automatic bidding (40)
 FULL_TIME = re.compile(r"\b(full[- ]?time|permanent|salaried)\b", re.I)
 FREELANCE = re.compile(r"\b(contract|contractor|freelance|freelancer|part[- ]?time|project[- ]based|gig|consultant)\b", re.I)
@@ -167,7 +168,11 @@ def score(lead, settings, now_ts=None):
         if usd is not None and currency != "USD":
             money += f" (about USD {usd:,.0f})"
         value = usd if usd is not None else top
-        if minimum and value < minimum:
+        if value >= (UNREAL_HOURLY if hourly else UNREAL_FIXED) and len(body) < 3000:
+            # A short post offering a fortune is a typo or bait: no bonus, and the owner is told to check it.
+            points -= 10
+            reasons.append(f"budget {money} looks unrealistic for this post: check it before applying")
+        elif minimum and value < minimum:
             points -= 30
             reasons.append(f"budget {money} is below your {minimum:,.0f}")
         else:
