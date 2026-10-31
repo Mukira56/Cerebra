@@ -386,6 +386,20 @@ class BookNiche(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class EtsyNiche(Base):
+    """A keyword researched on Etsy: competition, demand, prices and tags from its public listings (ai_hq/etsy.py)."""
+    __tablename__ = "etsy_niches"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    keyword: Mapped[str] = mapped_column(String, index=True)
+    digital_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    label: Mapped[str] = mapped_column(String, default="")  # strong | test | weak
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class Book(Base):
     """A book for Amazon KDP: its formats, size, prices and where it is on the way to publishing. Its text lives in files."""
     __tablename__ = "books"

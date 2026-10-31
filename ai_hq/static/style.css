@@ -486,3 +486,5 @@ dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
 .worker-controls select { width: auto; min-width: 180px; }
 .call-icon { width: 28px; height: 28px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--panel-2); color: var(--amber); flex: none; }
 a.row { color: inherit; text-decoration: none; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }

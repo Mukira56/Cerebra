@@ -1167,6 +1167,33 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     scheduler = chief.Scheduler(db, registry)
     app.state.chief, app.state.registry = scheduler, registry
 
+    # ---- Etsy: what sells and how crowded it is, from Etsy's public listings (docs/ETSY_AMAZON_PLAN.md) ----
+    from . import etsy as etsy_module
+    from .models import EtsyNiche
+
+    @app.get("/api/etsy")
+    def etsy_state():
+        with db.Session() as session:
+            try:
+                etsy_module.credentials(commerce)
+                ready, setup = True, ""
+            except ValueError as exc:
+                ready, setup = False, str(exc)
+            return {"ready": ready, "setup": setup, "niches": etsy_module.niches(session)}
+
+    @app.post("/api/etsy/research")
+    def etsy_research(payload: dict):
+        return etsy_module.research(db.Session, commerce, payload.get("keyword"), bool(payload.get("digital_only")))
+
+    @app.delete("/api/etsy/niches/{niche_id}")
+    def etsy_niche_delete(niche_id: str):
+        with db.Session.begin() as session:
+            row = session.get(EtsyNiche, niche_id)
+            if row is None:
+                raise HTTPException(404, "Niche not found")
+            session.delete(row)
+        return {"deleted": niche_id}
+
     # ---- Books: short nonfiction for Amazon KDP (docs/BOOKS_PLAN.md) ----
     from . import books as books_module
 

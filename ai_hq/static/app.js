@@ -17,6 +17,7 @@
     chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
     prospects: ["EARN", "Prospects", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
     funding: ["EARN", "Funding", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
+    etsy: ["EARN", "Etsy", "Find what sells on Etsy and how crowded it is, from Etsy's own public listings: demand, competition, prices and the tags top sellers use. Nothing is written to Etsy."],
     books: ["EARN", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
     freelance: ["EARN", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["EARN", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
@@ -167,7 +168,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, chief: chiefView, prospects: prospectsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1491,6 +1492,59 @@
     return [royaltyLine("Paperback", earnings.paperback), royaltyLine("Kindle", earnings.kindle), royaltyLine("Hardcover", earnings.hardcover),
       ["Pages", `${earnings.pages}${earnings.pages_estimated ? " (estimated from the word count)" : ""} · ${earnings.trim} in, ${earnings.paper} paper`],
       ["Cover (paperback)", `${earnings.cover.width}" × ${earnings.cover.height}" with a ${earnings.cover.spine}" spine${earnings.cover.spine_text ? "" : " (too thin for spine text)"}`]].filter(Boolean);
+  }
+  // ---------- Etsy: what sells and how crowded it is ----------
+  const ETSY_STYLE = {strong: "green", test: "amber", weak: "muted"};
+  function etsyView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading…")));
+    (async () => {
+      let state; try { state = await api("/api/etsy"); } catch (issue) { root.replaceChildren(body(empty("Etsy unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const niches = array(state.niches), form = el("form"), keyword = input("wedding planner printable", ""), digital = check("Digital downloads only", true), go = submitButton("Research");
+      append(form, hint("Type what a buyer would search for. Cerebra reads Etsy's top 100 listings for it (one request) and works out demand, competition and prices."),
+        field("Keyword", keyword), digital.wrap, actionsRow(go));
+      wireForm(form, go, async () => {
+        const found = await mutate("/api/etsy/research", {keyword: keyword.value, digital_only: digital.control.checked}, "POST", 60000);
+        toast(`${found.keyword}: ${found.label === "strong" ? "a strong niche" : found.label === "test" ? "worth a test" : "weak or crowded"} (${found.score}).`);
+        render(); nicheDialog(found);
+      });
+      const list = el("div", "row-list");
+      niches.forEach(niche => {
+        const data = niche.data || {}, row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", niche.keyword),
+          el("div", "row-meta", [`${Number(data.count || 0).toLocaleString()} listings`, `${data.demand ?? 0} favourites/month on top listings`, data.price ? `median USD ${Number(data.price).toFixed(2)}` : "", niche.digital_only ? "digital only" : ""].filter(Boolean).join(" · "))),
+          el("span", `badge ${ETSY_STYLE[niche.label] || "muted"}`, `${niche.label.toUpperCase()} ${niche.score}`));
+        row.tabIndex = 0; row.setAttribute("role", "button");
+        row.addEventListener("click", () => nicheDialog(niche)); row.addEventListener("keydown", event => { if (event.key === "Enter") nicheDialog(niche); });
+        list.append(row);
+      });
+      const stats = el("div", "grid stats");
+      [["Researched", niches.length, "keywords", ""], ["Strong", niches.filter(item => item.label === "strong").length, "worth making for", "green"],
+       ["Worth a test", niches.filter(item => item.label === "test").length, "a few listings first", "amber"]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      root.replaceChildren(stats, append(el("div", "grid two"),
+        append(el("div"), panel("Your niches", niches.length ? list : body(empty("No niches yet", "Research a keyword to see if it's worth making for.")), null, niches.length)),
+        append(el("div"), panel("Find a niche", body(state.ready ? form : append(el("div"), hint(state.setup, true), link("Business connections →", "connections")))),
+          panel("How to read it", body(append(el("ul", "tips"),
+            el("li", "", "Demand is favourites a month on the first page of results: Etsy publishes favourites, not sales, so this is the honest sign of what buyers want."),
+            el("li", "", "Competition is how many active listings match. Fewer than 3,000 with real demand is the sweet spot; over 50,000 needs a narrower keyword."),
+            el("li", "", "Try the longer keywords each niche suggests: they are what top sellers already tag, and usually less crowded."),
+            el("li", "", "Etsy requires you to disclose AI use and bans AI-made patterns and recipes. Check Etsy's seller policy before listing.")))))));
+    })();
+    return root;
+  }
+  function nicheDialog(niche) {
+    const data = niche.data || niche, root = el("div");
+    const research = term => act("", () => mutate("/api/etsy/research", {keyword: term, digital_only: niche.digital_only ?? true}, "POST", 60000)).then(found => { if (found) { render(); nicheDialog(found); } });
+    append(root, append(el("div", "detail-top"), el("span", `badge ${ETSY_STYLE[data.label] || "muted"}`, `${String(data.label || "").toUpperCase()} ${data.score}`),
+        el("span", "row-meta", `${Number(data.count || 0).toLocaleString()} active listings · prices USD ${(data.spread || [0, 0]).map(value => Number(value).toFixed(2)).join("–")} · ${data.digital_share ?? 0}% digital`)),
+      append(el("ul", "tips"), ...array(data.reasons).map(reason => el("li", "", reason))),
+      el("h4", "", "Tags top sellers use"), append(el("div", "chips"), ...array(data.tags).map(item => el("span", "badge muted", `${item.tag} · ${item.uses}`))),
+      array(data.longer).length ? append(el("div"), el("h4", "", "Longer keywords to check"), append(el("div", "actions"), ...array(data.longer).map(term => button(term, () => research(term), "button small ghost")))) : null,
+      el("h4", "", "On the first page"), table(["Listing", "Favourites", "Price"], array(data.examples).map(item => [item.title, String(item.favorites), item.price ? `USD ${Number(item.price).toFixed(2)}` : "—"])),
+      hint("Titles and tags are other sellers' words: use them to understand the niche, never copy a listing."),
+      niche.id ? actionsRow(button("Remove", () => act("Removed.", () => api(`/api/etsy/niches/${niche.id}`, {method: "DELETE"})).then(() => { closeDialog(); render(); }), "button ghost")) : null);
+    showDialog(data.keyword || niche.keyword, root);
   }
   function booksView() {
     const root = el("div"), token = renderToken;
