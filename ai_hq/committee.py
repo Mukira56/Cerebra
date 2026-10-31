@@ -29,8 +29,10 @@ ROLES = {
     "bear": ("verify", "You argue AGAINST bidding on this job, on a freelancer's decision committee. In at most 100 words, the strongest "
                        "honest case: poor fit, low pay for the work, crowded, vague or risky client, time it would steal. Don't invent anything."),
     "risk": ("verify_second", "You are the risk reviewer on a freelancer's decision committee. Veto only for real danger: scam signs, payment "
-                              "or contact outside the platform, unpaid test work, illegal or academic-cheating work, or a scope impossible for "
-                              'the budget. Reply with ONLY JSON: {"veto": true or false, "reason": "one sentence"}'),
+                              "or contact outside the platform, unpaid test work (doing part of the actual deliverable before being hired), "
+                              "illegal or academic-cheating work, or a scope many times bigger than the budget could pay for. A post asking "
+                              "applicants for portfolio links, a short plan, questions or a quote is normal bidding, never unpaid work. "
+                              'Reply with ONLY JSON: {"veto": true or false, "reason": "one sentence"}'),
     "manager": ("judgment", "You are the manager of a freelancer's decision committee. Read the analysis, the case for, the case against "
                             "and the risk review, then decide whether the freelancer should bid. Bid only when the job fits and is worth the "
                             'time. Reply with ONLY JSON: {"decision": "bid" or "skip", "confidence": 0-100, "reason": "one or two sentences"}'),

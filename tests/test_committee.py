@@ -117,3 +117,10 @@ def test_writing_ahead_follows_the_committee_and_leaves_freelancer_jobs_to_autom
     assert not by_title(client, "WordPress plugin fix")["proposal"] and site.bids == []
     client.put("/api/freelance/auto", json={"ahead": False})
     assert client.app.state.ahead.tick() == {"skipped": "off"}
+
+
+def test_the_risk_reviewer_is_told_that_asking_for_a_portfolio_or_plan_is_normal_bidding():
+    from ai_hq.committee import ROLES
+    rules = ROLES["risk"][1]
+    # 2026-10-31, the owner's own committee: "portfolio links and written plans" were taken for unpaid up-front work.
+    assert "portfolio links, a short plan" in rules and "never unpaid work" in rules and "before being hired" in rules
