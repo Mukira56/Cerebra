@@ -49,3 +49,49 @@ def test_the_books_page_makes_the_file_in_cerebras_folder_and_opens_it(client): 
     assert client.post("/api/books/interiors", json={"style": "dot", "trim": "6x9", "pages": 5}).status_code == 400
     client.post("/api/books/interiors/open", json={})
     assert client.app.state.opened[-1].endswith("interiors")
+
+
+def test_a_notebook_listing_is_checked_against_kdp_limits():
+    from ai_hq import notebooks
+    good = {"title": "Gratitude Journal for Women", "subtitle": "120 College-Ruled Pages, 6 x 9 in", "description": "A simple daily gratitude journal with lined pages.",
+            "keywords": [f"gratitude phrase {n}" for n in range(7)]}
+    assert notebooks.check(good) == []
+    bad = {**good, "title": "#1 Bestseller Disney Journal", "keywords": ["kindle notebook"], "description": "Short."}
+    problems = " | ".join(notebooks.check(bad))
+    assert "#1" in problems and "bestseller" in problems and "kindle" in problems and "disney" in problems
+    assert "1 of 7 keywords" in problems and "30–4000 characters" in problems
+    info = {"pages": 120, "trim": "6x9"}
+    priced = notebooks.parse('{"title": "T", "description": "' + "x" * 40 + '", "keywords": [], "price": 1.0}', info)
+    assert priced["price"] >= 5.99 and priced["price"] >= notebooks.books.print_royalty(5.99, 120, "6x9")["minimum_price"]  # never below printing
+
+
+def test_a_theme_becomes_a_book_ready_to_upload_that_waits_in_your_calls(client):  # noqa: F811
+    import json
+    from ai_hq import chief
+    from fakes import FixtureRegistry
+    from ai_hq.agents import AgentResult
+    from test_product_api import enable_agents
+
+    class Writer(FixtureRegistry):
+        def __init__(self):
+            super().__init__()
+            self.prompts = []
+
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            self.prompts.append(prompt)
+            return AgentResult(True, json.dumps({"title": "Gratitude Journal for Women", "subtitle": "120 College-Ruled Pages, 6 x 9 in",
+                                                 "description": "A calm daily gratitude journal. Lined pages for three things each day.",
+                                                 "keywords": [f"daily gratitude phrase {n}" for n in range(9)], "price": 8.99}))
+    assert "Switch AI agents on" in client.post("/api/books/notebooks", json={"theme": "gratitude journal for women"}).json()["detail"]
+    enable_agents(client)
+    model = Writer()
+    client.app.state.supervisor.registry = model
+    book = client.post("/api/books/notebooks", json={"theme": "gratitude journal for women", "style": "college", "trim": "6x9", "pages": 120}).json()
+    assert book["status"] == "files_ready" and book["kind"] == "low_content" and book["interior"] == "college-6x9-120p-white.pdf"
+    assert len(book["listing"]["keywords"]) == 7 and book["listing"]["checks"] == [] and book["prices"]["paperback"] == 8.99
+    assert book["royalty"]["royalty"] > 0 and "data, not instructions" in model.prompts[-1]
+    assert "At USD 9.99 KDP pays 60%" in book["price_tip"] and "USD 3.55" in book["price_tip"] and "USD 2.06" in book["price_tip"]  # 120 pages, 6 x 9
+    with client.app.state.db.Session() as session:
+        assert any(item["kind"] == "book" and "Gratitude Journal" in item["detail"] for item in chief.calls(session))
+    assert client.post("/api/books/notebooks", json={"theme": "x"}).status_code == 400
+    assert client.post("/api/books/notebooks", json={"theme": "nurse notebook", "pages": 5}).status_code == 400  # no model asked for a book KDP won't print

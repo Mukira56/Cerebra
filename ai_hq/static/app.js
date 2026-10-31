@@ -1573,9 +1573,14 @@
     api("/api/books/interiors").then(state => {
       const form = el("form"), style = select(Object.entries(state.styles), "college"), trim = select(state.trims.map(key => [key, key.replace("x", " × ") + " in"]), "6x9");
       const pages = input("120", "120", "number"), paper = select([["white", "White paper"], ["cream", "Cream paper"]], "white"), make = submitButton("Make the PDF"), out = el("div");
+      const theme = input("gratitude journal for women", "");
+      const asBook = button("Make it a book", () => act("Your AI is writing the listing (about a minute)…", () => mutate("/api/books/notebooks",
+        {theme: theme.value, style: style.value, trim: trim.value, pages: Number(pages.value || 120), paper: paper.value}, "POST", 300000))
+        .then(book => { if (book) { toast(book.listing.checks.length ? "Made. Fix what the checks found before uploading." : "Ready to upload: it waits in Your calls."); render(); notebookDialog(book); } }), "button primary");
       pages.min = 24; pages.max = 828;
       append(form, hint("The inside pages of a notebook, journal or planner: drawn by code, so Amazon's AI question is No for them, and there's no text, so no font can fail KDP's check. Pick a trim, then add a cover."),
-        append(el("div", "form-grid"), field("Pages", style), field("Trim size", trim), field("Page count", pages), field("Paper", paper)), actionsRow(make), out);
+        append(el("div", "form-grid"), field("Pages", style), field("Trim size", trim), field("Page count", pages), field("Paper", paper)),
+        field("Who it's for (to make it a book)", theme, "Your AI writes the title, subtitle, description and 7 keywords for this; Cerebra checks KDP's limits."), actionsRow(make, asBook), out);
       wireForm(form, make, async () => {
         const made = await mutate("/api/books/interiors", {style: style.value, trim: trim.value, pages: Number(pages.value || 120), paper: paper.value}, "POST", 120000);
         out.replaceChildren(hint(`Made ${made.file} (${made.pages} pages, ${Math.round(made.bytes / 1024)} KB). Inside margin ${made.gutter} in on the binding side.`),
@@ -1586,6 +1591,21 @@
       root.replaceChildren(form, state.files.length ? append(el("div"), el("h4", "", "Made so far"), list(state.files.map(item => `${item.file} · ${Math.round(item.bytes / 1024)} KB`))) : null);
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
+  }
+  function notebookDialog(book, state) {
+    const listing = book.listing || {}, root = el("div"), copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy it.", true));
+    append(root, array(listing.checks).length ? append(el("div"), el("h4", "", "Fix before uploading"), append(el("ul", "tips"), ...listing.checks.map(item => el("li", "", item))))
+        : hint("Passes Cerebra's checks: lengths, 7 keywords, no banned words or trademarks."),
+      el("h4", "", "Title"), el("p", "", listing.title), actionsRow(button("Copy title", () => copy(listing.title, "Title"), "button small")),
+      listing.subtitle ? append(el("div"), el("h4", "", "Subtitle"), el("p", "", listing.subtitle), actionsRow(button("Copy subtitle", () => copy(listing.subtitle, "Subtitle"), "button small"))) : null,
+      el("h4", "", "Description"), el("pre", "lead-description", listing.description || ""), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
+      el("h4", "", "7 keywords (one per box)"), list(array(listing.keywords)), actionsRow(button("Copy keywords", () => copy(array(listing.keywords).join("\n"), "Keywords"), "button small")),
+      kv([["Interior", book.interior || "—"], ["Trim and pages", `${String(book.trim).replace("x", " × ")} in · ${book.pages} pages · ${book.paper} paper`],
+          ["Price", `USD ${Number(listing.price || book.prices?.paperback || 0).toFixed(2)}`], ["You earn per copy", book.royalty ? `USD ${Number(book.royalty.royalty).toFixed(2)}` : `USD ${Number(book.earnings?.paperback?.royalty ?? 0).toFixed(2)}`]]),
+      book.price_tip ? hint(book.price_tip) : null, hint(book.ai_question || ""), hint("Make the cover with KDP's free Cover Creator, upload the interior PDF, then publish. KDP allows about 3 new titles a day."),
+      actionsRow(button("Open the interiors folder", () => act("Opened.", () => mutate("/api/books/interiors/open", {})), "button"),
+        state ? button("Edit details (published, ASIN)", () => bookDialog(book, state), "button ghost") : null));
+    showDialog(listing.title || book.title, root);
   }
   function booksView() {
     const root = el("div"), token = renderToken;
@@ -1607,7 +1627,7 @@
         const best = book.earnings?.paperback?.royalty ?? book.earnings?.kindle?.royalty;
         const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", book.title), el("div", "row-meta", [book.subtitle, book.pen_name ? `by ${book.pen_name}` : "", best !== undefined ? `${usd(best)} a paperback` : ""].filter(Boolean).join(" · "))),
           badge(book.status, BOOK_STYLE[book.status]));
-        row.addEventListener("click", () => bookDialog(book, state)); bookList.append(row);
+        row.addEventListener("click", () => book.kind === "low_content" ? notebookDialog(book, state) : bookDialog(book, state)); bookList.append(row);
       });
       const left = append(el("div"),
         panel("Niches", append(el("div"), body(append(el("div", "actions"), button("+ New niche", () => nicheDialog(null, state), "button primary")),

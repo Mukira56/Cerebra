@@ -1248,6 +1248,20 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             raise ValueError("Enter the number of pages")
         return interiors_module.save(interiors_folder, str(payload.get("style") or ""), str(payload.get("trim") or "6x9"), pages, str(payload.get("paper") or "white"))
 
+    from . import notebooks as notebooks_module
+    notebook_maker = notebooks_module.NotebookMaker(db, settings, chat_registry, interiors_folder)
+    app.state.notebook_maker = notebook_maker
+
+    @app.post("/api/books/notebooks")
+    def books_make_notebook(payload: dict):
+        """A theme becomes a KDP notebook ready to upload: the interior, the listing (your AI, checked in code) and a Book."""
+        try:
+            pages = int(payload.get("pages") or 120)
+        except (TypeError, ValueError):
+            raise ValueError("Enter the number of pages")
+        return notebook_maker.make(payload.get("theme"), str(payload.get("style") or "college"), str(payload.get("trim") or "6x9"), pages,
+                                   str(payload.get("paper") or "white"))
+
     @app.post("/api/books/interiors/open")
     def books_open_interiors():
         interiors_folder.mkdir(parents=True, exist_ok=True)
@@ -1537,7 +1551,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from . import modelhub
     hub = modelhub.Hub(db)
     app.state.hub = hub
-    for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer, listing_writer):
+    for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer, listing_writer, notebook_maker):
         writer.hub = hub
 
     from . import committee as committee_module
