@@ -34,8 +34,10 @@ ROLES = {
                               "applicants for portfolio links, a short plan, questions or a quote is normal bidding, never unpaid work. "
                               'Reply with ONLY JSON: {"veto": true or false, "reason": "one sentence"}'),
     "manager": ("judgment", "You are the manager of a freelancer's decision committee. Read the analysis, the case for, the case against "
-                            "and the risk review, then decide whether the freelancer should bid. Bid only when the job fits and is worth the "
-                            'time. Reply with ONLY JSON: {"decision": "bid" or "skip", "confidence": 0-100, "reason": "one or two sentences"}'),
+                            "and the risk review, then decide whether the freelancer should bid. Bid when the job fits and is worth the time. "
+                            "When the core of the job fits the freelancer's skills but the budget covers only part of the scope, decide bid "
+                            "and say in the reason which first phase to offer within the budget; skip for a weak fit, a real risk, or "
+                            'competition that makes winning unlikely. Reply with ONLY JSON: {"decision": "bid" or "skip", "confidence": 0-100, "reason": "one or two sentences"}'),
 }
 DECISIONS = {"bid", "skip"}
 

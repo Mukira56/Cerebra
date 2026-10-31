@@ -124,3 +124,19 @@ def test_the_risk_reviewer_is_told_that_asking_for_a_portfolio_or_plan_is_normal
     rules = ROLES["risk"][1]
     # 2026-10-31, the owner's own committee: "portfolio links and written plans" were taken for unpaid up-front work.
     assert "portfolio links, a short plan" in rules and "never unpaid work" in rules and "before being hired" in rules
+
+
+def test_a_committee_that_says_bid_shapes_the_proposal_and_a_fitting_job_over_budget_gets_a_first_phase(client):  # noqa: F811
+    from ai_hq.committee import ROLES
+    from ai_hq.freelance import proposal_prompt
+    # 2026-10-31, the owner's committee skipped five of five, including "AI Travel Planner Integration" (core fit, budget for part of it).
+    assert "which first phase to offer within the budget" in ROLES["manager"][1]
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id="freelancer:950", source="freelancer", title="AI Travel Planner Integration", description="An AI itinerary module.", status="new",
+                                  extra={"committee": {"decision": "bid", "reason": "Offer the AI itinerary generator first, within the budget."}}))
+        session.add(FreelanceLead(id="freelancer:951", source="freelancer", title="Data entry", description="Type documents.", status="new",
+                                  extra={"committee": {"decision": "skip", "reason": "Not the freelancer's work."}}))
+    with client.app.state.db.Session() as session:
+        assert "COMMITTEE ADVICE" in proposal_prompt(session, session.get(FreelanceLead, "freelancer:950"))
+        assert "Offer the AI itinerary generator first" in proposal_prompt(session, session.get(FreelanceLead, "freelancer:950"))
+        assert "COMMITTEE ADVICE" not in proposal_prompt(session, session.get(FreelanceLead, "freelancer:951"))
