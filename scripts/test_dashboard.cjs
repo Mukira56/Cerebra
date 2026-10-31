@@ -315,7 +315,7 @@ const path = require('node:path');
       await page.keyboard.press('Escape');
     }
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({pages: 23, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
+    console.log(JSON.stringify({pages: 24, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
   } catch (error) {
     if (shots && activePage) {
       await activePage.screenshot({path:path.join(shots,'failure.png')}).catch(() => {});
