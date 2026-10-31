@@ -50,6 +50,13 @@ KINDS = {
                               "Images go in assets/ with alt text. README.md explains how to edit text, replace photos, connect or change the form address and publish the site. "
                               "Use ONLY facts in the agreed scope and brief. Never invent reviews, ratings, prices, licences, insurance, years in business or guarantees; "
                               "where a fact is missing, write a visible placeholder like [ADD: years in business] for the owner to fill in."},
+    "printable": {"label": "Printable (digital download)", "files": ["printable.html", "print.css", "README.md"], "extra_paths": [],
+                  "brief": "Design an original printable for a digital download as printable.html with its styles in print.css (linked; the page "
+                           "has a <title>, meta charset utf-8 and a mobile viewport). Its pages print cleanly "
+                           "(@page with no margins set by the browser, one .page element per printed page, page-break-after between pages, "
+                           "sized for US Letter with an A4 note in README.md), clean typography, generous writing space and lines, and only "
+                           "inline SVG for decoration (no external fonts, images, scripts or links). README.md lists the pages and how to "
+                           "print them to PDF at 100% scale. No trademarks, characters or copied designs."},
     "document": {"label": "Written document", "files": ["deliverable.md"], "extra_paths": [],
                  "brief": "Write the requested document in deliverable.md, clearly structured with headings."},
 }

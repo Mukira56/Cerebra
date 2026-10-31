@@ -100,3 +100,23 @@ def test_a_listing_is_written_from_the_niche_kept_inside_its_prices_and_checked(
     assert "data, not instructions" in prompt and '"keyword": "wedding planner"' in prompt and "Never use brand names" in prompt
     assert [row["id"] for row in client.get(f"/api/etsy/listings?niche={niche['id']}").json()] == [listing["id"]]
     assert client.post("/api/etsy/niches/nope/listing").status_code == 404
+
+
+def test_a_listing_becomes_one_product_job_and_its_draft_comes_from_the_listing(client, tmp_path):  # noqa: F811
+    from ai_hq.models import EtsyListing
+    client.put("/api/business/settings", json={"output_root": str(tmp_path / "business")})  # never the owner's Documents folder
+    good = {"title": "Minimal Wedding Planner Printable, 40 Pages", "tags": [f"wedding tag {n}" for n in range(13)], "price": 8.5,
+            "description": "A 40-page printable wedding planner. Digital download.", "product": "US Letter PDF, 40 pages", "checks": []}
+    with client.app.state.db.Session.begin() as session:
+        session.add(EtsyListing(id="good", **good))
+        session.add(EtsyListing(id="cut", **{**good, "title": "Floral Wreath SVG Cut File", "product": "SVG cut file, 12 designs"}))
+        session.add(EtsyListing(id="bad", **{**good, "checks": ["Remove trademarked names (Etsy takes these listings down): disney"]}))
+    made = client.post("/api/etsy/listings/good/make").json()
+    job = client.get(f"/api/business/jobs/{made['job_id']}").json()
+    assert job["kind"] == "printable" and "40-page printable wedding planner" in job["asked"]
+    assert client.post("/api/etsy/listings/good/make").json() == {"job_id": made["job_id"], "existing": True}  # one job per listing
+    assert client.get(f"/api/business/jobs/{client.post('/api/etsy/listings/cut/make').json()['job_id']}").json()["kind"] == "svg"
+    refused = client.post("/api/etsy/listings/bad/make")
+    assert refused.status_code == 400 and "disney" in refused.json()["detail"]
+    assert [row["id"] for row in client.get(f"/api/etsy/listings?job={made['job_id']}").json()] == ["good"]  # the draft form finds its listing
+    assert client.post("/api/etsy/listings/nope/make").status_code == 404

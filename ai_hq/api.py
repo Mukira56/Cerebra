@@ -1196,9 +1196,28 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             raise HTTPException(404, str(exc))
 
     @app.get("/api/etsy/listings")
-    def etsy_listings(niche: str = ""):
+    def etsy_listings(niche: str = "", job: str = ""):
         with db.Session() as session:
-            return etsy_module.listings(session, niche or None)
+            return etsy_module.listings(session, niche or None, job or None)
+
+    @app.post("/api/etsy/listings/{listing_id}/make")
+    def etsy_make_product(listing_id: str):
+        """Start the Business Studio job that makes this listing's files; its Etsy draft is then prefilled from the listing."""
+        from .models import EtsyListing
+        from .schemas import BusinessJobCreate
+        with db.Session() as session:
+            listing = session.get(EtsyListing, listing_id)
+            if listing is None:
+                raise HTTPException(404, "Listing not found")
+            if listing.job_id:
+                return {"job_id": listing.job_id, "existing": True}
+            if listing.checks:
+                raise ValueError("Fix what the checks found first: " + "; ".join(listing.checks))
+            spec = etsy_module.product_job(listing)
+        job = create_business_job(BusinessJobCreate(**spec))
+        with db.Session.begin() as session:
+            session.get(EtsyListing, listing_id).job_id = job["id"]
+        return {"job_id": job["id"], "existing": False}
 
     @app.delete("/api/etsy/niches/{niche_id}")
     def etsy_niche_delete(niche_id: str):

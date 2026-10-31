@@ -212,7 +212,8 @@ def parse_listing(text, niche):
 
 def listing_public(row):
     return {"id": row.id, "niche_id": row.niche_id, "title": row.title, "tags": row.tags or [], "description": row.description, "price": row.price,
-            "product": row.product, "checks": row.checks or [], "status": row.status, "model": row.model, "created_at": row.created_at}
+            "product": row.product, "checks": row.checks or [], "status": row.status, "model": row.model, "created_at": row.created_at,
+            "job_id": row.job_id or ""}
 
 
 class ListingWriter:
@@ -246,8 +247,24 @@ class ListingWriter:
             return listing_public(row)
 
 
-def listings(session, niche_id=None):
+CUT_FILES = re.compile(r"\b(svg|cut file|cricut|silhouette|vector|laser)\b", re.I)
+
+
+def product_job(listing):
+    """The Business Studio job that makes a listing's files: an SVG design for cut files, otherwise a printable."""
+    kind = "svg" if CUT_FILES.search(f"{listing.product} {listing.title}") else "printable"
+    brief = (f"Make the product for this Etsy digital download.\nListing title: {listing.title}\nWhat to make: {listing.product or listing.title}\n"
+             f"What the buyer is promised (the description):\n{listing.description[:3000]}\n\nMake everything original: no trademarks, "
+             "characters, celebrities or copied designs.")
+    return {"title": listing.title[:120], "kind": kind, "brief": brief,
+            "requirements": ["Every page or element the description promises is made", "Original work only: no trademarks or copied designs",
+                             "Prints or cuts cleanly at the stated size"]}
+
+
+def listings(session, niche_id=None, job_id=None):
     query = select(EtsyListing).order_by(EtsyListing.created_at.desc())
     if niche_id:
         query = query.where(EtsyListing.niche_id == niche_id)
+    if job_id:
+        query = query.where(EtsyListing.job_id == job_id)
     return [listing_public(row) for row in session.scalars(query).all()]

@@ -1559,8 +1559,11 @@
       el("h4", "", `Tags (${listing.tags.length}/13)`), append(el("div", "chips"), ...listing.tags.map(tag => el("span", "badge muted", tag))), actionsRow(button("Copy tags", () => copy(listing.tags.join(", "), "Tags"), "button small")),
       el("h4", "", "Description"), el("pre", "lead-description", listing.description), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
       el("h4", "", "Price and product"), el("p", "", `USD ${Number(listing.price).toFixed(2)} · ${listing.product || "describe the files to make"}`),
-      hint("When you list it on Etsy: tick that AI was used if it was, choose “Designed by” rather than “Made by”, and upload the files you made. Nothing goes to Etsy from here yet."),
-      actionsRow(button("Back to the niche", () => etsyNicheDialog(niche), "button ghost")));
+      hint("When you list it on Etsy: tick that AI was used if it was, choose “Designed by” rather than “Made by”, and upload the files you made. Nothing goes to Etsy without your confirmation."),
+      actionsRow(button("Back to the niche", () => etsyNicheDialog(niche), "button ghost"),
+        listing.job_id ? link("Open its product job →", `job/${listing.job_id}`)
+          : button("Make it in Business Studio", () => act("Started: your AI is making the product files.", () => mutate(`/api/etsy/listings/${listing.id}/make`, {})).then(result => { if (result) { closeDialog(); location.hash = `job/${result.job_id}`; } }),
+            listing.checks.length ? "button" : "button primary")));
     showDialog("Etsy listing", root);
   }
   function booksView() {
@@ -2248,7 +2251,7 @@
   }
   // ---------- business studio ----------
   const STAGE_STYLE = {scope: "amber", intake: "muted", planning: "blue", creating: "blue", checking: "blue", waiting: "amber", ready: "green", completed: "green", failed: "red", cancelled: "muted"};
-  const KIND_HELP = {service_site: "Service business website with a working quote form (client delivery)", website: "Static website: index.html, styles.css, README.md", listing: "Listing copy: title, description and tags (listing.md)", svg: "Original vector design (design.svg) + README", document: "A written document (deliverable.md)"};
+  const KIND_HELP = {printable: "Printable for a digital download: print-ready pages (planners, trackers, checklists) for Etsy", service_site: "Service business website with a working quote form (client delivery)", website: "Static website: index.html, styles.css, README.md", listing: "Listing copy: title, description and tags (listing.md)", svg: "Original vector design (design.svg) + README", document: "A written document (deliverable.md)"};
   function businessForm(prefill = {}) {
     const form = el("form"), title = input("e.g. Bakery website for Ama", prefill.title || ""), kind = select(Object.entries(KIND_HELP).map(([key, label]) => [key, label]), prefill.kind || "website");
     const client = input("Client name (optional)", prefill.client || ""), brief = textarea("Paste the client's brief or describe your product idea in full.", prefill.brief || ""), requirements = textarea("Optional. One requirement per line.");
@@ -2423,7 +2426,13 @@
       if (choice.value === "image") details.append(field("Image instructions", prompt), hint("One 1024 × 1024 PNG. The provider bills your API account. Inspect the image before delivery; it is generated after the job's review. Export again to include it."));
       else if (choice.value === "printify_upload") details.append(field("Image path inside this job", path), hint("PNG or JPEG up to 20 MB. The result gives you an image ID for the Printify draft."));
       else { fields.value = json(examples[choice.value]); details.append(field("Review these draft fields", fields), hint("Replace zero IDs with real catalog/category IDs. This creates a draft only. It does not publish, create orders, produce goods or deliver to a client.")); }
-      if (choice.value === "etsy_draft") details.append(original.wrap);
+      if (choice.value === "etsy_draft") {
+        details.append(original.wrap);
+        // A job made from an Etsy listing: its draft is the listing itself (title, 13 tags, description, price), still yours to review.
+        api(`/api/etsy/listings?job=${encodeURIComponent(job.id)}`).then(rows => { const listing = array(rows)[0]; if (!listing || choice.value !== "etsy_draft") return;
+          fields.value = json({quantity: 999, title: listing.title, description: listing.description, price: listing.price, tags: listing.tags,
+                               who_made: "i_did", when_made: "made_to_order", taxonomy_id: 0, type: "download"}); }).catch(() => {});
+      }
     }
     choice.addEventListener("change", change); change();
     const result = el("pre", "connection-result"), submit = submitButton("Run confirmed action");

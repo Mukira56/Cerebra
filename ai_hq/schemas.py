@@ -177,7 +177,7 @@ class ActionDecision(StrictModel):
 
 class BusinessJobCreate(StrictModel):
     title: str = Field(min_length=3, max_length=120)
-    kind: str = Field(pattern="^(website|service_site|listing|svg|document)$")
+    kind: str = Field(pattern="^(website|service_site|listing|svg|printable|document)$")
     brief: str = Field(min_length=20, max_length=20000)
     client: str = Field(default="", max_length=120)
     requirements: list[str] = Field(default_factory=list, max_length=30)

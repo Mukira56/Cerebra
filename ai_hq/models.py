@@ -412,6 +412,7 @@ class EtsyListing(Base):
     product: Mapped[str] = mapped_column(Text, default="")
     checks: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String, default="draft")  # draft | ready | on_etsy
+    job_id: Mapped[str] = mapped_column(String, default="")  # the Business Studio job that makes its files
     model: Mapped[str] = mapped_column(String, default="")
     created_at: Mapped[str] = mapped_column(String, default=now)
 
