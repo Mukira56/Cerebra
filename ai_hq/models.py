@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import String, Text, ForeignKey, JSON, Boolean, Integer
+from sqlalchemy import String, Text, ForeignKey, JSON, Boolean, Integer, Float
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 def uid(): return uuid4().hex
@@ -398,6 +398,22 @@ class EtsyNiche(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
+
+
+class EtsyListing(Base):
+    """A listing written for a researched niche: checked against Etsy's rules, sent to Etsy only as a draft the owner confirms."""
+    __tablename__ = "etsy_listings"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    niche_id: Mapped[str | None] = mapped_column(ForeignKey("etsy_niches.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    description: Mapped[str] = mapped_column(Text, default="")
+    price: Mapped[float] = mapped_column(Float, default=0.0)
+    product: Mapped[str] = mapped_column(Text, default="")
+    checks: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="draft")  # draft | ready | on_etsy
+    model: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
 
 
 class Book(Base):

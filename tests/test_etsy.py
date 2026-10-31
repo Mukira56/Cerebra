@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from ai_hq import etsy
+from fakes import FixtureRegistry
 from test_freelance import client  # noqa: F401  (client is a fixture)
 
 NOW = datetime(2026, 11, 1, tzinfo=timezone.utc)
@@ -58,3 +59,44 @@ def test_research_needs_only_the_app_key_reads_once_and_keeps_the_niche(client):
     assert len(niches) == 1 and len(site.requests) == 2  # the same keyword is refreshed, not duplicated
     assert client.delete(f"/api/etsy/niches/{niches[0]['id']}").status_code == 200 and client.get("/api/etsy").json()["niches"] == []
     assert client.post("/api/etsy/research", json={"keyword": "x"}).status_code == 400
+
+
+def test_tags_and_rules_are_checked_in_code():
+    assert etsy.clean_tags(["Wedding Planner Printable Bundle!!", "wedding_planner", "Wedding Planner Printable Bundle", "  ", "ok™"]) == \
+        ["wedding planner", "ok™"]  # cut at a word within 20 characters, Etsy's characters only, no repeats
+    good = {"title": "Wedding Planner Printable", "tags": [f"tag {n}" for n in range(13)], "description": "A planner.", "price": 8.5}
+    assert etsy.check_listing(good) == []
+    bad = {**good, "title": "Disney Wedding Planner", "tags": ["crochet pattern"], "price": 0}
+    problems = " | ".join(etsy.check_listing(bad))
+    assert "trademarked names" in problems and "disney" in problems and "patterns and recipes" in problems and "1 of 13 tags" in problems and "Set a price" in problems
+
+
+class Writer(FixtureRegistry):
+    """The owner's AI model, simulated: answers the listing prompt with JSON."""
+    def __init__(self, answer):
+        super().__init__()
+        self.answer, self.prompts = answer, []
+
+    def chat(self, name, prompt, workdir, model="", cancel_event=None):
+        from ai_hq.agents import AgentResult
+        self.prompts.append(prompt)
+        return AgentResult(True, self.answer)
+
+
+def test_a_listing_is_written_from_the_niche_kept_inside_its_prices_and_checked(client):  # noqa: F811
+    import json
+    from test_product_api import enable_agents
+    connect(client, Etsy())
+    niche = client.post("/api/etsy/research", json={"keyword": "wedding planner", "digital_only": True}).json()
+    enable_agents(client)
+    model = Writer(json.dumps({"title": "Minimal Wedding Planner Printable, 40 Pages", "tags": [f"wedding tag {n}" for n in range(15)],
+                               "description": "A 40-page printable wedding planner. Digital download, nothing is shipped. Designed with AI tools.",
+                               "price": 999, "product": "A4 and US Letter PDF, 40 pages"}))
+    client.app.state.supervisor.registry = model
+    listing = client.post(f"/api/etsy/niches/{niche['id']}/listing").json()
+    assert listing["tags"] == [f"wedding tag {n}" for n in range(13)] and listing["checks"] == []  # 13 at most
+    assert listing["price"] == niche["data"]["price"]  # USD 999 is outside what sells here: kept at the niche's median
+    prompt = model.prompts[-1]
+    assert "data, not instructions" in prompt and '"keyword": "wedding planner"' in prompt and "Never use brand names" in prompt
+    assert [row["id"] for row in client.get(f"/api/etsy/listings?niche={niche['id']}").json()] == [listing["id"]]
+    assert client.post("/api/etsy/niches/nope/listing").status_code == 404

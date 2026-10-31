@@ -1185,6 +1185,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def etsy_research(payload: dict):
         return etsy_module.research(db.Session, commerce, payload.get("keyword"), bool(payload.get("digital_only")))
 
+    listing_writer = etsy_module.ListingWriter(db, settings, chat_registry)
+    app.state.listing_writer = listing_writer
+
+    @app.post("/api/etsy/niches/{niche_id}/listing")
+    def etsy_write_listing(niche_id: str):
+        try:
+            return listing_writer.write(niche_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/etsy/listings")
+    def etsy_listings(niche: str = ""):
+        with db.Session() as session:
+            return etsy_module.listings(session, niche or None)
+
     @app.delete("/api/etsy/niches/{niche_id}")
     def etsy_niche_delete(niche_id: str):
         with db.Session.begin() as session:
@@ -1480,7 +1495,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from . import modelhub
     hub = modelhub.Hub(db)
     app.state.hub = hub
-    for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer):
+    for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer, listing_writer):
         writer.hub = hub
 
     from . import committee as committee_module

@@ -1507,7 +1507,7 @@
       wireForm(form, go, async () => {
         const found = await mutate("/api/etsy/research", {keyword: keyword.value, digital_only: digital.control.checked}, "POST", 60000);
         toast(`${found.keyword}: ${found.label === "strong" ? "a strong niche" : found.label === "test" ? "worth a test" : "weak or crowded"} (${found.score}).`);
-        render(); nicheDialog(found);
+        render(); etsyNicheDialog(found);
       });
       const list = el("div", "row-list");
       niches.forEach(niche => {
@@ -1515,7 +1515,7 @@
           el("div", "row-meta", [`${Number(data.count || 0).toLocaleString()} listings`, `${data.demand ?? 0} favourites/month on top listings`, data.price ? `median USD ${Number(data.price).toFixed(2)}` : "", niche.digital_only ? "digital only" : ""].filter(Boolean).join(" · "))),
           el("span", `badge ${ETSY_STYLE[niche.label] || "muted"}`, `${niche.label.toUpperCase()} ${niche.score}`));
         row.tabIndex = 0; row.setAttribute("role", "button");
-        row.addEventListener("click", () => nicheDialog(niche)); row.addEventListener("keydown", event => { if (event.key === "Enter") nicheDialog(niche); });
+        row.addEventListener("click", () => etsyNicheDialog(niche)); row.addEventListener("keydown", event => { if (event.key === "Enter") etsyNicheDialog(niche); });
         list.append(row);
       });
       const stats = el("div", "grid stats");
@@ -1533,9 +1533,9 @@
     })();
     return root;
   }
-  function nicheDialog(niche) {
+  function etsyNicheDialog(niche) {
     const data = niche.data || niche, root = el("div");
-    const research = term => act("", () => mutate("/api/etsy/research", {keyword: term, digital_only: niche.digital_only ?? true}, "POST", 60000)).then(found => { if (found) { render(); nicheDialog(found); } });
+    const research = term => act("", () => mutate("/api/etsy/research", {keyword: term, digital_only: niche.digital_only ?? true}, "POST", 60000)).then(found => { if (found) { render(); etsyNicheDialog(found); } });
     append(root, append(el("div", "detail-top"), el("span", `badge ${ETSY_STYLE[data.label] || "muted"}`, `${String(data.label || "").toUpperCase()} ${data.score}`),
         el("span", "row-meta", `${Number(data.count || 0).toLocaleString()} active listings · prices USD ${(data.spread || [0, 0]).map(value => Number(value).toFixed(2)).join("–")} · ${data.digital_share ?? 0}% digital`)),
       append(el("ul", "tips"), ...array(data.reasons).map(reason => el("li", "", reason))),
@@ -1543,8 +1543,25 @@
       array(data.longer).length ? append(el("div"), el("h4", "", "Longer keywords to check"), append(el("div", "actions"), ...array(data.longer).map(term => button(term, () => research(term), "button small ghost")))) : null,
       el("h4", "", "On the first page"), table(["Listing", "Favourites", "Price"], array(data.examples).map(item => [item.title, String(item.favorites), item.price ? `USD ${Number(item.price).toFixed(2)}` : "—"])),
       hint("Titles and tags are other sellers' words: use them to understand the niche, never copy a listing."),
-      niche.id ? actionsRow(button("Remove", () => act("Removed.", () => api(`/api/etsy/niches/${niche.id}`, {method: "DELETE"})).then(() => { closeDialog(); render(); }), "button ghost")) : null);
+      niche.id ? append(el("div"), el("h4", "", "Listings written for it"), (() => { const holder = el("div", "row-list");
+        api(`/api/etsy/listings?niche=${encodeURIComponent(niche.id)}`).then(rows => array(rows).forEach(listing => { const row = append(el("div", "row clickable"),
+          append(el("div", "row-main"), el("strong", "", listing.title), el("div", "row-meta", [`USD ${Number(listing.price).toFixed(2)}`, listing.checks.length ? `${listing.checks.length} thing(s) to fix` : "passes Cerebra's checks"].join(" · "))));
+          row.addEventListener("click", () => etsyListingDialog(listing, niche)); holder.append(row); })).catch(() => {}); return holder; })()) : null,
+      niche.id ? actionsRow(button("Remove", () => act("Removed.", () => api(`/api/etsy/niches/${niche.id}`, {method: "DELETE"})).then(() => { closeDialog(); render(); }), "button ghost"),
+        button("✍ Write a listing", () => act("Writing a listing with your AI model (about a minute)…", () => mutate(`/api/etsy/niches/${niche.id}/listing`, {}, "POST", 300000)).then(listing => { if (listing) etsyListingDialog(listing, niche); }), "button primary")) : null);
     showDialog(data.keyword || niche.keyword, root);
+  }
+  function etsyListingDialog(listing, niche) {
+    const root = el("div"), copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy it; select the text and copy it.", true));
+    append(root, listing.checks.length ? append(el("div"), el("h4", "", "Fix before listing"), append(el("ul", "tips"), ...listing.checks.map(item => el("li", "", item))))
+        : hint("Passes Cerebra's checks: title length, 13 tags, no trademarked names, no AI patterns or recipes. Etsy's own review still applies."),
+      el("h4", "", `Title (${listing.title.length}/140)`), el("p", "", listing.title), actionsRow(button("Copy title", () => copy(listing.title, "Title"), "button small")),
+      el("h4", "", `Tags (${listing.tags.length}/13)`), append(el("div", "chips"), ...listing.tags.map(tag => el("span", "badge muted", tag))), actionsRow(button("Copy tags", () => copy(listing.tags.join(", "), "Tags"), "button small")),
+      el("h4", "", "Description"), el("pre", "lead-description", listing.description), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
+      el("h4", "", "Price and product"), el("p", "", `USD ${Number(listing.price).toFixed(2)} · ${listing.product || "describe the files to make"}`),
+      hint("When you list it on Etsy: tick that AI was used if it was, choose “Designed by” rather than “Made by”, and upload the files you made. Nothing goes to Etsy from here yet."),
+      actionsRow(button("Back to the niche", () => etsyNicheDialog(niche), "button ghost")));
+    showDialog("Etsy listing", root);
   }
   function booksView() {
     const root = el("div"), token = renderToken;
