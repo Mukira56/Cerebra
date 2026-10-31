@@ -12,11 +12,13 @@ access even though their instructions were written by a model. `capabilities.py`
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from .models import Event, Metadata, Project, Task, now
+from .models import ChatMessage, Event, Metadata, Project, Task, now
 from .security import redact
 
 KEY = "auto_fix"
@@ -27,6 +29,10 @@ MAX_ATTEMPTS = 10
 # Stuck states the owner or Cerebra resolves without a fix: waiting for usage, the owner's pause, a retry already queued.
 WAITING = {"waiting_for_usage", "waiting_for_network", "paused_by_user", "retry_requested", "restored_checkpoint", "interrupted_restart", "paused_on_close", "interrupted_integration", "overlapping_changes", "repository_has_changes", "needs_settings"}
 SCAN_SECONDS = 5
+# When the Assistant's answer itself fails (the model couldn't be reached, or it errored), the same failure is tried again
+# after this wait. A network or timeout failure doesn't use up one of the owner's attempts: nothing was tried on the task.
+RETRY_AFTER = timedelta(minutes=10)
+UNREACHABLE = re.compile(r"timed out|timeout|connection|network|unreachable|getaddrinfo|name resolution|dns|offline|503|502|429", re.I)
 
 
 def load(session):
@@ -149,11 +155,43 @@ class AutoFix:
                 except Exception:
                     pass
 
+    def requeue_failed_answers(self, moment=None):
+        """Found on the owner's computer (2026-10-31): Codex couldn't reach its servers, the fix chat's answer failed, and the
+        task stayed "the Assistant is working on this failure" for good, because the failure counted as handled. Now a
+        failed answer is tried again after RETRY_AFTER, and a network failure gives the attempt back."""
+        moment, again = moment or datetime.now(timezone.utc), []
+        with self.supervisor._lock, self.db.Session.begin() as session:
+            for task in session.scalars(select(Task).where(Task.state.in_(["FAILED", "BLOCKED"]))).all():
+                fix = dict(task.results.get("auto_fix") or {})
+                if fix.get("status") != "fixing" or not fix.get("chat") or fix["chat"] in self.chats._busy or not fix.get("last"):
+                    continue
+                answer = session.scalars(select(ChatMessage).where(ChatMessage.conversation_id == fix["chat"], ChatMessage.role == "assistant",
+                                                                   ChatMessage.created_at >= str(fix.get("at") or "")).order_by(ChatMessage.created_at.desc())).first()
+                if answer is None or answer.status != "failed":
+                    continue
+                try:
+                    waited = moment - datetime.fromisoformat(answer.finished_at or answer.created_at)
+                except ValueError:
+                    waited = RETRY_AFTER
+                if waited < RETRY_AFTER:
+                    continue
+                unreachable = bool(UNREACHABLE.search(answer.error or ""))
+                fix.update(last=None, status="retry", attempts=max(0, fix.get("attempts", 0) - (1 if unreachable else 0)))
+                task.results = {**task.results, "auto_fix": fix}
+                session.add(Event(task_id=task.id, kind="auto_fix", message=("Auto-fix: the AI model couldn't be reached, so nothing was tried; trying again now (this didn't use up an attempt)"
+                                                                             if unreachable else "Auto-fix: the Assistant's answer failed; trying again")))
+                again.append(task.id)
+        return again
+
     def scan(self):
         """Start the Assistant on every newly failed task. Returns the ids of tasks it started on."""
         if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
             return []
         with self._scan_lock:
+            with self.db.Session() as session:
+                enabled = load(session)["enabled"]
+            if enabled:
+                self.requeue_failed_answers()
             with self.db.Session() as session:
                 policy = load(session)
                 if not policy["enabled"]:

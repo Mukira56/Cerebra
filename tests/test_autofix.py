@@ -175,3 +175,39 @@ def test_fixing_is_only_shown_while_the_fix_chat_runs():
     assert shown(record, {"c1"})["status"] == "fixing"
     assert shown(record, set())["status"] == "ended" and record["status"] == "fixing"  # the stored record is unchanged
     assert shown({"status": "gave_up", "chat": "c1"}, set())["status"] == "gave_up"
+
+
+class Offline(Team):
+    """The owner's computer on 2026-10-31: Codex couldn't reach its servers for the first fix chat."""
+    def __init__(self):
+        super().__init__(failures=0)  # the task already failed; once reached, the fix holds
+        self.down = True
+
+    def chat(self, name, prompt, workdir, model="", cancel_event=None):
+        if self.down and prompt.startswith("You are Cerebra Support"):
+            self.down = False
+            return AgentResult(False, "", error="codex exited with code 1: ERROR codex_models_manager::manager: failed to refresh available models: request timed out")
+        return super().chat(name, prompt, workdir, model, cancel_event)
+
+
+def test_a_fix_whose_answer_failed_on_the_network_is_tried_again_without_using_an_attempt(client, tmp_path):
+    from datetime import datetime, timedelta, timezone
+    task_id = setup(client, tmp_path)
+    client.app.state.supervisor.registry = Offline()
+    client.app.state.supervisor._refresh_registry()
+    client.put("/api/auto-fix", json={"enabled": True, "full_access": True})
+    client.post("/api/auto-fix/tasks", json={"task_ids": [task_id], "enabled": True})
+    for _ in range(100):
+        if not client.app.state.chats._busy:
+            break
+        time.sleep(0.05)
+    autofix = client.app.state.autofix
+    fix = client.get(f"/api/tasks/{task_id}").json()["results"]["auto_fix"]
+    assert fix["status"] == "ended" and fix["attempts"] == 1  # shown as ended (the chat stopped); before this fix it was never tried again
+    assert autofix.scan() == [] and autofix.requeue_failed_answers() == []  # not before the wait: the network may still be down
+    assert autofix.requeue_failed_answers(datetime.now(timezone.utc) + timedelta(minutes=11)) == [task_id]
+    fix = client.get(f"/api/tasks/{task_id}").json()["results"]["auto_fix"]
+    assert fix["status"] == "retry" and fix["attempts"] == 0  # the failed answer didn't use up an attempt
+    task = settle(client, task_id)
+    assert task["state"] == "AWAITING_APPROVAL" and task["results"]["auto_fix"]["attempts"] == 1
+    assert any("couldn't be reached" in event["message"] for event in task["events"])
