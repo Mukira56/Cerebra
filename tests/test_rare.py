@@ -117,3 +117,34 @@ def test_a_ready_proposal_for_a_job_gone_stale_stops_asking_for_attention(client
     with client.app.state.db.Session() as session:
         waiting = sorted(item["detail"].split(":")[0] for item in chief.calls(session) if item["kind"] == "proposal")
     assert waiting == ["Job 0", "Job 2"]  # the crowded, old one (20) drops out; one the owner saved stays
+
+
+def test_only_emails_saying_the_owner_was_chosen_count_as_a_win():
+    from ai_hq.freelance import classify_mail
+    # 2026-10-31, the owner's own Gmail: a recommendation email was taken for "a client chose you".
+    assert classify_mail("Godfrey, these Graphic Design, Adobe Illustrator, and Photoshop projects and contests might interest you",
+                         "Marketplace API Automation Integration … Make an offer") is None
+    assert classify_mail("Marketplace API Automation Integration", "This project has been awarded to another freelancer.") is None
+    assert classify_mail("New projects matching your skills", "Make an offer on these.") is None
+    assert classify_mail("Special offer: 20% off Plus membership", "") is None
+    assert classify_mail("Congratulations! You have been awarded the project Marketplace API Automation Integration", "") == "offer"
+    assert classify_mail("Ama wants to hire you", "") == "offer" and classify_mail("You have received an offer from Ama", "") == "offer"
+    assert classify_mail("Your contract has started", "") == "started" and classify_mail("You've received an order from bakery_ama", "") == "started"
+
+
+def test_a_win_taken_from_a_recommendation_email_is_corrected_once(client):  # noqa: F811
+    from ai_hq import freelance
+    from ai_hq.models import FreelanceLead
+    with client.app.state.db.Session.begin() as session:
+        session.add(FreelanceLead(id="freelancer:9001", source="freelancer", title="Marketplace API Automation Integration", status="awarded",
+                                  proposal={"awarded_at": "2026-10-31T03:35:22+00:00", "awarded_via": "email from Freelancer.com"},
+                                  notes="Fri, 30 Oct 2026 22:50:50 -0400: Godfrey, these Graphic Design, Adobe Illustrator, and Photoshop projects and contests might interest you"))
+        session.add(FreelanceLead(id="freelancer:9002", source="freelancer", title="Shop redesign", status="awarded",
+                                  proposal={"awarded_via": "email from Freelancer.com"}, notes="Sat, 31 Oct 2026 09:00:00 +0000: Congratulations! You have been awarded the project Shop redesign"))
+        session.add(FreelanceLead(id="freelancer:9003", source="freelancer", title="Logo", status="awarded", proposal={"awarded_via": "Freelancer.com"}))
+    client.app.state.watcher.tick()
+    statuses = {lead["id"]: lead["status"] for lead in client.get("/api/freelance?hidden=true").json()["leads"] if lead["id"].startswith("freelancer:900")}
+    assert statuses == {"freelancer:9001": "new", "freelancer:9002": "awarded", "freelancer:9003": "awarded"}  # only the false one
+    assert any(event["message"].startswith("Corrected:") for event in client.get("/api/overview").json()["events"])
+    with client.app.state.db.Session.begin() as session:
+        assert freelance.undo_false_wins(session) == []

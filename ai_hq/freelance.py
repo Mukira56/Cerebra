@@ -1217,10 +1217,18 @@ class DraftAhead:
 MAIL_SEEN = "freelance_mail_seen"
 PLATFORM_MAIL = {"upwork.com": "Upwork", "fiverr.com": "Fiverr", "freelancer.com": "Freelancer.com"}
 MAIL_QUERY = "from:(upwork.com OR fiverr.com OR freelancer.com) newer_than:14d"
-STARTED = re.compile(r"contract (has )?started|you('ve| have) been hired|hired you|new order|(got|received) an order|order (has been )?placed|"
-                     r"accepted your (offer|bid|proposal)|project (has been )?accepted", re.I)
-OFFER = re.compile(r"\boffer\b|\bawarded\b|\baward(ed)? (you|the project)\b|wants to hire you|invited you to (a )?contract", re.I)
-NOISE = re.compile(r"job (alert|recommendation)s?|jobs for you|newsletter|weekly digest|tips for|webinar|\bsale\b|promo", re.I)
+# Only wording that says the owner themselves was chosen or hired counts. On 2026-10-31 a Freelancer.com recommendation
+# email ("…projects and contests might interest you") listed a job's title next to the word "offer" and was taken for an
+# award; the words "offer" and "awarded" alone are in many platform emails (make an offer, awarded to another freelancer).
+STARTED = re.compile(r"(your )?contract (has )?started|you('ve| have) been hired|hired you\b|new order from|(got|received) an order|"
+                     r"accepted your (offer|bid|proposal)|your (project|proposal|bid) (has been )?accepted", re.I)
+OFFER = re.compile(r"award(ed)? (the project )?to you|you('ve| have)? (been )?awarded|you (were|have been) (chosen|selected)|wants to hire you|"
+                   r"(sent|made) you an offer|(new|an) offer (for you|from)|you('ve| have)? (got|received) an offer|invited you to (a )?contract|"
+                   r"congratulations[^.!\n]{0,80}(award|offer|hire|chose|selected)", re.I)
+NOISE = re.compile(r"job (alert|recommendation)s?|jobs for you|projects? for you|might interest you|you (might|may) (like|be interested)|"
+                   r"recommended (jobs|projects)|new projects?\b|projects and contests|similar projects|based on your (skills|profile)|"
+                   r"make an offer|place a bid|bid now|awarded to (another|someone)|(has|was) been awarded to|"
+                   r"newsletter|weekly digest|tips for|webinar|\bsale\b|promo", re.I)
 KINDS_FOR_WORK = (("svg", re.compile(r"\b(logo|icon|illustration|branding|brand identity|vector)\b", re.I)),
                   ("website", re.compile(r"\b(website|web site|landing page|wordpress|shopify|webflow|wix|web app|frontend|html)\b", re.I)))
 
@@ -1233,7 +1241,7 @@ def mail_platform(sender):
 def classify_mail(subject, text):
     """'started' (the work is on), 'offer' (the client chose you; accept it on the site) or None (not about a win)."""
     head = f"{subject}\n{text[:1500]}"
-    if NOISE.search(subject or ""):
+    if NOISE.search(subject or "") or NOISE.search((text or "")[:300]):  # recommendations, alerts and digests say so up front
         return None
     if STARTED.search(head):
         return "started"
@@ -1262,6 +1270,31 @@ def match_lead(session, platform, subject, text):
 
 def kind_for_work(text):
     return next((kind for kind, pattern in KINDS_FOR_WORK if pattern.search(text)), "document")
+
+
+def undo_false_wins(session):
+    """Once the email rules got stricter: an award or win that came from an email the rules no longer accept (a job
+    recommendation, "make an offer", "awarded to another freelancer") goes back to an open job, with a note in the log.
+    The email's subject was kept on the job when it was marked; nothing is read from the mailbox here."""
+    undone = []
+    for row in session.scalars(select(FreelanceLead).where(FreelanceLead.status.in_(["awarded", "won"]))).all():
+        proposal = dict(row.proposal or {})
+        how = proposal.get(f"{row.status}_via", "")
+        if not str(how).startswith("email from") or (row.extra or {}).get("job_id"):
+            continue  # marked by the owner, by Freelancer.com's own API, or work already started: left alone
+        line = next((item for item in reversed((row.notes or "").splitlines()) if ": " in item), "")
+        subject = line.split(": ", 1)[1] if line else ""
+        if not subject or classify_mail(subject, "") is not None:
+            continue
+        status = row.status
+        for key in (f"{status}_at", f"{status}_via"):
+            proposal.pop(key, None)
+        row.proposal, row.status, row.updated_at = proposal, "applied" if proposal.get("sent_at") else "new", now()
+        row.notes = (row.notes + "\n" if row.notes else "") + "Not a win after all: that email was a recommendation or an alert, not a client choosing you."
+        session.add(Event(kind="freelance", message=f"Corrected: “{row.title[:80]}” was marked as {'won' if status == 'won' else 'a client choosing you'} from an email that wasn't one",
+                          data={"lead": row.id}))
+        undone.append(row.id)
+    return undone
 
 
 class WinWatcher:
@@ -1392,6 +1425,10 @@ class WinWatcher:
             return {}
         try:
             result = {}
+            if not getattr(self, "_rechecked", False):  # once per start: wins taken from emails under the older, looser rules
+                with self.db.Session.begin() as session:
+                    result["corrected"] = len(undo_false_wins(session))
+                self._rechecked = True
             for name, step in (("freelancer", self.check_freelancer), ("email", self.check_mail), ("started", self.start_won)):
                 try:
                     result[name] = step()
