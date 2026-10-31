@@ -1566,6 +1566,27 @@
             listing.checks.length ? "button" : "button primary")));
     showDialog("Etsy listing", root);
   }
+  // Notebooks, journals and logbooks for KDP: the inside pages, drawn by code (no AI, no fonts), ready to upload.
+  function interiorMaker() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/books/interiors").then(state => {
+      const form = el("form"), style = select(Object.entries(state.styles), "college"), trim = select(state.trims.map(key => [key, key.replace("x", " × ") + " in"]), "6x9");
+      const pages = input("120", "120", "number"), paper = select([["white", "White paper"], ["cream", "Cream paper"]], "white"), make = submitButton("Make the PDF"), out = el("div");
+      pages.min = 24; pages.max = 828;
+      append(form, hint("The inside pages of a notebook, journal or planner: drawn by code, so Amazon's AI question is No for them, and there's no text, so no font can fail KDP's check. Pick a trim, then add a cover."),
+        append(el("div", "form-grid"), field("Pages", style), field("Trim size", trim), field("Page count", pages), field("Paper", paper)), actionsRow(make), out);
+      wireForm(form, make, async () => {
+        const made = await mutate("/api/books/interiors", {style: style.value, trim: trim.value, pages: Number(pages.value || 120), paper: paper.value}, "POST", 120000);
+        out.replaceChildren(hint(`Made ${made.file} (${made.pages} pages, ${Math.round(made.bytes / 1024)} KB). Inside margin ${made.gutter} in on the binding side.`),
+          append(el("ul", "tips"), ...made.kdp.map(line => el("li", "", line))),
+          actionsRow(button("Open the folder", () => act("Opened.", () => mutate("/api/books/interiors/open", {})), "button small")));
+        toast("Interior PDF ready.");
+      });
+      root.replaceChildren(form, state.files.length ? append(el("div"), el("h4", "", "Made so far"), list(state.files.map(item => `${item.file} · ${Math.round(item.bytes / 1024)} KB`))) : null);
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
   function booksView() {
     const root = el("div"), token = renderToken;
     root.append(body(el("p", "", "Loading your books…")));
@@ -1594,7 +1615,7 @@
           niches.length ? nicheList : body(empty("No niches yet", "Add a problem people already pay to fix. Check its trend on Google Trends and its competing books on Amazon.", null, "◎"))), null, niches.length),
         panel("Books", append(el("div"), body(append(el("div", "actions"), button("+ New book", () => bookDialog(null, state), "button primary"))),
           books.length ? bookList : body(empty("No books yet", "Start one from a niche you chose. Cerebra shows what each format earns before you write a word.", null, "▤"))), null, books.length));
-      const side = append(el("div"), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
+      const side = append(el("div"), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
         panel("How it works", body(hint("You pick a niche, Cerebra helps plan, write and check the book, and prepares the files and listing. KDP has no publishing API, so you upload and click Publish yourself, including Amazon's AI-content question. KDP allows 3 new titles a day."),
           el("p", "row-meta", `KDP's numbers were checked on ${state.checked} against its help pages: ${Object.values(state.sources).join(" · ")}`))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));

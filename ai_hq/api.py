@@ -1230,6 +1230,29 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     # ---- Books: short nonfiction for Amazon KDP (docs/BOOKS_PLAN.md) ----
     from . import books as books_module
+    from . import interiors as interiors_module
+    interiors_folder = settings.data_dir / "books" / "interiors"
+
+    @app.get("/api/books/interiors")
+    def books_interiors():
+        files = sorted(interiors_folder.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True) if interiors_folder.is_dir() else []
+        return {"styles": {key: label for key, (label, _kind, _space) in interiors_module.STYLES.items()}, "trims": list(books_module.PAPERBACK_TRIMS),
+                "folder": str(interiors_folder), "files": [{"file": path.name, "bytes": path.stat().st_size} for path in files[:20]]}
+
+    @app.post("/api/books/interiors")
+    def books_make_interior(payload: dict):
+        """A print-ready KDP interior (ruled, dot-grid, graph or bordered pages), drawn by code: no AI, no fonts."""
+        try:
+            pages = int(payload.get("pages") or 120)
+        except (TypeError, ValueError):
+            raise ValueError("Enter the number of pages")
+        return interiors_module.save(interiors_folder, str(payload.get("style") or ""), str(payload.get("trim") or "6x9"), pages, str(payload.get("paper") or "white"))
+
+    @app.post("/api/books/interiors/open")
+    def books_open_interiors():
+        interiors_folder.mkdir(parents=True, exist_ok=True)
+        app.state.open_document(str(interiors_folder))
+        return {"opened": True}
 
     def books_call(work, write=True):
         try:
