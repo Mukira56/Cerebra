@@ -1185,6 +1185,24 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 ready, setup = False, str(exc)
             return {"ready": ready, "setup": setup, "niches": etsy_module.niches(session), "performance": etsy_module.performance(session)}
 
+    # ---- Text designs for print-on-demand (Merch on Demand, Printify): drawn by code, saved on this computer ----
+    from . import designs as designs_module
+    designs_folder = settings.data_dir / "designs"
+
+    @app.get("/api/designs")
+    def designs_list():
+        return {"colours": list(designs_module.COLOURS), "folder": str(designs_folder), "files": designs_module.made(designs_folder)}
+
+    @app.post("/api/designs")
+    def designs_make(payload: dict):
+        return designs_module.save(designs_folder, str(payload.get("text") or ""), str(payload.get("colour") or "white"))
+
+    @app.post("/api/designs/open")
+    def designs_open():
+        designs_folder.mkdir(parents=True, exist_ok=True)
+        app.state.open_document(str(designs_folder))
+        return {"opened": True}
+
     @app.post("/api/etsy/research")
     def etsy_research(payload: dict):
         return etsy_module.research(db.Session, commerce, payload.get("keyword"), bool(payload.get("digital_only")))

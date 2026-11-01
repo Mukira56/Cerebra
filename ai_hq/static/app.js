@@ -1522,17 +1522,31 @@
       [["Researched", niches.length, "keywords", ""], ["Strong", niches.filter(item => item.label === "strong").length, "worth making for", "green"],
        ["Worth a test", niches.filter(item => item.label === "test").length, "a few listings first", "amber"]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
-      const sells = etsySells(state.performance, niches);
+      const sells = etsySells(state.performance, niches), shirts = panel("Text designs for shirts and mugs", body(designMaker()));
       root.replaceChildren(stats, sells, append(el("div", "grid two"),
         append(el("div"), panel("Your niches", niches.length ? list : body(empty("No niches yet", "Research a keyword to see if it's worth making for.")), null, niches.length)),
         append(el("div"), panel("Find a niche", body(state.ready ? form : append(el("div"), hint(state.setup, true), link("Business connections →", "connections")))),
-          panel("How to read it", body(append(el("ul", "tips"),
+          shirts, panel("How to read it", body(append(el("ul", "tips"),
             el("li", "", "Demand is favourites a month on the first page of results: Etsy publishes favourites, not sales, so this is the honest sign of what buyers want."),
             el("li", "", "Competition is how many active listings match. Fewer than 3,000 with real demand is the sweet spot; over 50,000 needs a narrower keyword."),
             el("li", "", "Try the longer keywords each niche suggests: they are what top sellers already tag, and usually less crowded."),
             el("li", "", "Etsy requires you to disclose AI use and bans AI-made patterns and recipes. Check Etsy's seller policy before listing.")))))));
     })();
     return root;
+  }
+  function designMaker() {
+    const root = el("div"), form = el("form"), text = input("Powered by coffee and spreadsheets", ""), colour = select([["white", "white"]], "white"), make = submitButton("Make the design"), out = el("div");
+    api("/api/designs").then(state => { colour.replaceChildren(...array(state.colours).map(name => { const option = el("option", "", name); option.value = name; return option; })); colour.value = "white";
+      if (array(state.files).length) out.replaceChildren(el("h4", "", "Made so far"), list(state.files.slice(0, 8).map(item => item.file))); }).catch(() => {});
+    append(form, hint("A short phrase drawn by code as a 4500 × 5400 transparent PNG at 300 DPI: what Amazon Merch on Demand asks for, and what Printify accepts for shirts, mugs and totes. No AI, no fonts. Original phrases only: no brands, names or quotes you don't own."),
+      append(el("div", "form-grid"), field("Phrase", text), field("Ink colour", colour)), actionsRow(make), out);
+    wireForm(form, make, async () => {
+      const made = await mutate("/api/designs", {text: text.value, colour: colour.value}, "POST", 120000);
+      out.replaceChildren(hint(`Made ${made.file} (${made.width} × ${made.height} px, ${Math.round(made.bytes / 1024)} KB).`), append(el("ul", "tips"), ...made.use.map(item => el("li", "", item))),
+        actionsRow(button("Open the designs folder", () => act("Opened.", () => mutate("/api/designs/open", {})), "button small")));
+      toast("Design ready.");
+    });
+    return append(root, form);
   }
   function etsySells(performance, niches) {
     const data = performance || {}, worth = revenue => Object.entries(revenue || {}).map(([currency, amount]) => cash(amount, currency)).join(" + ") || cash(0, "USD");
