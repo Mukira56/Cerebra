@@ -93,6 +93,11 @@ class Remote:
                 return self.skip_draft(settings, value)
             if action == "next":
                 return self.show_draft(settings, after=value)
+            if action == "ans":
+                return self.send_reply_answer(settings, value)
+            if action == "redo":
+                self.outreach.draft_answer(value)
+                return self.replies(settings)
             return 0
         message = update.get("message") or {}
         if str(message.get("chat", {}).get("id")) != settings["chat"]:
@@ -164,11 +169,31 @@ class Remote:
         return self.show_draft(settings)
 
     def replies(self, settings):
+        """Each business waiting for your answer: what they wrote, and the answer drafted for you, with one-tap buttons."""
         from .outreach import sent as sent_list
         with self.db.Session() as session:
-            answered = [item for item in sent_list(session) if item["stage"] == "replied"][:8]
-        self.say(settings, "\n\n".join(f"{item['name']} ({item['email']}):\n“{item['reply'].get('snippet', '')[:300]}”" for item in answered)
-                 + "\n\nAnswer them from your Gmail: the replies are in the same threads." if answered else "No replies yet.")
+            waiting = [item for item in sent_list(session) if item["stage"] == "replied"][:5]
+        if not waiting:
+            self.say(settings, "No replies waiting for an answer.")
+            return 1
+        for item in waiting:
+            draft = item["reply"].get("draft", "")
+            text = f"{item['name']} ({item['email']}) wrote:\n“{(item['reply'].get('text') or item['reply'].get('snippet', ''))[:900]}”"
+            if draft:
+                self.say(settings, f"{text}\n\nYour answer (drafted):\n{draft[:2000]}", buttons=[[("Send answer ✉", f"ans:{item['id']}"), ("Redraft", f"redo:{item['id']}")]])
+            else:
+                self.say(settings, f"{text}\n\nNo answer drafted yet.", buttons=[[("Draft an answer", f"redo:{item['id']}")]])
+        return 1
+
+    def send_reply_answer(self, settings, outbox_id):
+        from .models import Outbox
+        with self.db.Session() as session:
+            row = session.get(Outbox, outbox_id)
+            draft = (row.reply or {}).get("draft", "") if row else ""
+        if not draft:
+            self.say(settings, "That answer was already sent, or there's no draft. /replies shows what's waiting.")
+            return 1
+        self.say(settings, self.outreach.send_answer(outbox_id, draft)["message"])
         return 1
 
     def sent(self, settings):

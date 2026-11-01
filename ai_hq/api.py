@@ -1572,6 +1572,20 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 saved = outreach_module.save_settings(session, {"enabled": True})
             return saved
 
+    @app.post("/api/outreach/{outbox_id}/answer")
+    def outreach_answer(outbox_id: str, payload: dict):
+        try:
+            return outreach.send_answer(outbox_id, payload.get("text"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/outreach/{outbox_id}/draft-answer")
+    def outreach_draft_answer(outbox_id: str):
+        try:
+            return outreach.draft_answer(outbox_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
     @app.get("/api/outreach/sent")
     def outreach_sent():
         with db.Session() as session:

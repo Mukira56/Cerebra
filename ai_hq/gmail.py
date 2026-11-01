@@ -153,11 +153,12 @@ class Gmail:
 
     def thread(self, thread_id):
         """The messages in a thread, oldest first: who sent each, its subject and the start of its text."""
-        data = self.get(f"threads/{thread_id}", format="metadata", metadataHeaders=["From", "Subject", "Date"])
+        data = self.get(f"threads/{thread_id}", format="metadata", metadataHeaders=["From", "Subject", "Date", "Message-ID"])
         result = []
         for item in data.get("messages", []):
             headers = {header["name"].lower(): header["value"] for header in item.get("payload", {}).get("headers", [])}
             result.append({"id": item["id"], "from": headers.get("from", ""), "subject": headers.get("subject", ""), "date": headers.get("date", ""),
+                           "message_id": headers.get("message-id", ""),
                            "snippet": html.unescape(item.get("snippet", "")), "labels": item.get("labelIds", [])})
         return result
 

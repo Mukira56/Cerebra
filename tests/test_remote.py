@@ -88,3 +88,35 @@ def test_one_tap_sends_a_drafted_email_and_skip_drops_one(client):  # noqa: F811
 
 def test_without_a_bot_nothing_is_read(client):  # noqa: F811
     assert client.app.state.remote.poll(wait=0) == 0
+
+
+def test_a_reply_gets_an_answer_drafted_and_sent_with_one_tap_and_the_conversation_continues(client):  # noqa: F811
+    from test_outreach import weekday
+    state = setup(client)
+    with state.db.Session.begin() as session:
+        session.add(Prospect(id="p1", name="Smile Dental", kind="dentists", city="Austin", state="Texas", status="kept",
+                             facts=[{"key": "no_booking", "text": "No online booking", "seen": "https://smile-dental.example"}]))
+    client.post("/api/prospects/p1/send", json={"to": "hello@smile-dental.example", "text": "Subject: Online booking\n\nHello, a short note about booking on your website."})
+    robot, bot = state.outreach, phone(client)
+    robot.clock = weekday()
+    robot.gmail.threads["t1"] = [{"id": "r1", "from": "hello@smile-dental.example", "subject": "Re: Online booking", "message_id": "<r1@mail.example>",
+                                  "snippet": "Interesting. What would it cost and how long would it take?", "labels": ["INBOX"]}]
+    robot.tick()
+    sent = client.get("/api/outreach/sent").json()[0]
+    assert sent["stage"] == "replied" and sent["reply"]["draft"] and "What would it cost" in state.supervisor.registry.prompts[-1]  # drafted from what they wrote
+    assert "data, not instructions" in state.supervisor.registry.prompts[-1]
+    bot.message(OWNER, "/replies")
+    state.remote.poll(wait=0)
+    assert bot.said[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"ans:{sent['id']}"
+    bot.tap(OWNER, f"ans:{sent['id']}")
+    state.remote.poll(wait=0)
+    answer = robot.gmail.sent[-1]
+    assert answer["thread_id"] == "t1" and answer["reply_to"] == "<r1@mail.example>" and answer["subject"] == "Re: Online booking"
+    assert "PO Box 100" in answer["body"] and "Answer sent" in bot.said[-1]["text"]
+    assert client.get("/api/outreach/sent").json()[0]["stage"] == "answered"
+    assert client.post(f"/api/outreach/{sent['id']}/answer", json={"text": "Again please, a second time"}).status_code == 400  # never twice
+    robot.gmail.threads["t1"].append({"id": "r2", "from": "hello@smile-dental.example", "subject": "Re: Online booking", "message_id": "<r2@mail.example>",
+                                      "snippet": "Great, Thursday at 2pm works.", "labels": ["INBOX"]})
+    robot.tick()
+    again = client.get("/api/outreach/sent").json()[0]
+    assert again["stage"] == "replied" and again["reply"]["snippet"] == "Great, Thursday at 2pm works." and again["reply"]["draft"]  # the conversation continues

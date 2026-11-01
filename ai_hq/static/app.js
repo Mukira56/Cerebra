@@ -1374,7 +1374,7 @@
     })();
     return root;
   }
-  const OUTREACH_STAGE = {sent: ["emailed", "blue"], followed_up: ["followed up", "amber"], done: ["no answer yet", "muted"], replied: ["replied", "green"],
+  const OUTREACH_STAGE = {sent: ["emailed", "blue"], followed_up: ["followed up", "amber"], done: ["no answer yet", "muted"], replied: ["replied", "green"], answered: ["you answered", "cyan"],
                           opted_out: ["said no: never again", "muted"], bounced: ["bounced", "red"], drafting: ["writing", "cyan"]};
   const SENT_FILTERS = {all: "All", waiting: "Waiting for an answer", replied: "Replied", said_no: "Said no or bounced"};
   let sentFilter = "all";
@@ -1393,12 +1393,12 @@
     api("/api/outreach/sent").then(items => {
       items = array(items);
       if (!items.length) { root.replaceChildren(hint("Businesses you email appear here, with where each one stands: waiting, followed up, replied or said no. Open a business in the list below and press Send with Gmail.")); return; }
-      const group = item => ["sent", "followed_up", "done"].includes(item.stage) ? "waiting" : item.stage === "replied" ? "replied" : "said_no";
+      const group = item => ["sent", "followed_up", "done", "answered"].includes(item.stage) ? "waiting" : item.stage === "replied" ? "replied" : "said_no";
       const count = key => items.filter(item => group(item) === key).length;
       const pick = select(Object.entries(SENT_FILTERS).map(([key, label]) => [key, key === "all" ? `${label} (${items.length})` : `${label} (${count(key)})`]), sentFilter);
       pick.addEventListener("change", () => { sentFilter = pick.value; render(); });
       const shown = items.filter(item => sentFilter === "all" || group(item) === sentFilter);
-      const progress = item => item.stage === "replied" ? "Replied: your turn" : item.stage === "opted_out" ? "Said no: never written to again" : item.stage === "bounced" ? "Bounced: address didn't work"
+      const progress = item => item.stage === "replied" ? (item.reply?.draft ? "Replied: your answer is drafted, open to send" : "Replied: your turn") : item.stage === "answered" ? "You answered; waiting for them" : item.stage === "opted_out" ? "Said no: never written to again" : item.stage === "bounced" ? "Bounced: address didn't work"
         : item.stage === "done" ? "All follow-ups sent; still watching for a reply" : item.next_at ? `Waiting · follow-up ${date(item.next_at)}` : "Waiting for an answer";
       root.replaceChildren(append(el("div", "actions"), pick), table(["Business", "Sent to", "First email", "Follow-ups", "Where it stands"], shown.map(item => {
         const name = append(el("span"), button(item.name || "Business", () => sentDialog(item), "text-button"), el("div", "row-meta", item.city));
@@ -1414,7 +1414,13 @@
     append(root, kv([["Business", item.name], ["Where", item.city], ["Website", item.website || "—"], ["Email", item.email], ["Follow-ups sent", String(item.follow_ups)],
       ["Next follow-up", item.next_at ? date(item.next_at) : "None planned"]]));
     item.emails.forEach((mail, index) => append(root, el("h3", "", `${index ? `Follow-up ${index}` : "First email"} · ${date(mail.at)}`), el("strong", "", mail.subject), el("pre", "lead-description", mail.body)));
-    if (item.reply?.snippet) append(root, el("h3", "", `Their reply${item.reply.at ? ` · ${date(item.reply.at)}` : ""}`), el("p", "", item.reply.snippet), hint("Answer them from your Gmail: the reply is in the same thread."));
+    if (item.reply?.snippet) append(root, el("h3", "", `Their reply${item.reply.at ? ` · ${date(item.reply.at)}` : ""}`), el("p", "", item.reply.text || item.reply.snippet));
+    if (item.stage === "replied") {
+      const answer = textarea("Your answer", item.reply?.draft || ""); answer.rows = 8;
+      append(root, el("h3", "", "Your answer"), answer, hint("Drafted by your AI from what they wrote and your services and prices. Edit anything; it goes in the same thread with your details."),
+        actionsRow(button("Draft again", () => act("Drafted.", () => mutate(`/api/outreach/${item.id}/draft-answer`, {}, "POST", 300000)).then(result => { if (result) answer.value = result.draft; }), "button ghost"),
+          button("Send answer with Gmail", () => act(result => result.message, () => mutate(`/api/outreach/${item.id}/answer`, {text: answer.value})).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+    }
     showDialog(item.name || "Sent email", root);
   }
   function outreachPanel(kinds) {
