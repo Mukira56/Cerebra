@@ -1353,7 +1353,7 @@
       if (search.running) { go.disabled = true; setTimeout(() => { if (token === renderToken) render(); }, 5000); }
       const filters = {kept: "Worth contacting", new: `To check by hand (${counts.new || 0})`, contacted: "Contacted", replied: "Replied", won: "Won", lost: "Lost", all: "Everything"};
       const pick = select(Object.entries(filters), prospectFilter); pick.addEventListener("change", () => { prospectFilter = pick.value; render(); });
-      const shown = array(state.prospects).filter(item => prospectFilter === "all" || item.status === prospectFilter);
+      const shown = array(state.prospects).filter(item => prospectFilter === "all" || (item.status === prospectFilter && !(prospectFilter === "kept" && item.emailed)));
       const list = el("div", "row-list");
       shown.slice(0, 200).forEach(item => { const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name),
         el("div", "row-meta", [item.kind_label, `${item.city}, ${item.state}`, item.website ? item.website.replace(/^https?:\/\//, "").replace(/\/$/, "") : "no website"].join(" · ")),
@@ -1370,12 +1370,44 @@
         searches.length ? panel("Your offer", body(offerPanel(state))) : null,
         panel("How it works", body(hint("Each fact comes from the business's own home page, read once where its robots.txt allows, and shows where it was seen. A site that turns robots away gets no claim at all. Chains (brand-tagged, or 3 or more locations in the city) are left out."),
           el("p", "row-meta", state.attribution))));
-      root.replaceChildren(stats, panel("Automatic outreach", body(outreachPanel(state.kinds)), null), append(el("div", "grid two"), left, side));
+      root.replaceChildren(stats, panel("Sent emails", body(sentPanel())), panel("Automatic outreach", body(outreachPanel(state.kinds)), null), append(el("div", "grid two"), left, side));
     })();
     return root;
   }
   const OUTREACH_STAGE = {sent: ["emailed", "blue"], followed_up: ["followed up", "amber"], done: ["no answer yet", "muted"], replied: ["replied", "green"],
                           opted_out: ["said no: never again", "muted"], bounced: ["bounced", "red"], drafting: ["writing", "cyan"]};
+  const SENT_FILTERS = {all: "All", waiting: "Waiting for an answer", replied: "Replied", said_no: "Said no or bounced"};
+  let sentFilter = "all";
+  function sentPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/outreach/sent").then(items => {
+      items = array(items);
+      if (!items.length) { root.replaceChildren(hint("Businesses you email appear here, with where each one stands: waiting, followed up, replied or said no. Open a business in the list below and press Send with Gmail.")); return; }
+      const group = item => ["sent", "followed_up", "done"].includes(item.stage) ? "waiting" : item.stage === "replied" ? "replied" : "said_no";
+      const count = key => items.filter(item => group(item) === key).length;
+      const pick = select(Object.entries(SENT_FILTERS).map(([key, label]) => [key, key === "all" ? `${label} (${items.length})` : `${label} (${count(key)})`]), sentFilter);
+      pick.addEventListener("change", () => { sentFilter = pick.value; render(); });
+      const shown = items.filter(item => sentFilter === "all" || group(item) === sentFilter);
+      const progress = item => item.stage === "replied" ? "Replied: your turn" : item.stage === "opted_out" ? "Said no: never written to again" : item.stage === "bounced" ? "Bounced: address didn't work"
+        : item.stage === "done" ? "All follow-ups sent; still watching for a reply" : item.next_at ? `Waiting · follow-up ${date(item.next_at)}` : "Waiting for an answer";
+      root.replaceChildren(append(el("div", "actions"), pick), table(["Business", "Sent to", "First email", "Follow-ups", "Where it stands"], shown.map(item => {
+        const name = append(el("span"), button(item.name || "Business", () => sentDialog(item), "text-button"), el("div", "row-meta", item.city));
+        return [name, item.email, date(item.first_sent_at), String(item.follow_ups),
+          append(el("span"), badge((OUTREACH_STAGE[item.stage] || [item.stage])[0], (OUTREACH_STAGE[item.stage] || [, "muted"])[1]), el("div", "row-meta", progress(item)),
+            item.reply?.snippet ? el("div", "row-meta", `“${item.reply.snippet.slice(0, 120)}”`) : null)];
+      })));
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
+  function sentDialog(item) {
+    const root = el("div");
+    append(root, kv([["Business", item.name], ["Where", item.city], ["Website", item.website || "—"], ["Email", item.email], ["Follow-ups sent", String(item.follow_ups)],
+      ["Next follow-up", item.next_at ? date(item.next_at) : "None planned"]]));
+    item.emails.forEach((mail, index) => append(root, el("h3", "", `${index ? `Follow-up ${index}` : "First email"} · ${date(mail.at)}`), el("strong", "", mail.subject), el("pre", "lead-description", mail.body)));
+    if (item.reply?.snippet) append(root, el("h3", "", `Their reply${item.reply.at ? ` · ${date(item.reply.at)}` : ""}`), el("p", "", item.reply.snippet), hint("Answer them from your Gmail: the reply is in the same thread."));
+    showDialog(item.name || "Sent email", root);
+  }
   function outreachPanel(kinds) {
     const root = el("div");
     root.append(el("p", "row-meta", "Loading…"));

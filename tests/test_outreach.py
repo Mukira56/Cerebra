@@ -199,3 +199,23 @@ def test_switching_on_needs_what_sending_needs(client):  # noqa: F811
     assert client.put("/api/outreach", json={"enabled": True, "mode": "draft", "places": [{"city": "Austin", "state": "TX"}]}).status_code == 200  # drafting needs no Gmail
     assert client.put("/api/outreach", json={"per_day": 500}).json()["per_day"] == outreach.MAX_PER_DAY
     assert state.registry.workers["outreach"].outward
+
+
+def test_emailed_businesses_leave_worth_contacting_and_show_their_progress(client):  # noqa: F811
+    state = setup(client)
+    state.prospector.search("dentists", "Austin", "Texas")
+    smile = next(item for item in client.get("/api/prospects").json()["prospects"] if item["name"] == "Smile Dental")
+    before = client.get("/api/prospects").json()["counts"]["kept"]
+    client.post(f"/api/prospects/{smile['id']}/send", json={"to": smile["email"], "text": "Subject: Online booking\n\nHello, a short note about booking on your website."})
+    with state.db.Session.begin() as session:  # even if its status is set back by hand, an emailed business isn't "worth contacting" again
+        session.get(Prospect, smile["id"]).status = "kept"
+    data = client.get("/api/prospects").json()
+    assert data["counts"]["kept"] == before - 1 and next(item for item in data["prospects"] if item["id"] == smile["id"])["emailed"]
+    sent = client.get("/api/outreach/sent").json()
+    assert len(sent) == 1 and sent[0]["name"] == "Smile Dental" and sent[0]["email"] == "hello@smile-dental.example" and sent[0]["stage"] == "sent"
+    assert sent[0]["emails"][0]["subject"] == "Online booking" and sent[0]["follow_ups"] == 0 and sent[0]["next_at"]  # a follow-up is planned
+    state.outreach.clock = weekday()
+    state.outreach.gmail.threads["t1"] = [{"id": "r", "from": "hello@smile-dental.example", "subject": "Re: Online booking", "snippet": "Yes, call me Friday.", "labels": ["INBOX"]}]
+    state.outreach.tick()
+    sent = client.get("/api/outreach/sent").json()
+    assert sent[0]["stage"] == "replied" and sent[0]["reply"]["snippet"] == "Yes, call me Friday." and sent[0]["next_at"] == ""

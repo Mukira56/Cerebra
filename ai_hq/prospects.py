@@ -255,7 +255,11 @@ def overview(session):
     counts = {status: 0 for status in STATUSES}
     for status in session.scalars(select(Prospect.status)).all():
         counts[status] = counts.get(status, 0) + 1
-    return {"prospects": [{**public(row), "email": found.get(row.id, ""), "email_checked": row.id in found} for row in rows], "searches": searches, "counts": counts,
+    from .models import Outbox
+    from .outreach import SENT_STAGES
+    emailed = set(session.scalars(select(Outbox.prospect_id).where(Outbox.stage.in_(SENT_STAGES))).all())
+    return {"prospects": [{**public(row), "email": found.get(row.id, ""), "email_checked": row.id in found, "emailed": row.id in emailed} for row in rows],
+            "searches": searches, "counts": {**counts, "kept": sum(1 for row in rows if row.status == "kept" and row.id not in emailed)},
             "kinds": {key: label for key, (label, _, _) in KINDS.items()}, "attribution": ATTRIBUTION}
 
 

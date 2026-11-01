@@ -140,6 +140,27 @@ def emails(session, prospect_ids=None):
     return found
 
 
+SENT_STAGES = ("sent", "followed_up", "done", "replied", "opted_out", "bounced")
+
+
+def sent(session):
+    """Every business that was emailed, newest first: where it stands, every email sent and the reply."""
+    rows = session.scalars(select(Outbox).where(Outbox.stage.in_(SENT_STAGES)).order_by(Outbox.updated_at.desc())).all()
+    businesses = {row.id: row for row in session.scalars(select(Prospect).where(Prospect.id.in_([item.prospect_id for item in rows]))).all()} if rows else {}
+    result = []
+    for row in rows:
+        business = businesses.get(row.prospect_id)
+        emails = row.emails or []
+        result.append({"id": row.id, "prospect_id": row.prospect_id, "name": business.name if business else "", "kind": business.kind if business else "",
+                       "city": f"{business.city}, {business.state}" if business else "", "website": business.website if business else "",
+                       "email": row.email, "stage": row.stage, "first_sent_at": emails[0]["at"] if emails else row.created_at,
+                       "last_sent_at": emails[-1]["at"] if emails else "", "follow_ups": sum(1 for item in emails if item.get("follow_up")),
+                       "next_at": row.next_at, "reply": row.reply or {},
+                       "emails": [{"at": item.get("at", ""), "subject": item.get("subject", ""), "body": item.get("body", ""), "follow_up": bool(item.get("follow_up"))}
+                                  for item in emails]})
+    return result
+
+
 def find_email(reader, website, home=None):
     """The business's public email: from its home page (already read by the search, when given), then its contact page.
     Prefers an address at its own domain. Never guessed: a business that publishes none gets none."""

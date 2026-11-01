@@ -1568,6 +1568,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 saved = outreach_module.save_settings(session, {"enabled": True})
             return saved
 
+    @app.get("/api/outreach/sent")
+    def outreach_sent():
+        with db.Session() as session:
+            return outreach_module.sent(session)
+
     @app.post("/api/outreach/run")
     def outreach_run():
         return outreach.tick()
