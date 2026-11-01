@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -18,24 +17,17 @@ INSTALLER = b"MZ fixture installer bytes"
 
 
 class FakeGh:
-    """Answers `gh release view/download` like GitHub would, from fixture data."""
+    """Answers like GitHub's public releases API would, from fixture data (no sign-in involved)."""
     def __init__(self, tag="v99.0.0", assets=True, corrupt=False):
         self.tag, self.assets, self.corrupt, self.calls = tag, assets, corrupt, []
 
-    def run(self, args, cwd, timeout=None):
-        args = [str(arg) for arg in args]; self.calls.append(args)
+    def release(self, tag=None):
+        self.calls.append(["release", tag or "latest"])
         name = f"Cerebra-Setup-{self.tag[1:]}-Windows-x64.exe"
-        if args[1:3] == ["release", "view"]:
-            assets = [{"name": name, "size": len(INSTALLER), "apiUrl": "https://api.github.com/assets/1"},
-                      {"name": name + ".sha256", "size": 90, "apiUrl": "https://api.github.com/assets/2"}] if self.assets else []
-            return SimpleNamespace(exit_code=0, stdout=json.dumps({"tagName": self.tag, "name": f"Cerebra {self.tag}", "body": "## New\n- Faster", "publishedAt": "2026-10-25T10:00:00Z", "assets": assets}), stderr="")
-        if args[1:3] == ["release", "download"]:
-            target = Path(args[args.index("--dir") + 1])
-            (target / name).write_bytes(INSTALLER)
-            digest = hashlib.sha256(b"something else" if self.corrupt else INSTALLER).hexdigest()
-            (target / (name + ".sha256")).write_text(f"{digest}  {name}\n", encoding="utf-8")
-            return SimpleNamespace(exit_code=0, stdout="", stderr="")
-        return SimpleNamespace(exit_code=1, stdout="", stderr="unexpected")
+        base = f"https://github.com/Mukira56/Cerebra/releases/download/{self.tag}/"
+        assets = [{"name": name, "size": len(INSTALLER), "url": base + name},
+                  {"name": name + ".sha256", "size": 90, "url": base + name + ".sha256"}] if self.assets else []
+        return {"tagName": self.tag, "name": f"Cerebra {self.tag}", "body": "## New\n- Faster", "publishedAt": "2026-10-25T10:00:00Z", "assets": assets}
 
 
 windows_installer = pytest.mark.skipif(os.name != "nt", reason="installer updates are Windows-only; elsewhere Cerebra updates with git pull")
@@ -46,13 +38,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(updates.shutil, "which", lambda name: "C:/tools/gh.exe")
     app = create_app(Settings(data_dir=tmp_path / "data"), bootstrap_key=KEY, start_worker=False)
     spawned = []
-    app.state.updater.runner = FakeGh()
+    app.state.updater.github = FakeGh()
     app.state.updater.spawn = spawned.append
     def stream(url, path, on_bytes, expected_size=0):
         """Stands in for GitHub: writes the release file in chunks and reports progress, like the real stream."""
-        fake = app.state.updater.runner
+        fake = app.state.updater.github
         name = f"Cerebra-Setup-{fake.tag[1:]}-Windows-x64.exe"
-        content = INSTALLER if url.endswith("/1") else f"{hashlib.sha256(b'something else' if fake.corrupt else INSTALLER).hexdigest()}  {name}\n".encode()
+        content = INSTALLER if url.endswith(".exe") else f"{hashlib.sha256(b'something else' if fake.corrupt else INSTALLER).hexdigest()}  {name}\n".encode()
         with path.open("wb") as handle:
             for index in range(0, len(content), 7):
                 handle.write(content[index:index + 7]); on_bytes(index + len(content[index:index + 7]))
@@ -103,16 +95,16 @@ def test_check_download_verify_and_install_plan(client, tmp_path, monkeypatch):
 
 @windows_installer
 def test_tampered_or_old_releases_are_refused(client):
-    client.app.state.updater.runner = FakeGh(corrupt=True)
+    client.app.state.updater.github = FakeGh(corrupt=True)
     response = download(client)
     assert response["phase"] == "failed" and "does not match" in response["error"]
     assert not list((client.app.state.settings.data_dir / "updates" / "v99.0.0").glob("*.exe"))  # deleted
     assert client.post("/api/updates/download", json={"tag": "v0.0.1"}).status_code == 400
     assert client.post("/api/updates/download", json={"tag": "latest; rm"}).status_code == 422
-    client.app.state.updater.runner = FakeGh(assets=False)
+    client.app.state.updater.github = FakeGh(assets=False)
     info = client.get("/api/updates").json()
     assert not info["available"] and "no Windows installer" in info["message"]
-    client.app.state.updater.runner = FakeGh(tag="v0.1.0")
+    client.app.state.updater.github = FakeGh(tag="v0.1.0")
     assert client.get("/api/updates").json()["message"] == "You have the latest version."
 
 
@@ -178,7 +170,7 @@ def test_a_dropped_download_resumes_by_itself(client):
     updater.retry_wait = 0
     plain, drops = updater.stream, {"count": 0}
     def flaky(url, path, on_bytes, expected_size=0):
-        if not url.endswith("/1"):
+        if not url.endswith(".exe"):
             return plain(url, path, on_bytes, expected_size)
         drops["count"] += 1
         if drops["count"] == 1:  # nothing arrives, then the connection drops
@@ -200,7 +192,7 @@ def test_a_download_that_keeps_dropping_says_what_to_do(client):
     updater.retry_wait = 0
     plain = updater.stream
     def dead(url, path, on_bytes, expected_size=0):
-        if not url.endswith("/1"):
+        if not url.endswith(".exe"):
             return plain(url, path, on_bytes, expected_size)
         raise ValueError("The connection to GitHub dropped. Check your internet and try again.")
     updater.stream = dead

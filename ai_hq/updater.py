@@ -1,8 +1,8 @@
-"""In-app updates from the user's GitHub releases, installed without leaving Cerebra by hand.
+"""In-app updates from Cerebra's public GitHub releases, installed without leaving Cerebra by hand.
 
-Check asks GitHub (through the user's own signed-in GitHub CLI; Cerebra never handles a GitHub token) for
-the newest release of the Cerebra repository. Download fetches its Windows installer and checksum into the
-data folder and verifies them. Install writes a small plan and starts a detached helper that stops Cerebra
+Check asks GitHub's public API for the newest release of the Cerebra repository: no GitHub account, sign-in or
+token is needed, for anyone. Download fetches its Windows installer and checksum from the release's public
+download links into the data folder and verifies them. Install writes a small plan and starts a detached helper that stops Cerebra
 (running tasks are paused, as when closing normally), verifies the installer again, installs it silently
 over the existing copy (data and shortcuts kept), and reopens Cerebra. Every step is logged.
 
@@ -99,12 +99,41 @@ finally {
 
 
 DOWNLOAD_ATTEMPTS = 3
+API = "https://api.github.com/repos/" + REPOSITORY
+USER_AGENT = "Cerebra-updater"
+
+
+class PublicGitHub:
+    """Reads Cerebra's releases from GitHub's public API, with no sign-in (60 checks an hour per address is plenty)."""
+
+    def release(self, tag=None):
+        """The newest release (or the one with this tag) as {tagName, name, body, publishedAt, assets: [{name, size, url}]}, or None."""
+        import httpx
+        path = f"/releases/tags/{tag}" if tag else "/releases/latest"
+        try:
+            with httpx.Client(timeout=30, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}) as client:
+                answer = client.get(API + path)
+        except httpx.HTTPError:
+            raise ValueError("GitHub could not be reached. Check your internet connection and try again.") from None
+        if answer.status_code == 404:
+            return None
+        if answer.status_code in {403, 429}:
+            raise ValueError("GitHub is limiting update checks from this internet connection for now. Try again in an hour.")
+        if answer.status_code != 200:
+            raise ValueError(f"GitHub answered {answer.status_code}. Try again in a few minutes.")
+        data = answer.json()
+        if data.get("draft"):
+            return None
+        return {"tagName": data.get("tag_name", ""), "name": data.get("name") or "", "body": data.get("body") or "",
+                "publishedAt": data.get("published_at"), "assets": [{"name": item.get("name", ""), "size": item.get("size", 0),
+                                                                     "url": item.get("browser_download_url", "")} for item in data.get("assets") or []]}
 
 
 class Updater:
     def __init__(self, settings, runner=None, spawn=None):
         self.settings = settings
         self.runner = runner or ProcessRunner()
+        self.github = PublicGitHub()
         self.spawn = spawn or self._spawn_detached
         self.stream = self._stream
         self.retry_wait = 5  # seconds before resuming a dropped download (longer each time)
@@ -120,28 +149,12 @@ class Updater:
             self._progress = {"phase": "ready", "tag": pending["tag"], "percent": 100, "bytes": 0, "total": 0, "error": "",
                               "message": f"Cerebra {pending['tag'][1:]} is downloaded and verified. Press Install and restart when you're ready."}
 
-    def _gh(self):
-        gh = shutil.which("gh")
-        if not gh:
-            raise ValueError("Updates come from your GitHub releases. Install the GitHub CLI (Toolchain) and sign in on the GitHub page first.")
-        return gh
-
-    def _run(self, args, timeout=120):
-        result = self.runner.run([self._gh(), *args], self.settings.data_dir, timeout=timeout)
-        if result.exit_code:
-            text = redact((result.stderr or result.stdout).strip())[:400]
-            if "release not found" in text.lower():
-                return None
-            raise ValueError("GitHub could not be reached or you are not signed in: " + text)
-        return result.stdout
-
     def check(self):
-        output = self._run(["release", "view", "--repo", REPOSITORY, "--json", "tagName,name,body,publishedAt,assets,isDraft,isPrerelease"], timeout=60)
+        release = self.github.release()
         current = __version__
         base = {"current": current, "repository": REPOSITORY, "installed": installed_root() is not None, "last_log": self.last_log()}
-        if output is None:
+        if release is None:
             return {**base, "available": False, "message": "No releases have been published yet."}
-        release = json.loads(output)
         tag = release.get("tagName", "")
         if not TAG.match(tag):
             return {**base, "available": False, "message": f"The newest release tag ({tag}) is not a Cerebra version."}
@@ -193,30 +206,17 @@ class Updater:
         threading.Thread(target=work, name="cerebra-update-download", daemon=True).start()
         return self.progress()
 
-    def _stream(self, api_url, path, on_bytes, expected_size=0):
-        """Stream one release file, reporting bytes as they arrive.
-
-        GitHub answers a release-asset request with a short-lived download link. The user's own GitHub CLI
-        sign-in is used only for that first request; the token stays in memory for that call and is never
-        stored, logged or put in an error message. The file itself streams from the temporary link."""
+    def _stream(self, url, path, on_bytes, expected_size=0):
+        """Stream one release file from its public download link (no sign-in), reporting bytes as they arrive.
+        GitHub redirects the link to its file server, which is followed; only github.com links are accepted."""
         import httpx
-        from .processes import scrub_environment
-        token = subprocess.run([self._gh(), "auth", "token"], capture_output=True, text=True, timeout=30, env=scrub_environment(),
-                               stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
-        if not token:
-            raise ValueError("Sign in to GitHub on the GitHub page first")
+        if not str(url).startswith(f"https://github.com/{REPOSITORY}/releases/download/"):
+            raise ValueError("That isn't a Cerebra release download")
         # Resume a partial download (slow or dropped connections) instead of starting over.
         received = path.stat().st_size if path.exists() and expected_size and path.stat().st_size < expected_size else 0
         try:
-            with httpx.Client(timeout=httpx.Timeout(60, read=60), follow_redirects=False) as client:  # a stall is retried by download()
-                answer = client.get(api_url, headers={"Authorization": f"Bearer {token}", "Accept": "application/octet-stream"})
-                if answer.status_code in {301, 302, 303, 307, 308}:
-                    request = ("GET", answer.headers["location"], {})
-                elif answer.status_code == 200:
-                    path.write_bytes(answer.content); on_bytes(len(answer.content)); return len(answer.content)
-                else:
-                    raise ValueError(f"GitHub answered {answer.status_code}; check that you are signed in and can see the Cerebra repository")
-                with client.stream(request[0], request[1], headers={"Range": f"bytes={received}-"} if received else {}) as response:
+            with httpx.Client(timeout=httpx.Timeout(60, read=60), follow_redirects=True, headers={"User-Agent": USER_AGENT}) as client:  # a stall is retried by download()
+                with client.stream("GET", url, headers={"Range": f"bytes={received}-"} if received else {}) as response:
                     if response.status_code == 200:
                         received = 0  # the server sent the whole file again
                     elif response.status_code != 206:
@@ -227,8 +227,6 @@ class Updater:
                             handle.write(chunk); received += len(chunk); on_bytes(received)
         except httpx.HTTPError:
             raise ValueError("The connection to GitHub dropped. Check your internet and try again.") from None
-        finally:
-            token = None
         return received
 
     def download(self, tag):
@@ -238,17 +236,17 @@ class Updater:
             raise ValueError("That version is not newer than the one you have")
         target = self.folder / tag
         target.mkdir(parents=True, exist_ok=True)
-        output = self._run(["release", "view", tag, "--repo", REPOSITORY, "--json", "assets"], timeout=60)
-        if output is None:
+        release = self.github.release(tag)
+        if release is None:
             raise ValueError(f"Release {tag} was not found")
-        assets = {asset.get("name", ""): asset for asset in json.loads(output).get("assets", [])}
+        assets = {asset.get("name", ""): asset for asset in release.get("assets", [])}
         name = next((item for item in assets if INSTALLER.match(item) and item[14:].startswith(tag[1:] + "-")), None)
         if name is None or f"{name}.sha256" not in assets:
             raise ValueError("The release is missing its installer or checksum file")
         installer = target / name
         self._set(phase="downloading", total=int(assets[name].get("size") or 0), bytes=0, message=f"Downloading Cerebra {tag[1:]}…")
         installer.with_name(name + ".sha256").unlink(missing_ok=True)
-        self.stream(assets[f"{name}.sha256"]["apiUrl"], installer.with_name(name + ".sha256"), lambda _: None)
+        self.stream(assets[f"{name}.sha256"]["url"], installer.with_name(name + ".sha256"), lambda _: None)
         size = int(assets[name].get("size") or 0)
         if installer.exists() and installer.stat().st_size > size:
             installer.unlink()
@@ -256,7 +254,7 @@ class Updater:
         # where it stopped, a few times, before asking the owner to try again.
         for attempt in range(DOWNLOAD_ATTEMPTS):
             try:
-                self.stream(assets[name]["apiUrl"], installer, lambda done: self._set(bytes=done), size)
+                self.stream(assets[name]["url"], installer, lambda done: self._set(bytes=done), size)
             except ValueError as exc:
                 if "dropped" not in str(exc) or attempt == DOWNLOAD_ATTEMPTS - 1:
                     raise

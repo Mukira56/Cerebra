@@ -268,7 +268,7 @@ Open **Settings › Updates** and press **Check for updates**.
 - Then press **Install and restart**. Cerebra closes and a small window shows each step of the update (closing, installing, starting) until Cerebra opens again by itself, in about a minute.
 - Running tasks are paused and can be resumed, and your projects, tasks and settings are kept.
 
-Updates use your GitHub sign-in (GitHub page), so the GitHub CLI must be installed and signed in.
+Updates come straight from Cerebra's public releases on GitHub: no GitHub account or sign-in is needed.
 
 If an update can't be installed, Cerebra reopens the version you had and **Last update log** (Settings › Updates) shows the installer's own reason.
 
