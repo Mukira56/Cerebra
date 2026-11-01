@@ -1292,6 +1292,19 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         from . import covers
         return {key: label for key, (label, *_colours) in covers.PALETTES.items()}
 
+    @app.post("/api/books/{book_id}/etsy")
+    def books_etsy_version(book_id: str, payload: dict):
+        """One design, many places: the book's pages as an Etsy printable, with its listing ready on the Etsy page."""
+        try:
+            pages = int(payload.get("pages") or 2)
+        except (TypeError, ValueError):
+            raise ValueError("Enter the number of pages")
+        try:
+            with db.Session.begin() as session:
+                return notebooks_module.etsy_version(session, interiors_folder, book_id, pages)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
     @app.post("/api/books/niche-check")
     def books_niche_check(payload: dict):
         return notebooks_module.niche_check(db.Session, commerce, payload.get("theme"))

@@ -119,6 +119,50 @@ def niche_check(session_factory, commerce, theme):
     return result
 
 
+ETSY_PRICE = 4.50  # a single printable log or planner usually sells for a few dollars on Etsy
+
+
+def etsy_version(session, folder, book_id, pages=2):
+    """The same design as an Etsy printable: the interior on US Letter for printing at home, and an Etsy listing written
+    from the book's own listing (no model call), checked against Etsy's rules and kept on the Etsy page as a draft."""
+    from . import etsy
+    from .models import EtsyListing
+    row = session.get(Book, book_id)
+    if row is None:
+        raise LookupError("Book not found")
+    extra = dict(row.extra or {})
+    style, listing = extra.get("style"), extra.get("listing") or {}
+    if extra.get("kind") != "low_content" or style not in interiors.STYLES:
+        raise ValueError("Only notebooks, logbooks and planners made here can become Etsy printables")
+    data, info = interiors.build(style, "8.5x11", pages, printable=True)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{style}-printable-letter-{info['pages']}p.pdf"
+    path.write_bytes(data)
+    name = interiors.STYLES[style][0].split(" (")[0]
+    base = re.sub(r"\s*[:,|-]\s*\d+\s+pages.*$", "", row.title or name, flags=re.I).strip()
+    title = f"{base} Printable, {name}, US Letter PDF, Instant Download"
+    if len(title) > etsy.TITLE_MAX:
+        title = title[:etsy.TITLE_MAX + 1].rsplit(" ", 1)[0].rstrip(",")
+    words = list(listing.get("keywords") or []) + [base, name, f"{name} printable", "printable pdf", "instant download", "printable planner",
+                                                     "us letter printable", "digital download", "print at home",
+                                                     "printable tracker", "printable log sheet", "simple printable", "minimalist printable",
+                                                     "printable insert", "log sheet pdf"]
+    description = "\n\n".join(part for part in (
+        str(listing.get("description") or "").strip(),
+        f"WHAT YOU GET\n- 1 PDF with {info['pages']} page(s), US Letter (8.5 x 11 in)\n- Print at home or at a print shop, as many times as you like, for personal use",
+        "This is a digital download: nothing is shipped. Colors and lines may look slightly different depending on your printer.",
+        "Designed by me and drawn by code, with no AI-generated images.") if part)
+    made = {"title": title, "tags": etsy.clean_tags(words), "description": description[:8000], "price": ETSY_PRICE,
+            "product": f"Printable PDF: {path.name} ({info['pages']} page(s), US Letter)"}
+    made["checks"] = etsy.check_listing(made)
+    saved = EtsyListing(niche_id=None, title=made["title"], tags=made["tags"], description=made["description"], price=made["price"],
+                        product=made["product"], checks=made["checks"], status="draft", model="")
+    session.add(saved)
+    session.flush()
+    row.extra = {**extra, "etsy_listing": saved.id, "etsy_printable": path.name}
+    return {**etsy.listing_public(saved), "file": path.name, "path": str(path)}
+
+
 class NotebookMaker:
     """Makes the interior, has the owner's AI write the listing, and keeps it as a Book ready to upload."""
 

@@ -140,17 +140,26 @@ def _page_stream(width, height, left, right, style):
     return "\n".join(parts).encode("ascii")
 
 
-def build(style, trim, pages, paper="white"):
-    """The interior PDF (bytes) and what it is. Raises ValueError for anything KDP won't print."""
+PRINTABLE_PAGES = 30  # a home-printed download: a few pages the buyer prints as often as they like
+
+
+def build(style, trim, pages, paper="white", printable=False):
+    """The interior PDF (bytes) and what it is. Raises ValueError for anything KDP won't print.
+    printable=True makes the same pages for printing at home (an Etsy download): US Letter, even margins, no binding."""
     if style not in STYLES:
         raise ValueError("Choose one of: " + ", ".join(label for label, _kind, _space in STYLES.values()))
     pages = int(pages)
-    pages += pages % 2  # KDP prints in leaves: an even page count
-    problem = books.check_format(trim, pages, paper)
-    if problem:
-        raise ValueError(problem)
+    if printable:
+        if not 1 <= pages <= PRINTABLE_PAGES:
+            raise ValueError(f"A printable has 1 to {PRINTABLE_PAGES} pages")
+        trim, gutter = "8.5x11", OUTSIDE
+    else:
+        pages += pages % 2  # KDP prints in leaves: an even page count
+        problem = books.check_format(trim, pages, paper)
+        if problem:
+            raise ValueError(problem)
+        gutter = books.inside_margin(pages)
     width, height = books.PAPERBACK_TRIMS[trim]
-    gutter = books.inside_margin(pages)
     right_hand = _page_stream(width, height, gutter, OUTSIDE, style)  # odd pages: binding on the left
     left_hand = _page_stream(width, height, OUTSIDE, gutter, style)  # even pages: binding on the right
     media = f"[0 0 {_number(width * POINTS)} {_number(height * POINTS)}]"

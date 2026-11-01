@@ -364,6 +364,7 @@ def book_public(row):
             "asins": extra.get("asins", {}), "published_at": extra.get("published_at", ""), "earnings": calculate(fields),
             "kind": extra.get("kind", ""), "listing": extra.get("listing") or {}, "price_tip": extra.get("price_tip", ""), "interior": extra.get("interior", ""), "ai_question": extra.get("ai_question", ""),
             "cover": extra.get("cover", ""), "cover_palette": extra.get("cover_palette", ""), "cover_author": extra.get("cover_author", ""),
+            "style": extra.get("style", ""), "etsy_listing": extra.get("etsy_listing", ""), "etsy_printable": extra.get("etsy_printable", ""),
             "created_at": row.created_at, "updated_at": row.updated_at}
 
 

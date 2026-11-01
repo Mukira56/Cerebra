@@ -1616,6 +1616,18 @@
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
+  function etsyVersion(book) {
+    const root = el("div"), pages = input("2", "2", "number"), out = el("div"); pages.min = 1; pages.max = 30;
+    append(root, el("h4", "", "Sell it on Etsy too"),
+      hint("The same pages as a printable PDF (US Letter, printed at home), and an Etsy listing written from this book's listing. It waits on the Etsy page; each item goes to one of your shops only."),
+      book.etsy_listing ? hint(`Already made: ${book.etsy_printable || "a printable"}. Making it again adds another listing.`) : null,
+      append(el("div", "form-grid"), field("Pages in the printable", pages)),
+      actionsRow(button("Make the Etsy printable", () => act("", () => mutate(`/api/books/${encodeURIComponent(book.id)}/etsy`, {pages: Number(pages.value || 2)}))
+        .then(made => { if (!made) return; out.replaceChildren(hint(`Made ${made.file} and an Etsy listing: “${made.title}”, $${Number(made.price).toFixed(2)}.`),
+          made.checks.length ? append(el("ul", "tips"), ...made.checks.map(item => el("li", "", item))) : hint("The listing passes Cerebra's Etsy checks."),
+          actionsRow(link("Open the Etsy page →", "etsy"))); toast("Etsy printable ready."); }), "button")), out);
+    return root;
+  }
   function coverForm(book) {
     const form = el("form"), palette = select([["navy", "Navy and cream"]], book.cover_palette || "navy"), author = input("Pen name (optional)", book.cover_author || book.pen_name || ""), make = submitButton("Draw the cover again");
     api("/api/books/covers/palettes").then(names => { palette.replaceChildren(...Object.entries(names).map(([key, label]) => { const option = el("option", "", label); option.value = key; return option; })); palette.value = book.cover_palette || "navy"; }).catch(() => {});
@@ -1647,7 +1659,7 @@
       kv([["Interior", book.interior || "—"], ["Cover", book.cover || "—"], ["Trim and pages", `${String(book.trim).replace("x", " × ")} in · ${book.pages} pages · ${book.paper} paper`],
           ["Price", `$${Number(listing.price || book.prices?.paperback || 0).toFixed(2)}`], ["You earn per copy", book.royalty ? `$${Number(book.royalty.royalty).toFixed(2)}` : `$${Number(book.earnings?.paperback?.royalty ?? 0).toFixed(2)}`]]),
       book.price_tip ? hint(book.price_tip) : null, hint(book.ai_question || ""), hint("Upload the interior PDF as the manuscript and the cover PDF as a print-ready cover (KDP adds the barcode on the back), then publish. KDP allows about 3 new titles a day."),
-      coverForm(book),
+      coverForm(book), etsyVersion(book),
       actionsRow(button("Open the interiors folder", () => act("Opened.", () => mutate("/api/books/interiors/open", {})), "button"),
         state ? button("Edit details (published, ASIN)", () => bookDialog(book, state), "button ghost") : null));
     showDialog(listing.title || book.title, root);

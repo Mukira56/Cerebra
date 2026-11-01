@@ -137,3 +137,30 @@ def test_a_cover_is_kdps_full_wrap_size_with_no_font_and_a_spine_title_only_when
         covers.build("", trim="6x9", pages=100)
     with pytest.raises(ValueError, match="24 to"):
         covers.build("Notes", trim="6x9", pages=10)
+
+
+def test_a_book_becomes_an_etsy_printable_with_its_listing_on_the_etsy_page(client):  # noqa: F811
+    from ai_hq.models import Book
+    with client.app.state.db.Session.begin() as session:
+        session.add(Book(id="b1", title="Mileage Log Book for Taxes: 120 Pages", subtitle="Vehicle Odometer Tracker", status="files_ready", trim="6x9",
+                         paper="white", pages=120, formats=["paperback"],
+                         extra={"kind": "low_content", "style": "mileage", "listing": {"description": "Track every business mile for tax time.",
+                                                                                        "keywords": ["mileage tracker", "vehicle mileage log book", "irs mileage log"]}}))
+        session.add(Book(id="b2", title="A Novel", status="planned", trim="6x9", paper="white", pages=200, formats=["paperback"], extra={}))
+    made = client.post("/api/books/b1/etsy", json={"pages": 3})
+    assert made.status_code == 200, made.text
+    made = made.json()
+    folder = client.app.state.settings.data_dir / "books" / "interiors"
+    data = (folder / made["file"]).read_bytes()
+    assert made["file"] == "mileage-printable-letter-3p.pdf" and b"/Count 3" in data and b"/MediaBox [0 0 612 792]" in data and b"/Font" not in data
+    right_hand, left_hand = streams(data)
+    assert right_hand == left_hand  # printed at home: even margins, no binding side
+    assert made["title"].startswith("Mileage Log Book for Taxes Printable") and len(made["title"]) <= 140 and "120 Pages" not in made["title"]
+    assert len(made["tags"]) == 13 and all(len(tag) <= 20 for tag in made["tags"]) and "mileage tracker" in made["tags"]
+    assert "digital download: nothing is shipped" in made["description"] and "US Letter" in made["description"] and made["checks"] == []
+    assert made["price"] == 4.5 and client.get("/api/etsy/listings").json()[0]["title"] == made["title"]  # waits on the Etsy page
+    shown = next(item for item in client.get("/api/books").json()["books"] if item["id"] == "b1")
+    assert shown["etsy_listing"] == made["id"] and shown["etsy_printable"] == made["file"]
+    assert "Only notebooks" in client.post("/api/books/b2/etsy", json={}).json()["detail"]
+    assert client.post("/api/books/nope/etsy", json={}).status_code == 404
+    assert client.post("/api/books/b1/etsy", json={"pages": 40}).status_code == 400

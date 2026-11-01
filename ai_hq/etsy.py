@@ -152,6 +152,9 @@ Reply with ONLY one JSON object:
 {"title": "...", "tags": ["..."], "description": "...", "price": 0.0, "product": "the files to make: format, size, pages, what is on them"}"""
 
 
+DANGLING = {"a", "an", "and", "for", "in", "of", "on", "or", "the", "to", "with"}
+
+
 def clean_tags(tags):
     """Etsy-ready tags: allowed characters only, at most 20 characters, no repeats, at most 13."""
     clean = []
@@ -159,6 +162,8 @@ def clean_tags(tags):
         tag = " ".join(TAG_CHARACTERS.sub(" ", str(tag)).lower().split())
         if len(tag) > TAG_MAX:  # cut at a word: half a word is a search nobody makes
             tag = tag[:TAG_MAX + 1].rsplit(" ", 1)[0] if " " in tag[:TAG_MAX + 1] else tag[:TAG_MAX]
+            while tag.rsplit(" ", 1)[-1] in DANGLING and " " in tag:  # "mileage log book for" reads as a half search
+                tag = tag.rsplit(" ", 1)[0]
         if tag and tag not in clean:
             clean.append(tag)
     return clean[:TAGS_MAX]
