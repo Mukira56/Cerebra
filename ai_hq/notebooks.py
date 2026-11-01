@@ -82,6 +82,43 @@ def parse(text, info):
     return listing
 
 
+def niche_check(session_factory, commerce, theme):
+    """Is a low-content theme worth a book? Demand and competition for its printable version on Etsy (official API, free),
+    keyword ideas from what top sellers tag (checked against KDP's limits and the trademark list), and the Amazon book
+    search to read best-seller ranks from. Amazon has no free search API, so its numbers stay the owner's to read."""
+    from urllib.parse import urlencode
+    from . import etsy
+    theme = " ".join(str(theme or "").split())[:100]
+    if len(theme) < 3:
+        raise ValueError("Say what the book is, such as “mileage log book” or “gratitude journal for women”")
+    lowered = theme.lower()
+    flags = [f"“{mark}” is a trademark: KDP removes books that use it" for mark in TRADEMARKS if re.search(rf"\b{re.escape(mark)}\b", lowered)]
+    result = {"theme": theme, "flags": flags,
+              "amazon_search": "https://www.amazon.com/s?" + urlencode({"k": theme, "i": "stripbooks"}),
+              "how_to_read": ["Open the Amazon search and note the first 5–10 paperbacks like yours: their Best Sellers Rank (Product details) and reviews.",
+                              "Ranks under 100,000 sell most days; if most top books rank over 1,000,000, buyers rarely look for it.",
+                              "Few reviews on the selling books means a new book can compete. Add them to a niche on this page to score it."]}
+    try:
+        found = etsy.research(session_factory, commerce, f"{theme} printable", digital_only=True)
+    except ValueError as exc:
+        result["etsy"] = {"ready": False, "setup": str(exc)}
+        found = None
+    if found:
+        data = found["data"]
+        result["etsy"] = {"ready": True, "keyword": found["keyword"], "score": found["score"], "label": found["label"], "reasons": data.get("reasons", []),
+                          "count": data.get("count", 0), "demand": data.get("demand", 0), "price": data.get("price", 0)}
+    ideas, seen = [], {lowered}
+    for tag in ([item["tag"] for item in (found or {}).get("data", {}).get("tags", [])] if found else []) + [f"{theme} for women", f"{theme} for men", f"{theme} gift", f"simple {theme}"]:
+        tag = " ".join(str(tag).lower().replace("printable", "").replace("digital download", "").replace("pdf", "").split())
+        if (len(tag) < 4 or len(tag) > KEYWORD_MAX or tag in seen or any(mark in tag for mark in TRADEMARKS)
+                or any(word in tag for word in ("instant download", "etsy", "svg", "png", "editable", "canva"))):
+            continue
+        seen.add(tag)
+        ideas.append(tag)
+    result["keywords"] = ideas[:KEYWORDS]
+    return result
+
+
 class NotebookMaker:
     """Makes the interior, has the owner's AI write the listing, and keeps it as a Book ready to upload."""
 

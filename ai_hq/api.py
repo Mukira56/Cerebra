@@ -1292,6 +1292,22 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         from . import covers
         return {key: label for key, (label, *_colours) in covers.PALETTES.items()}
 
+    @app.post("/api/books/niche-check")
+    def books_niche_check(payload: dict):
+        return notebooks_module.niche_check(db.Session, commerce, payload.get("theme"))
+
+    @app.post("/api/books/niche-check/amazon")
+    def books_niche_amazon(payload: dict):
+        """Open Amazon's book search for the theme in the owner's browser (the address is always amazon.com's)."""
+        import webbrowser
+        from urllib.parse import urlencode
+        theme = " ".join(str(payload.get("theme") or "").split())[:100]
+        if len(theme) < 3:
+            raise ValueError("Type the theme first")
+        url = "https://www.amazon.com/s?" + urlencode({"k": theme, "i": "stripbooks"})
+        webbrowser.open(url)
+        return {"opened": url}
+
     @app.post("/api/books/interiors/open")
     def books_open_interiors():
         interiors_folder.mkdir(parents=True, exist_ok=True)

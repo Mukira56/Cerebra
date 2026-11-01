@@ -1603,7 +1603,8 @@
       pages.min = 24; pages.max = 828;
       append(form, hint("The inside pages of a notebook, journal, logbook or planner: drawn by code, so Amazon's AI question is No for them. Headings are drawn as lines, not typed in a font, so KDP's font check can't fail. Pick a trim, then add a cover."),
         append(el("div", "form-grid"), field("Pages", style), field("Trim size", trim), field("Page count", pages), field("Paper", paper)),
-        field("Who it's for (to make it a book)", theme, "Your AI writes the title, subtitle, description and 7 keywords for this; Cerebra checks KDP's limits."), actionsRow(make, asBook), out);
+        field("Who it's for (to make it a book)", theme, "Your AI writes the title, subtitle, description and 7 keywords for this; Cerebra checks KDP's limits."),
+        actionsRow(make, button("Check the niche", () => act("", () => mutate("/api/books/niche-check", {theme: theme.value}, "POST", 60000)).then(found => { if (found) out.replaceChildren(nicheCheck(found)); }), "button"), asBook), out);
       wireForm(form, make, async () => {
         const made = await mutate("/api/books/interiors", {style: style.value, trim: trim.value, pages: Number(pages.value || 120), paper: paper.value}, "POST", 120000);
         out.replaceChildren(hint(`Made ${made.file} (${made.pages} pages, ${Math.round(made.bytes / 1024)} KB). Inside margin ${made.gutter} in on the binding side.`),
@@ -1622,6 +1623,18 @@
       append(el("div", "form-grid"), field("Colours", palette), field("Author on the cover", author)), actionsRow(make));
     wireForm(form, make, async () => { const made = await mutate(`/api/books/${encodeURIComponent(book.id)}/cover`, {palette: palette.value, author: author.value}); toast(`Cover saved: ${made.file}`); });
     return form;
+  }
+  function nicheCheck(found) {
+    const root = el("div"), etsy = found.etsy || {};
+    append(root, el("h4", "", `Is “${found.theme}” worth a book?`),
+      found.flags.length ? append(el("ul", "tips"), ...found.flags.map(item => el("li", "", item))) : null,
+      etsy.ready ? append(el("div"), append(el("div", "row-meta"), badge(`${etsy.label.toUpperCase()} ${etsy.score}`, ETSY_STYLE[etsy.label] || "muted"), el("span", "", ` Etsy, “${etsy.keyword}”: ${Number(etsy.count).toLocaleString()} listings, about ${etsy.demand} favourites a month on top listings, median $${Number(etsy.price).toFixed(2)}`)),
+          append(el("ul", "tips"), ...array(etsy.reasons).map(item => el("li", "", item))), hint("Buyers who want a printable version usually want the paperback too: strong demand here is a good sign for KDP."))
+        : hint(`Etsy demand not checked: ${String(etsy.setup || "connect Etsy").replace(/\.+$/, "")}. The Amazon check below still works.`),
+      found.keywords.length ? append(el("div"), el("h4", "", "Keyword ideas for KDP's 7 boxes"), list(found.keywords), actionsRow(button("Copy keywords", () => navigator.clipboard.writeText(found.keywords.join("\n")).then(() => toast("Keywords copied.")), "button small"))) : null,
+      el("h4", "", "On Amazon"), append(el("ul", "tips"), ...array(found.how_to_read).map(item => el("li", "", item))),
+      actionsRow(button("Open the Amazon book search ↗", () => act("Opened in your browser.", () => mutate("/api/books/niche-check/amazon", {theme: found.theme})), "button small")));
+    return root;
   }
   function notebookDialog(book, state) {
     const listing = book.listing || {}, root = el("div"), copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy it.", true));
