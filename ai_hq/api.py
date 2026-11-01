@@ -1680,21 +1680,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def freelance_bid(payload: dict):
         """Send the owner's proposal as a bid on Freelancer.com (its official API), after the owner's confirmation."""
         try:
-            return bidder.bid(str(payload.get("id") or ""), payload.get("confirmed"))
+            return bidder.bid(str(payload.get("id") or ""), payload.get("confirmed"), payload.get("account") or None)
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
     @app.put("/api/freelance/freelancer-account")
     def freelance_account(payload: dict):
-        return bidder.save_token(payload.get("token"))
+        return bidder.save_token(payload.get("token"), payload.get("holder", ""), payload.get("owner_confirmed") is True)
 
     @app.post("/api/freelance/freelancer-account/check")
-    def freelance_account_check():
-        return bidder.check()
+    def freelance_account_check(account: str = ""):
+        return bidder.check(account or None)
 
     @app.delete("/api/freelance/freelancer-account")
-    def freelance_account_disconnect():
-        return bidder.disconnect()
+    def freelance_account_disconnect(account: str = ""):
+        return bidder.disconnect(account or None)  # no account: disconnect them all
 
     @app.put("/api/freelance/profile")
     def freelance_profile(payload: dict):

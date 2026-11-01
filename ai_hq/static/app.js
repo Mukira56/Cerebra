@@ -1850,9 +1850,12 @@
     else if (!["new", "saved"].includes(lead.status)) sending.append(hint("You've applied with this proposal; it stays here for reference."));
     else if (lead.source === "freelancer" && state.freelancer_account?.connected) {
       sending.append(state.freelancer_account?.connected
-        ? button("Send bid on Freelancer.com", async () => { if (!await act("", save)) return; showDialog("Send this bid?", append(el("div"),
-            el("p", "", `Sends your proposal as a bid of ${lead.currency || "USD"} ${Number(price.value || 0).toLocaleString()} with delivery in ${days.value} day(s) on “${lead.title}”, from your Freelancer.com account ${state.freelancer_account.username}.`),
-            actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Send bid", async () => { const result = await act(outcome => outcome.message, () => mutate("/api/freelance/bid", {id: lead.id, confirmed: true})); if (result) { closeDialog(); render(); } }, "button primary")))); }, "button primary")
+        ? button("Send bid on Freelancer.com", async () => { if (!await act("", save)) return;
+            const connected = array(state.freelancer_account.accounts).filter(item => item.connected), from = select(connected.map(item => [item.id, item.holder ? `${item.username} (${item.holder})` : item.username]), connected[0]?.id);
+            showDialog("Send this bid?", append(el("div"),
+            el("p", "", `Sends your proposal as a bid of ${lead.currency || "USD"} ${Number(price.value || 0).toLocaleString()} with delivery in ${days.value} day(s) on “${lead.title}”.`),
+            connected.length > 1 ? field("From the account", from) : el("p", "", `From your Freelancer.com account ${state.freelancer_account.username}.`),
+            actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Send bid", async () => { const result = await act(outcome => outcome.message, () => mutate("/api/freelance/bid", {id: lead.id, confirmed: true, account: from.value || null})); if (result) { closeDialog(); render(); } }, "button primary")))); }, "button primary")
         : hint("Connect your Freelancer.com account (Freelance page › Freelancer.com account) to send bids from here.", true));
     } else {
       // One step for the owner: copy, open the job page, then a plain question, so the application is on the record and leaves Your calls.
@@ -1875,13 +1878,24 @@
     return box;
   }
   function freelancerAccount(state) {
-    const account = state.freelancer_account || {}, root = el("div");
-    if (account.connected) return append(root, kv([["Account", account.username]]), hint("Bids go out only when you press Send on a proposal."),
-      append(el("div", "actions"), button("Check", () => act(result => result.message, () => mutate("/api/freelance/freelancer-account/check")).then(() => render()), "button small"),
-        button("Disconnect", () => act(result => result.message, () => api("/api/freelance/freelancer-account", {method: "DELETE"})).then(() => render()), "button small ghost")));
-    const form = el("form"), token = input("OAuth access token", "", "password"), save = submitButton("Connect"); token.autocomplete = "off";
-    append(form, hint("To bid from Cerebra: create an app at accounts.freelancer.com › Settings › Developer, give it the bidding scope, and paste its OAuth access token. Stored encrypted on this computer."), field("Access token", token), actionsRow(save));
-    wireForm(form, save, async () => { const result = await mutate("/api/freelance/freelancer-account", {token: token.value.trim()}, "PUT"); toast(result.message); render(); });
+    const account = state.freelancer_account || {}, accounts = array(account.accounts), root = el("div");
+    if (accounts.length) {
+      const list = el("div", "row-list");
+      accounts.forEach(item => list.append(append(el("div", "row"), append(el("div", "row-main"), el("strong", "", item.username || "Not checked yet"),
+          el("div", "row-meta", item.holder ? `${item.holder}'s account` : "Your account")),
+        append(el("div", "actions"), button("Check", () => act(result => result.message, () => mutate(`/api/freelance/freelancer-account/check?account=${encodeURIComponent(item.id)}`)).then(() => render()), "button small"),
+          button("Disconnect", () => act(result => result.message, () => api(`/api/freelance/freelancer-account?account=${encodeURIComponent(item.id)}`, {method: "DELETE"})).then(() => render()), "button small ghost")))));
+      root.append(list, hint("One bid per project, from one account. With Apply automatically on, each account gets its own daily number of bids."));
+    }
+    if (accounts.length >= (account.max || 5)) return root;
+    const form = el("form"), token = input("OAuth access token", "", "password"), holder = input("Their full name", ""), save = submitButton(accounts.length ? "Add this account" : "Connect");
+    const confirmed = check("This account belongs to that person, who created it and pasted this token themselves. I won't share login details.");
+    token.autocomplete = "off";
+    append(form, accounts.length ? append(el("div"), el("h4", "", `Add another account (${accounts.length} of ${account.max || 5})`),
+        hint("Freelancer.com accounts belong to one person each and login details must never be shared (its User Agreement). Upwork and Fiverr close people who run several accounts. Add a teammate's account, connected by them, not a second account of your own."),
+        field("Whose account", holder)) : hint("To bid from Cerebra: create an app at accounts.freelancer.com › Settings › Developer, give it the bidding scope, and paste its OAuth access token. Stored encrypted on this computer."),
+      field("Access token", token), accounts.length ? confirmed.wrap : null, actionsRow(save));
+    wireForm(form, save, async () => { const result = await mutate("/api/freelance/freelancer-account", {token: token.value.trim(), holder: holder.value, owner_confirmed: confirmed.control.checked}, "PUT"); toast(result.message); render(); });
     return append(root, form);
   }
   // Phase 4: profiles, gigs and case studies, written from the owner's real details; the owner copies them in.
