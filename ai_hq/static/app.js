@@ -1699,6 +1699,26 @@
     wireForm(form, make, async () => { const made = await mutate(`/api/books/${encodeURIComponent(book.id)}/cover`, {palette: palette.value, author: author.value}); toast(`Cover saved: ${made.file}`); });
     return form;
   }
+  function collectionPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    const makeIt = group => act(result => result.message, () => mutate("/api/books/collection", group ? {group} : {}, "POST", 300000)).then(result => { if (result) render(); });
+    api("/api/books/collection").then(state => {
+      const groups = array(state.groups), total = groups.reduce((sum, group) => sum + group.books.length, 0), made = groups.reduce((sum, group) => sum + group.books.filter(book => book.book_id).length, 0);
+      root.replaceChildren(hint("Original books for every age group, in kinds that sell steadily: each with its own design, a cover in the group's colours and pattern, an encouraging line written for that age at the foot of every page, and a complete listing (title, subtitle, description, 7 keywords, price) checked against KDP's limits. Nothing to fill in: open a book, copy each field into KDP and upload the two PDFs. KDP allows about 3 new titles a day."),
+        actionsRow(button(made >= total ? `All ${total} made` : `Make all ${total - made} remaining`, () => makeIt(null), "button primary")));
+      groups.forEach(group => {
+        const rows = el("div", "row-list");
+        group.books.forEach(book => rows.append(append(el("div", "row"), append(el("div", "row-main"), el("strong", "", book.title),
+          el("div", "row-meta", `${book.style_label.split(" (")[0]} · ${book.trim.replace("x", " × ")} in · ${book.pages} pages · $${Number(book.price).toFixed(2)}`),
+          el("div", "row-meta", book.why)), book.book_id ? badge("made", "green") : badge("not yet", "muted"))));
+        append(root, append(el("div", "action-card"), append(el("div", "row-meta"), el("strong", "", group.label), el("span", "", ` · ${group.palette} colours, ${group.motif} pattern`)), rows,
+          el("p", "row-meta", `Lines on its pages: “${group.quotes.slice(0, 3).join("”, “")}”…`),
+          group.books.every(book => book.book_id) ? null : actionsRow(button(`Make ${group.label}`, () => makeIt(group.key), "button small"))));
+      });
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
   function nicheCheck(found) {
     const root = el("div"), etsy = found.etsy || {};
     append(root, el("h4", "", `Is “${found.theme}” worth a book?`),
@@ -1755,7 +1775,7 @@
           niches.length ? nicheList : body(empty("No niches yet", "Add a problem people already pay to fix. Check its trend on Google Trends and its competing books on Amazon.", null, "◎"))), null, niches.length),
         panel("Books", append(el("div"), body(append(el("div", "actions"), button("+ New book", () => bookDialog(null, state), "button primary"))),
           books.length ? bookList : body(empty("No books yet", "Start one from a niche you chose. Cerebra shows what each format earns before you write a word.", null, "▤"))), null, books.length));
-      const side = append(el("div"), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
+      const side = append(el("div"), panel("Books for every age group", body(collectionPanel())), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
         panel("How it works", body(hint("You pick a niche, Cerebra helps plan, write and check the book, and prepares the files and listing. KDP has no publishing API, so you upload and click Publish yourself, including Amazon's AI-content question. KDP allows 3 new titles a day."),
           el("p", "row-meta", `KDP's numbers were checked on ${state.checked} against its help pages: ${Object.values(state.sources).join(" · ")}`))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));

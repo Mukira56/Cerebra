@@ -65,10 +65,39 @@ def _centred(lines, size, middle, top, gap):
     return " ".join(parts), y
 
 
-def build(title, subtitle="", author="", trim="6x9", pages=120, paper="white", palette="navy"):
+MOTIFS = ("rules", "dots", "checks", "waves", "bars", "double")  # the pattern under the title: one look per collection
+
+
+def _motif(motif, x0, x1, top):
+    """A band of pattern below the title panel, in the panel's colour (stroke and fill already set)."""
+    if motif == "dots":
+        return "1 J 3 w " + " ".join(f"{_n(x)} {_n(top - row * 10)} m {_n(x)} {_n(top - row * 10)} l" for row in range(3)
+                                     for x in [x0 + step * 12 for step in range(int((x1 - x0) // 12) + 1)]) + " S"
+    if motif == "checks":
+        size = 8
+        return " ".join(f"{_n(x0 + index * size * 2)} {_n(top - size)} {_n(size)} {_n(size)} re" for index in range(int((x1 - x0) // (size * 2)) + 1)
+                        if x0 + index * size * 2 + size <= x1) + " f"
+    if motif == "waves":
+        parts = []
+        for row in range(3):
+            y, points = top - row * 10, []
+            for index in range(int((x1 - x0) // 8) + 1):
+                points.append(f"{_n(x0 + index * 8)} {_n(y - (4 if index % 2 else 0))}")
+            parts.append(points[0] + " m " + " ".join(point + " l" for point in points[1:]))
+        return "1 j 1 w " + " ".join(parts) + " S"
+    if motif == "bars":
+        return " ".join(f"{_n(x0)} {_n(top - row * 9 - (5 - row))} {_n((x1 - x0) * (1 - row * 0.18))} {_n(5 - row)} re" for row in range(5)) + " f"
+    if motif == "double":
+        return f"1.5 w {_n(x0)} {_n(top - 22)} {_n(x1 - x0)} 22 re S 0.6 w {_n(x0 + 4)} {_n(top - 18)} {_n(x1 - x0 - 8)} 14 re S"
+    return "0.8 w " + " ".join(f"{_n(x0)} {_n(top - row * 9)} m {_n(x1)} {_n(top - row * 9)} l" for row in range(5)) + " S"  # rules, like lined pages
+
+
+def build(title, subtitle="", author="", trim="6x9", pages=120, paper="white", palette="navy", motif="rules"):
     """The cover PDF (bytes) and its measurements. Raises ValueError for what KDP won't print."""
     if palette not in PALETTES:
         raise ValueError("Choose a palette: " + ", ".join(label for label, *_colours in PALETTES.values()))
+    if motif not in MOTIFS:
+        raise ValueError("Choose a pattern: " + ", ".join(MOTIFS))
     title = " ".join(str(title or "").split())
     if not strokefont.width(title, 10):
         raise ValueError("Give the book a title")
@@ -101,12 +130,7 @@ def build(title, subtitle="", author="", trim="6x9", pages=120, paper="white", p
     if subtitle_lines:
         words, _after = _centred(subtitle_lines, subtitle_size, middle, after - 10, 5)
         ops += [f"{_n(subtitle_size / 9)} w", words, "S"]
-    ops += [_rgb(panel, stroke=True), "0.8 w"]
-    band_top = panel_bottom - 0.45 * POINTS
-    for row in range(5):  # rules echo the lined pages inside
-        y = band_top - row * 9
-        ops.append(f"{_n(panel_x0)} {_n(y)} m {_n(panel_x1)} {_n(y)} l")
-    ops.append("S")
+    ops += [_rgb(panel, stroke=True), _rgb(panel), _motif(motif, panel_x0, panel_x1, panel_bottom - 0.45 * POINTS)]
     if author:
         author_size, author_lines = _fit(author, 12, width_limit, 1, 7)
         words, _after = _centred(author_lines, author_size, middle, SAFE * POINTS + 0.35 * POINTS + author_size, 0)
@@ -138,7 +162,7 @@ def build(title, subtitle="", author="", trim="6x9", pages=120, paper="white", p
     out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii")
     out += b"".join(f"{offset:010d} 00000 n \n".encode("ascii") for offset in offsets)
     out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii")
-    return bytes(out), {**size_info, "trim": trim, "pages": pages, "paper": paper, "palette": palette, "bytes": len(out)}
+    return bytes(out), {**size_info, "trim": trim, "pages": pages, "paper": paper, "palette": palette, "motif": motif, "bytes": len(out)}
 
 
 def save(folder, name, **fields):

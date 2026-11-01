@@ -25,7 +25,12 @@ STYLES = {
     "workout": ("Workout log (date, exercise, sets, reps, weight)", "table", 0.3),
     "blood_pressure": ("Blood pressure log (date, time, systolic, diastolic, pulse)", "table", 0.3),
     "weekly": ("Undated weekly planner (seven days and notes)", "week", 9 / 32),
+    "draw_write": ("Draw-and-write pages for kids (picture box over handwriting lines)", "draw", 0.0),
+    "gratitude": ("Daily gratitude pages (three prompts)", "prompts", 9 / 32),
+    "large_print": ("Large-print lined pages (wide, dark lines)", "big_lines", 0.5),
 }
+# Daily gratitude page: the prompts, written for Cerebra, and how many lines each gets.
+GRATITUDE = (("TODAY I AM GRATEFUL FOR", 3), ("SOMETHING GOOD THAT HAPPENED", 3), ("TOMORROW I WANT TO", 2))
 # Logbooks: the title printed on each page and the columns, with their relative widths. The mileage log keeps what the
 # IRS asks a business-mileage record to show: the date, the miles and the business purpose.
 TABLES = {
@@ -98,11 +103,59 @@ def _week(x0, x1, y0, y1, step):
     return "\n".join(parts)
 
 
+def _draw_write(x0, x1, y0, y1):
+    """A picture box on top, then handwriting lines: a solid top line, a dashed middle line and a solid baseline."""
+    box_bottom = y0 + (y1 - y0) * 0.5
+    parts = [f"{_number(GRAY - 0.15)} G 1 w {_number(x0)} {_number(box_bottom)} {_number(x1 - x0)} {_number(y1 - box_bottom)} re S"]
+    row, gap, y = 0.5 * POINTS, 0.18 * POINTS, box_bottom - 0.3 * POINTS
+    while y - row >= y0:
+        parts.append(f"{GRAY} G 0.6 w [] 0 d {_number(x0)} {_number(y)} m {_number(x1)} {_number(y)} l S "
+                     f"[3 3] 0 d {_number(x0)} {_number(y - row / 2)} m {_number(x1)} {_number(y - row / 2)} l S "
+                     f"[] 0 d {_number(GRAY - 0.25)} G 0.8 w {_number(x0)} {_number(y - row)} m {_number(x1)} {_number(y - row)} l S")
+        y -= row + gap
+    return "\n".join(parts + ["[] 0 d"])
+
+
+def _prompts(x0, x1, y0, y1, step):
+    """A daily page: a date line, then each prompt with its lines."""
+    parts = [_text("DATE", x0, y1 - 8, 8), f"{GRAY} G {WIDTH} w {_number(x0 + strokefont.width('DATE', 8) + 6)} {_number(y1 - 8)} m {_number(x0 + (x1 - x0) * 0.45)} {_number(y1 - 8)} l S"]
+    y = y1 - 8 - 26
+    for prompt, lines in GRATITUDE:
+        parts.append(_text(prompt, x0, y, 7.5, limit=x1 - x0))
+        y -= 8
+        for number in range(lines):
+            y -= step * 1.25
+            parts.append(_text(str(number + 1) + ".", x0, y + 2, 6.5) if lines == 3 else "")
+            parts.append(f"{GRAY} G {WIDTH} w {_number(x0 + 12)} {_number(y)} m {_number(x1)} {_number(y)} l S")
+        y -= 24
+    rules = [f"{GRAY} G {WIDTH} w"]  # the rest of the page: free lines for anything else
+    y -= step * 0.5
+    while y >= y0:
+        rules.append(f"{_number(x0)} {_number(y)} m {_number(x1)} {_number(y)} l")
+        y -= step
+    return "\n".join([part for part in parts if part] + [" ".join(rules) + " S"])
+
+
+def _quote(text, x0, x1):
+    """A short line at the foot of the page, inside KDP's margin (at least 0.25 in from the edge)."""
+    return _text(text, (x0 + x1 - min(strokefont.width(text, 6), x1 - x0)) / 2, 0.3 * POINTS, 6, limit=x1 - x0).encode("ascii")
+
+
 def _page_stream(width, height, left, right, style):
     """Drawing operators for one page, in points, inside the margins."""
     label, kind, spacing = STYLES[style]
     x0, x1, y0, y1 = left * POINTS, (width - right) * POINTS, BOTTOM * POINTS, (height - TOP) * POINTS
     step = spacing * POINTS
+    if kind == "draw":
+        return _draw_write(x0, x1, y0, y1).encode("ascii")
+    if kind == "prompts":
+        return _prompts(x0, x1, y0, y1, step).encode("ascii")
+    if kind == "big_lines":
+        parts, y = [f"{_number(GRAY - 0.25)} G 0.9 w"], y1
+        while y >= y0:
+            parts.append(f"{_number(x0)} {_number(y)} m {_number(x1)} {_number(y)} l")
+            y -= step
+        return ("\n".join(parts) + " S").encode("ascii")
     if kind == "table":
         return _table(x0, x1, y0, y1, step, style).encode("ascii")
     if kind == "week":
@@ -143,9 +196,10 @@ def _page_stream(width, height, left, right, style):
 PRINTABLE_PAGES = 30  # a home-printed download: a few pages the buyer prints as often as they like
 
 
-def build(style, trim, pages, paper="white", printable=False):
+def build(style, trim, pages, paper="white", printable=False, quotes=None):
     """The interior PDF (bytes) and what it is. Raises ValueError for anything KDP won't print.
-    printable=True makes the same pages for printing at home (an Etsy download): US Letter, even margins, no binding."""
+    printable=True makes the same pages for printing at home (an Etsy download): US Letter, even margins, no binding.
+    quotes: short lines printed at the foot of the pages in turn (drawn as strokes too), one per page."""
     if style not in STYLES:
         raise ValueError("Choose one of: " + ", ".join(label for label, _kind, _space in STYLES.values()))
     pages = int(pages)
@@ -167,11 +221,19 @@ def build(style, trim, pages, paper="white", printable=False):
     objects = [b"<< /Type /Catalog /Pages 2 0 R >>", None,
                b"<< /Length %d >>\nstream\n" % len(right_hand) + right_hand + b"\nendstream",
                b"<< /Length %d >>\nstream\n" % len(left_hand) + left_hand + b"\nendstream"]
+    quotes = [line for line in (quotes or []) if strokefont.width(line, 6)]
+    quote_objects = {}
+    for index, line in enumerate(quotes):  # each quote once per side; pages point at them in turn
+        for side, (left, right) in (("odd", (gutter, OUTSIDE)), ("even", (OUTSIDE, gutter))):
+            stream = _quote(line, left * POINTS, (width - right) * POINTS)
+            objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+            quote_objects[(index, side)] = len(objects)
     kids = []
     for number in range(1, pages + 1):
         kids.append(f"{len(objects) + 1} 0 R")
         content = 3 if number % 2 else 4
-        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox {media} /TrimBox {media} /Contents {content} 0 R /Resources << >> >>".encode("ascii"))
+        contents = f"[{content} 0 R {quote_objects[((number - 1) % len(quotes), 'odd' if number % 2 else 'even')]} 0 R]" if quotes else f"{content} 0 R"
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox {media} /TrimBox {media} /Contents {contents} /Resources << >> >>".encode("ascii"))
     objects[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {pages} >>".encode("ascii")
 
     out, offsets = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"), []

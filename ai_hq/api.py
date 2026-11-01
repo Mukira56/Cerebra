@@ -1324,6 +1324,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
+    # ---- collections for every age group: interiors, covers and complete listings, ready to upload ----
+    from . import agegroups
+
+    @app.get("/api/books/collection")
+    def books_collection():
+        with db.Session() as session:
+            return {"groups": agegroups.overview(session)}
+
+    @app.post("/api/books/collection")
+    def books_collection_make(payload: dict):
+        with db.Session.begin() as session:
+            made = agegroups.make(session, interiors_folder, payload.get("group") or None)
+        return {"made": made, "message": f"Made {len(made)} book(s): pages, cover and listing. They wait in Books, ready to upload." if made
+                else "Every book in this collection is already made."}
+
     @app.post("/api/books/niche-check")
     def books_niche_check(payload: dict):
         return notebooks_module.niche_check(db.Session, commerce, payload.get("theme"))

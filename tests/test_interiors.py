@@ -173,3 +173,39 @@ def test_every_proven_idea_is_a_book_kdp_will_print(client):  # noqa: F811
     for idea in ideas:
         assert idea["style"] in interiors.STYLES and books.check_format(idea["trim"], idea["pages"]) is None and idea["why"]
         interiors.build(idea["style"], idea["trim"], idea["pages"])  # draws without error
+
+
+def test_every_age_group_gets_original_books_ready_to_upload_with_its_own_look_and_lines(client):  # noqa: F811
+    from ai_hq import agegroups, covers, notebooks, strokefont
+    groups = client.get("/api/books/collection").json()["groups"]
+    assert [group["key"] for group in groups] == ["kids", "tweens", "teens", "young_adults", "adults", "seniors"]
+    assert len({group["palette"] for group in groups}) == 6 and len({group["motif"] for group in groups}) == 6  # a different look for each
+    for key, group in agegroups.GROUPS.items():
+        assert len(group["quotes"]) >= 6 and all(set(line.upper()) <= set(strokefont.GLYPHS) for line in group["quotes"])
+        assert group["motif"] in covers.MOTIFS
+        for spec in group["books"]:
+            assert agegroups.listing(key, spec)["checks"] == [] and spec["style"] in interiors.STYLES
+    every = [line for group in agegroups.GROUPS.values() for line in group["quotes"]]
+    assert len(every) == len(set(every))  # each line written for one age group
+    made = client.post("/api/books/collection", json={"group": "kids"}).json()
+    assert [item["title"] for item in made["made"]] == ["Draw and Write Journal for Kids", "My Gratitude Journal for Kids"]
+    folder = client.app.state.settings.data_dir / "books" / "interiors"
+    book = next(item for item in client.get("/api/books").json()["books"] if item["title"] == "Draw and Write Journal for Kids")
+    data = (folder / book["interior"]).read_bytes()
+    assert b"/Font" not in data and data.count(b"/Contents [") == book["pages"]  # every page: its design, and a line at its foot
+    assert (folder / book["cover"]).is_file() and book["cover_palette"] == "sky" and book["status"] == "files_ready"
+    assert book["listing"]["keywords"] and len(book["listing"]["keywords"]) == notebooks.KEYWORDS and "AI assistant" in book["ai_question"]
+    again = client.post("/api/books/collection", json={}).json()
+    assert len(again["made"]) == 10 and client.post("/api/books/collection", json={}).json()["made"] == []  # each book is made once
+    assert client.post("/api/books/collection", json={"group": "aliens"}).status_code == 400
+
+
+def test_the_new_page_designs_and_cover_patterns_draw():
+    from ai_hq import covers
+    for style in ("draw_write", "gratitude", "large_print"):
+        data, info = interiors.build(style, "8.5x11", 24, quotes=["ONE PAGE AT A TIME"])
+        assert b"/Font" not in data and info["pages"] == 24
+    for motif in covers.MOTIFS:
+        assert b"/Font" not in covers.build("Notes", trim="6x9", pages=100, motif=motif)[0]
+    with pytest.raises(ValueError, match="pattern"):
+        covers.build("Notes", trim="6x9", pages=100, motif="glitter")
