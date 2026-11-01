@@ -219,3 +219,17 @@ def test_emailed_businesses_leave_worth_contacting_and_show_their_progress(clien
     state.outreach.tick()
     sent = client.get("/api/outreach/sent").json()
     assert sent[0]["stage"] == "replied" and sent[0]["reply"]["snippet"] == "Yes, call me Friday." and sent[0]["next_at"] == ""
+
+
+def test_prospects_use_the_gmail_from_business_connections_and_say_when_it_cant_send(client):  # noqa: F811
+    from ai_hq.prospects import footer
+    state = setup(client, can_send=False)
+    sender = client.get("/api/outreach").json()["sender"]
+    assert sender == {"configured": True, "connected": True, "email": "owner@gmail.example", "can_send": False}  # read-only until Google allows sending
+    client.put("/api/money/settings", json={"email": ""})
+    with state.db.Session() as session:
+        assert "owner@gmail.example" in footer(session)[0]  # no business email set: the Gmail it's sent from goes in the footer
+    with state.db.Session.begin() as session:
+        row = session.get(Metadata, "gmail_oauth")
+        row.value = {**row.value, "can_send": True}
+    assert client.get("/api/outreach").json()["sender"]["can_send"] is True

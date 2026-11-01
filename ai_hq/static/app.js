@@ -1378,6 +1378,15 @@
                           opted_out: ["said no: never again", "muted"], bounced: ["bounced", "red"], drafting: ["writing", "cyan"]};
   const SENT_FILTERS = {all: "All", waiting: "Waiting for an answer", replied: "Replied", said_no: "Said no or bounced"};
   let sentFilter = "all";
+  function senderLine(sender) {
+    // Which Gmail the emails go out from (the one set up in Business connections), and one click to allow sending.
+    const allow = label => button(label, () => act(result => result.message, () => mutate("/api/business/gmail/authorize")), "button small primary");
+    if (!sender?.configured) return append(el("div", "action-card"), el("strong", "", "Emails go out from your Gmail"), hint("Set up Gmail in Business connections first (it takes about 10 minutes, once)."), actionsRow(link("Business connections →", "connections")));
+    if (!sender.connected) return append(el("div", "action-card"), el("strong", "", "Gmail isn't connected"), hint("Connect it, and allow reading and sending."), actionsRow(allow("Connect Gmail…")));
+    if (!sender.can_send) return append(el("div", "action-card"), append(el("div", "row-meta"), badge("read-only", "amber"), el("strong", "", ` ${sender.email}`)),
+      hint("This Gmail can read but not send yet. Press Allow sending: Google's page opens; sign in as this account and allow sending email. Then refresh this page."), actionsRow(allow("Allow sending…")));
+    return append(el("div", "row-meta"), badge("reads and sends", "green"), el("span", "", ` Sending from ${sender.email} (your Gmail in Business connections)`));
+  }
   function sentPanel() {
     const root = el("div");
     root.append(el("p", "row-meta", "Loading…"));
@@ -1422,7 +1431,7 @@
       [["Emailed today", `${state.sent_today} of ${rules.per_day}`, "first emails and follow-ups", "blue"], ["Waiting for an answer", (counts.sent || 0) + (counts.followed_up || 0), "follow-ups are automatic", "amber"],
        ["Replied", counts.replied || 0, "your turn: answer them", "green"], ["Said no", (counts.opted_out || 0) + (counts.bounced || 0), "never written to again", "muted"]]
         .forEach(([label, value, note, style]) => summary.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
-      append(root.replaceChildren() || root, summary,
+      append(root.replaceChildren() || root, senderLine(state.sender), summary,
         array(state.ready).length ? append(el("div"), el("h4", "", "Before it can start"), append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))), actionsRow(link("Business connections →", "connections"), link("Money › Your business →", "money"))) : null,
         state.status?.message ? hint(`Last run ${state.status.at ? date(state.status.at) : ""}: ${state.status.message}`, state.status.state === "error") : null,
         hint("Draft mode: new businesses get their email written for you; open one below (Worth contacting), edit anything and press Send. Send mode sends them too. Either way, what it does: finds independent businesses in your cities (Prospects searches), reads each one's website for problems you can fix and its public email, has your AI write a short email in your voice about only what it saw, sends it from your Gmail, and follows up in the same thread when there's no answer. It stops the moment someone replies and tells you; anyone who says no, or whose address bounces, is never written to again. Every email carries your name, postal address and an opt-out line, as US law (CAN-SPAM) requires. Emails go out on weekdays in business hours, a few at a time."));
@@ -1470,6 +1479,8 @@
     const draft = button(item.opener ? "Draft again" : "Draft a first email", () => act(result => result.missing?.length ? "Drafted. Add the missing details before sending." : "Drafted. Read it before you send it.",
       () => mutate(`/api/prospects/${item.id}/opener`, {}, "POST", 300000)).then(result => { if (result) { opener.value = result.opener; prospectSender = result.missing; } }), "button");
     const copy = button("Copy", () => navigator.clipboard.writeText(opener.value).then(() => toast("Copied. Paste it into your email.")), "button ghost");
+    const sender = el("div");
+    api("/api/outreach").then(state => sender.replaceChildren(senderLine(state.sender))).catch(() => {});
     const to = input("their email address", item.email || ""), followUp = check("Follow up automatically if they don't answer (stops when they reply)", true); to.type = "email";
     if (!item.email && item.website) { to.placeholder = "Looking for their email on their website…";
       api(`/api/prospects/${item.id}/email`).then(found => { if (found.email && !to.value) to.value = found.email; else if (!found.email) to.placeholder = "No email on their site: type one you know, or call them"; to.dispatchEvent(new Event("input")); }).catch(() => {}); }
@@ -1482,7 +1493,7 @@
     append(root, kv([["Business", item.kind_label], ["Where", [item.address, `${item.city}, ${item.state}`].filter(Boolean).join(", ")], ["Website", item.website || "None listed"], ["Phone", item.phone || "Not listed"]]),
       el("h3", "", "What Cerebra saw"), array(item.facts).length ? facts : hint(item.notes || "No issue seen on the home page."),
       append(el("div", "form-grid"), field("Status", status)), field("Notes", notes),
-      el("h3", "", "First email"), field("To", to), opener, followUp.wrap,
+      el("h3", "", "First email"), sender, field("To", to), opener, followUp.wrap,
       missing.length ? hint(`Before sending, add ${missing.join(" and ")} in Money › Your business details.`, true) : null,
       hint("Read it, change anything, then press Send: it goes from your Gmail exactly as written. In the US, cold emails need your real postal address and a way to opt out (CAN-SPAM); Cerebra keeps both in, and never writes again to anyone who says no."),
       actionsRow(array(item.facts).length ? draft : null, copy, ["contacted", "replied", "won", "lost"].includes(item.status) ? null : send,

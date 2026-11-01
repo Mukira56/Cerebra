@@ -523,7 +523,10 @@ class Outreach:
         counts = {}
         for stage in session.scalars(select(Outbox.stage)).all():
             counts[stage] = counts.get(stage, 0) + 1
+        from . import gmail as gmail_module
+        mail = gmail_module.public(gmail_module.load(session))
         return {"settings": settings(session), "ready": self.ready(session), "can_send": self.can_send(session), "status": dict(self.status), "counts": counts,
+                "sender": {"configured": mail["configured"], "connected": mail["connected"], "email": mail["email"], "can_send": mail["can_send"]},
                 "sent_today": self.sent_today(session), "max_per_day": MAX_PER_DAY,
                 "recent": [{"id": row.id, "prospect_id": row.prospect_id, "name": names.get(row.prospect_id, ""), "email": row.email, "stage": row.stage,
                             "emails": len(row.emails or []), "next_at": row.next_at, "reply": row.reply or {}, "updated_at": row.updated_at}

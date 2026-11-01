@@ -2304,7 +2304,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def gmail_callback(state: str = "", code: str = ""):
         from fastapi.responses import PlainTextResponse
         mailbox.finish(state, code)
-        return PlainTextResponse("Gmail connected to Cerebra with read-only access. Return to the Cerebra window.", headers={"Cache-Control": "no-store"})
+        with db.Session() as session:
+            sends = gmail.public(gmail.load(session))["can_send"]
+        return PlainTextResponse("Gmail connected to Cerebra: it can read and send. Return to the Cerebra window." if sends else
+                                 "Gmail connected to Cerebra read-only (sending wasn't allowed). To email businesses from Prospects, connect again and allow sending.",
+                                 headers={"Cache-Control": "no-store"})
 
     @app.get("/api/business/gmail/messages")
     def gmail_messages(query: str = "newer_than:7d", limit: int = 10):
