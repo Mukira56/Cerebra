@@ -1240,7 +1240,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.get("/api/books/interiors")
     def books_interiors():
         files = sorted(interiors_folder.glob("*.pdf"), key=lambda path: path.stat().st_mtime, reverse=True) if interiors_folder.is_dir() else []
-        return {"styles": {key: label for key, (label, _kind, _space) in interiors_module.STYLES.items()}, "trims": list(books_module.PAPERBACK_TRIMS),
+        from .notebooks import IDEAS
+        return {"styles": {key: label for key, (label, _kind, _space) in interiors_module.STYLES.items()}, "trims": list(books_module.PAPERBACK_TRIMS), "ideas": list(IDEAS),
                 "folder": str(interiors_folder), "files": [{"file": path.name, "bytes": path.stat().st_size} for path in files[:20]]}
 
     @app.post("/api/books/interiors")

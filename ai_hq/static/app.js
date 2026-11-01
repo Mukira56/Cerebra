@@ -1601,6 +1601,11 @@
         {theme: theme.value, style: style.value, trim: trim.value, pages: Number(pages.value || 120), paper: paper.value}, "POST", 300000))
         .then(book => { if (book) { toast(book.listing.checks.length ? "Made. Fix what the checks found before uploading." : "Ready to upload: it waits in Your calls."); render(); notebookDialog(book); } }), "button primary");
       pages.min = 24; pages.max = 828;
+      const ideas = append(el("div", "idea-chips"), ...array(state.ideas).map(idea => { const chip = button(idea.theme, () => {
+          theme.value = idea.theme; style.value = idea.style; trim.value = idea.trim; pages.value = idea.pages;
+          out.replaceChildren(hint(`${idea.why}. Next: Check the niche, then Make it a book. It makes the pages, the cover and the listing; you upload them to KDP.`)); }, "button small ghost");
+        chip.title = idea.why; return chip; }));
+      append(form, array(state.ideas).length ? append(el("div"), el("h4", "", "Start with a proven idea"), ideas) : null);
       append(form, hint("The inside pages of a notebook, journal, logbook or planner: drawn by code, so Amazon's AI question is No for them. Headings are drawn as lines, not typed in a font, so KDP's font check can't fail. Pick a trim, then add a cover."),
         append(el("div", "form-grid"), field("Pages", style), field("Trim size", trim), field("Page count", pages), field("Paper", paper)),
         field("Who it's for (to make it a book)", theme, "Your AI writes the title, subtitle, description and 7 keywords for this; Cerebra checks KDP's limits."),

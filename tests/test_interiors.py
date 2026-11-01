@@ -164,3 +164,12 @@ def test_a_book_becomes_an_etsy_printable_with_its_listing_on_the_etsy_page(clie
     assert "Only notebooks" in client.post("/api/books/b2/etsy", json={}).json()["detail"]
     assert client.post("/api/books/nope/etsy", json={}).status_code == 404
     assert client.post("/api/books/b1/etsy", json={"pages": 40}).status_code == 400
+
+
+def test_every_proven_idea_is_a_book_kdp_will_print(client):  # noqa: F811
+    from ai_hq import books
+    ideas = client.get("/api/books/interiors").json()["ideas"]
+    assert len(ideas) >= 6 and len({idea["style"] for idea in ideas}) == len(ideas)  # one of each kind
+    for idea in ideas:
+        assert idea["style"] in interiors.STYLES and books.check_format(idea["trim"], idea["pages"]) is None and idea["why"]
+        interiors.build(idea["style"], idea["trim"], idea["pages"])  # draws without error

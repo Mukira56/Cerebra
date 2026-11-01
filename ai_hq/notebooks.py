@@ -119,6 +119,18 @@ def niche_check(session_factory, commerce, theme):
     return result
 
 
+# Low-content books that sell steadily in the US, each with the layout, trim and page count buyers expect. A starting point
+# for a first book: "Check the niche" still reads the current demand before anything is made.
+IDEAS = (
+    {"theme": "mileage log book for taxes", "style": "mileage", "trim": "6x9", "pages": 120, "why": "Small-business owners and drivers keep one for the IRS every year"},
+    {"theme": "blood pressure log book", "style": "blood_pressure", "trim": "6x9", "pages": 110, "why": "Doctors ask patients to track it; bought again when full"},
+    {"theme": "reading journal for book lovers", "style": "reading", "trim": "6x9", "pages": 120, "why": "A popular gift for readers"},
+    {"theme": "workout log book", "style": "workout", "trim": "6x9", "pages": 120, "why": "New Year and gym starters buy them every January"},
+    {"theme": "undated weekly planner", "style": "weekly", "trim": "8.5x11", "pages": 110, "why": "Starts any week of the year, so it never goes out of date"},
+    {"theme": "dot grid journal for bullet journaling", "style": "dot", "trim": "6x9", "pages": 120, "why": "Steady demand from journaling hobbyists"},
+    {"theme": "graph paper notebook for math and science", "style": "graph", "trim": "8.5x11", "pages": 120, "why": "Students buy them every school term"},
+    {"theme": "college ruled composition notebook", "style": "college", "trim": "7.5x9.25", "pages": 100, "why": "The classic US school notebook size"},
+)
 ETSY_PRICE = 4.50  # a single printable log or planner usually sells for a few dollars on Etsy
 
 
