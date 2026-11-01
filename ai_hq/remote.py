@@ -7,6 +7,7 @@ records, and the buttons act on them:
   /drafts    the next drafted business email, with Send, Skip and Next buttons (Send goes from the owner's Gmail)
   /replies   businesses that answered, newest first
   /sent      where the emailed businesses stand
+  /jobs      the best new freelance matches: write a proposal, open the post, or hide (and bid, on Freelancer.com)
   /books     KDP books ready to upload
   /money     earned this month and what's owed
   /outreach  run a round of outreach now (find, draft or send, follow up, check replies)
@@ -28,14 +29,15 @@ HELP = ("Cerebra on your phone:\n"
         "/drafts - drafted business emails: send or skip with one tap\n"
         "/replies - businesses that answered\n"
         "/sent - where emailed businesses stand\n"
+        "/jobs - the best new freelance jobs: proposal with one tap\n"
         "/books - KDP books ready to upload\n"
         "/money - this month's money\n"
         "/outreach - run a round of outreach now")
 
 
 class Remote:
-    def __init__(self, db, notifier, outreach):
-        self.db, self.notifier, self.outreach = db, notifier, outreach
+    def __init__(self, db, notifier, outreach, drafter=None, bidder=None):
+        self.db, self.notifier, self.outreach, self.drafter, self.bidder = db, notifier, outreach, drafter, bidder
         self._stop, self._thread = threading.Event(), None
 
     # ---- Telegram ----
@@ -53,7 +55,8 @@ class Remote:
     def say(self, settings, text, buttons=None):
         payload = {"chat_id": settings["chat"], "text": text[:4000], "disable_web_page_preview": True}
         if buttons:
-            payload["reply_markup"] = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in row] for row in buttons]}
+            payload["reply_markup"] = {"inline_keyboard": [[{"text": label, "url": data} if data.startswith("https://") else {"text": label, "callback_data": data}
+                                                            for label, data in row] for row in buttons]}
         return self._call(settings, "sendMessage", **payload)
 
     def poll(self, wait=25):
@@ -95,6 +98,12 @@ class Remote:
                 return self.show_draft(settings, after=value)
             if action == "ans":
                 return self.send_reply_answer(settings, value)
+            if action == "prop":
+                return self.write_proposal(settings, value)
+            if action == "hide":
+                return self.hide_job(settings, value)
+            if action == "bid":
+                return self.send_bid(settings, value)
             if action == "redo":
                 self.outreach.draft_answer(value)
                 return self.replies(settings)
@@ -103,7 +112,7 @@ class Remote:
         if str(message.get("chat", {}).get("id")) != settings["chat"]:
             return 0  # strangers get no reply at all
         command = str(message.get("text") or "").strip().split()[0].lower().split("@")[0] if message.get("text") else ""
-        handlers = {"/status": self.status, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/books": self.books,
+        handlers = {"/status": self.status, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/jobs": self.jobs, "/books": self.books,
                     "/money": self.money, "/outreach": self.run_outreach}
         handler = handlers.get(command)
         if handler is None:
@@ -210,6 +219,64 @@ class Remote:
         lines = [f"{words.get(stage, stage)}: {count}" for stage, count in counts.items()]
         recent = [f"- {item['name']}: {words.get(item['stage'], item['stage'])}" for item in items[:6]]
         self.say(settings, f"Emailed {len(items)} business(es)\n" + "\n".join(lines) + "\n\nLatest:\n" + "\n".join(recent))
+        return 1
+
+    # ---- freelance jobs ----
+    def jobs(self, settings):
+        """The best new matches, one message each, with buttons."""
+        from .models import FreelanceLead
+        with self.db.Session() as session:
+            rows = session.scalars(select(FreelanceLead).where(FreelanceLead.status == "new").order_by(FreelanceLead.score.desc(), FreelanceLead.posted_at.desc()).limit(5)).all()
+            items = [{"id": row.id, "title": row.title, "source": row.source, "score": row.score, "url": row.url,
+                      "budget": f"{row.currency or 'USD'} {row.budget_min:,.0f}–{row.budget_max:,.0f}" if row.budget_max else "budget not given",
+                      "about": " ".join(str(row.description or "").split())[:300]} for row in rows]
+        if not items:
+            self.say(settings, "No new matches right now. Cerebra keeps searching and tells you when strong ones appear.")
+            return 1
+        for item in items:
+            buttons = [("Write proposal", f"prop:{item['id']}"), ("Hide", f"hide:{item['id']}")] if len(item["id"]) <= 58 else []
+            if item["url"].startswith("https://"):
+                buttons.append(("Open ↗", item["url"]))
+            self.say(settings, f"{item['title']}\n{item['source']} · score {item['score']} · {item['budget']}\n\n{item['about']}", buttons=[buttons] if buttons else None)
+        return 1
+
+    def write_proposal(self, settings, lead_id):
+        from .models import FreelanceLead
+        if self.drafter is None:
+            self.say(settings, "Proposals aren't available here.")
+            return 1
+        self.say(settings, "Writing your proposal (about a minute)…")
+        self.drafter.start(lead_id, wait=True)
+        with self.db.Session() as session:
+            row = session.get(FreelanceLead, lead_id)
+            proposal, source, url, title = dict(row.proposal or {}), row.source, row.url, row.title
+        if proposal.get("status") != "ready":
+            self.say(settings, f"The proposal couldn't be written: {proposal.get('error') or 'try again'}")
+            return 1
+        terms = " · ".join(part for part in (f"price {proposal['price']:g}" if proposal.get("price") else "", f"{proposal['days']} day(s)" if proposal.get("days") else "") if part)
+        buttons = []
+        if source == "freelancer" and self.bidder is not None and self.bidder.status()["connected"] and proposal.get("price") and proposal.get("days"):
+            buttons.append(("Send bid on Freelancer.com", f"bid:{lead_id}"))
+        if url.startswith("https://"):
+            buttons.append(("Open the job ↗", url))
+        self.say(settings, f"Proposal for {title}{f' ({terms})' if terms else ''}:\n\n{proposal.get('text', '')[:3300]}\n\n"
+                           + ("Press Send bid, or open the job and paste it." if buttons and buttons[0][1].startswith("bid:") else "Copy it, open the job and apply."),
+                 buttons=[buttons] if buttons else None)
+        return 1
+
+    def send_bid(self, settings, lead_id):
+        if self.bidder is None:
+            return 0
+        self.say(settings, self.bidder.bid(lead_id, confirmed=True)["message"])
+        return 1
+
+    def hide_job(self, settings, lead_id):
+        from .models import FreelanceLead
+        with self.db.Session.begin() as session:
+            row = session.get(FreelanceLead, lead_id)
+            if row is not None and row.status == "new":
+                row.status = "hidden"
+        self.say(settings, "Hidden.")
         return 1
 
     def books(self, settings):

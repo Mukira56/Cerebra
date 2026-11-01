@@ -120,3 +120,31 @@ def test_a_reply_gets_an_answer_drafted_and_sent_with_one_tap_and_the_conversati
     robot.tick()
     again = client.get("/api/outreach/sent").json()[0]
     assert again["stage"] == "replied" and again["reply"]["snippet"] == "Great, Thursday at 2pm works." and again["reply"]["draft"]  # the conversation continues
+
+
+def test_the_best_new_jobs_come_to_the_phone_with_a_proposal_one_tap_away(client):  # noqa: F811
+    from ai_hq.models import FreelanceLead
+    from test_autoapply import Model
+    from test_product_api import enable_agents
+    enable_agents(client)
+    client.app.state.supervisor.registry = Model()
+    bot = phone(client)
+    with client.app.state.db.Session.begin() as session:
+        session.add_all([FreelanceLead(id="remotive:1", source="remotive", title="React dashboard for a clinic", url="https://remotive.example/jobs/1",
+                                       description="Build a booking dashboard in React.", score=88, status="new", budget_min=800, budget_max=1500, currency="USD"),
+                         FreelanceLead(id="remotive:2", source="remotive", title="Logo for a bakery", url="https://remotive.example/jobs/2",
+                                       description="A simple logo.", score=40, status="new")])
+    bot.message(OWNER, "/jobs")
+    client.app.state.remote.poll(wait=0)
+    first = bot.said[0]
+    assert first["text"].startswith("React dashboard for a clinic") and "score 88" in first["text"] and "USD 800–1,500" in first["text"]  # best first
+    labels = [button.get("callback_data") or button.get("url") for button in first["reply_markup"]["inline_keyboard"][0]]
+    assert labels == ["prop:remotive:1", "hide:remotive:1", "https://remotive.example/jobs/1"]
+    bot.tap(OWNER, "prop:remotive:1")
+    client.app.state.remote.poll(wait=0)
+    assert "Here is how I would do it" in bot.said[-1]["text"] and "Copy it, open the job" in bot.said[-1]["text"]
+    bot.tap(OWNER, "hide:remotive:2")
+    client.app.state.remote.poll(wait=0)
+    with client.app.state.db.Session() as session:
+        assert session.get(FreelanceLead, "remotive:2").status == "hidden"
+        assert session.get(FreelanceLead, "remotive:1").proposal["status"] == "ready"

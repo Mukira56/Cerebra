@@ -1548,7 +1548,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     outreach = outreach_module.Outreach(db, settings, mailbox, prospect_writer, prospector, notifier)
     app.state.outreach = outreach
     from .remote import Remote
-    app.state.remote = Remote(db, notifier, outreach)
+    app.state.remote = Remote(db, notifier, outreach, drafter, bidder)
     registry.add("outreach", "Email local businesses", "Finds US businesses in your cities, reads their websites, emails them about what you saw and follows up, "
                  "within your daily number on weekdays; stops on any reply and never writes again to anyone who says no (Prospects › Automatic outreach).",
                  outreach.tick, 15, outward=True)
