@@ -1,5 +1,5 @@
 """From a theme to a KDP notebook ready to upload: the interior PDF (drawn by code), the listing written by the owner's AI and
-checked in code, and a Book marked "files ready" so it waits in Your calls (docs/ETSY_AMAZON_PLAN.md, phase 4).
+checked in code, and a Book marked "files ready" so it waits in Your calls.
 
 KDP has no publishing API: the owner uploads, makes the cover in KDP's free Cover Creator, answers Amazon's AI question
 and clicks Publish. Limits below come from KDP's listing fields as sellers report them (2026): check KDP's own page when

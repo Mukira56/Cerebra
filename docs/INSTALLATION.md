@@ -58,7 +58,7 @@ For backup, stop Cerebra first, then copy the application and its complete data 
 
 ## Missing agents
 
-Doctor reports absent agents as warnings; tasks cannot run until they are installed and signed in. Run doctor for the current installed versions; `environment-report.md` preserves the original inspection and the progress record tracks later changes. Do not install external software or start provider login without explicit user approval. Node.js/npm are not required by this dashboard itself.
+Doctor reports absent agents as warnings; tasks cannot run until they are installed and signed in. Run doctor for the current installed versions. Do not install external software or start provider login without explicit user approval. Node.js/npm are not required by this dashboard itself.
 
 To configure an already installed CLI, enter its executable path in **Settings**, save, and run doctor again. Doctor probes versions and supported help output without extracting provider credentials. Paths do not enable live mode. The dashboard distinguishes capabilities, effective execution policy, and authentication; a detected executable is not a successful live run.
 

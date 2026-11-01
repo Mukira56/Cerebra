@@ -1,5 +1,5 @@
 """The model hub: each kind of work routed to a model, using only what costs the owner nothing extra: their own Claude and
-Codex accounts, and free models (docs/MODELS_AND_HIVE.md). Every call is on the record.
+Codex accounts, and free models. Every call is on the record.
 
 The owner (2026-10-30): "Use the free models do not use a route that I will be required to pay for premium services unless it
 is for Claude or Codex." So the hub refuses any OpenRouter model with a price, and never uses paid extras such as web search.

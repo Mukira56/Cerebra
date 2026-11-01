@@ -1,5 +1,5 @@
 """The decision committee: before Cerebra spends a bid or the owner's time on a job, five roles look at it, in the way an
-investment committee looks at a trade (docs/QUANT_DESIGNS.md, from the TradingAgents and ai-hedge-fund designs).
+investment committee looks at a trade (after the TradingAgents and ai-hedge-fund designs).
 
 1. An analyst sizes up the fit: the owner's skills against what the client asks, the scope, and any red flags.
 2. A bull makes the best honest case for bidding, and 3. a bear the best case against (models from different companies,

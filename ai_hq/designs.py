@@ -1,4 +1,4 @@
-"""Text designs for shirts, mugs and other print-on-demand products, drawn by code (docs/ETSY_AMAZON_PLAN.md, phase 5).
+"""Text designs for shirts, mugs and other print-on-demand products, drawn by code.
 
 A short phrase in the stroke alphabet (ai_hq/strokefont.py), rendered to a transparent PNG at 4500 x 5400 pixels and 300 DPI:
 the size Amazon Merch on Demand asks for, which Printify and other print providers accept too. Pure Python, no image

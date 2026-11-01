@@ -419,7 +419,7 @@ class EtsyListing(Base):
 
 class EtsySaleLine(Base):
     """One item in a paid Etsy order: which listing sold, how many and for how much, so sales can be traced back to the
-    listing and niche Cerebra made them from (docs/ETSY_AMAZON_PLAN.md, phase 3). Replaced on every import of its order."""
+    listing and niche Cerebra made them from. Replaced on every import of its order."""
     __tablename__ = "etsy_sale_lines"
     id: Mapped[str] = mapped_column(String, primary_key=True)  # Etsy's transaction ID
     receipt_id: Mapped[str] = mapped_column(String, index=True)

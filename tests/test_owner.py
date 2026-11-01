@@ -1,5 +1,5 @@
 """About you: the owner's details reach Support, the Council and coding runs (only while sharing is on).
-The owner asked Support to finish their portfolio "with my GitHub, LinkedIn and email", and Cerebra had none of them."""
+Support can fill in a portfolio from the owner's GitHub, LinkedIn and email."""
 import time
 
 import pytest

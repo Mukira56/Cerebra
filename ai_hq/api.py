@@ -1173,7 +1173,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     scheduler = chief.Scheduler(db, registry)
     app.state.chief, app.state.registry = scheduler, registry
 
-    # ---- Etsy: what sells and how crowded it is, from Etsy's public listings (docs/ETSY_AMAZON_PLAN.md) ----
+    # ---- Etsy: what sells and how crowded it is, from Etsy's public listings ----
     from . import etsy as etsy_module
     from .models import EtsyNiche
 
@@ -1252,7 +1252,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             session.delete(row)
         return {"deleted": niche_id}
 
-    # ---- Books: short nonfiction for Amazon KDP (docs/BOOKS_PLAN.md) ----
+    # ---- Books: short nonfiction for Amazon KDP ----
     from . import books as books_module
     from . import interiors as interiors_module
     interiors_folder = settings.data_dir / "books" / "interiors"

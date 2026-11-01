@@ -1,6 +1,6 @@
 """Books: short nonfiction books for Amazon KDP, from a niche to an upload package to the royalties they earn.
 
-Phase 1 of docs/BOOKS_PLAN.md: KDP's numbers (each with the help page it came from), the money and cover maths, niches
+KDP's numbers (each with the help page it came from), the money and cover maths, niches
 scored from the evidence the owner has (never guessed), and books with their formats and prices.
 
 KDP has no publishing API, and driving its website with a bot would risk the owner's account: Cerebra prepares the

@@ -165,7 +165,7 @@ def test_a_finished_download_is_still_ready_after_cerebra_restarts(client, tmp_p
 
 @windows_installer
 def test_a_dropped_download_resumes_by_itself(client):
-    """One owner's 0.43.0 download got 0 bytes from GitHub and gave up; it now resumes from where it stopped."""
+    """A download that drops resumes from where it stopped."""
     updater = client.app.state.updater
     updater.retry_wait = 0
     plain, drops = updater.stream, {"count": 0}

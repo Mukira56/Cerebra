@@ -1,5 +1,5 @@
 """Chief of Staff: the layer that keeps Cerebra's money-making workers running, on time, on the record, within the owner's
-rules (docs/AGENTS_ARCHITECTURE.md).
+rules.
 
 This first part is the backbone the planner will use:
 - a registry of workers (each a fixed piece of Cerebra's own code; nothing here runs code a model wrote),

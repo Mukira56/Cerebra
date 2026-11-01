@@ -1,5 +1,4 @@
-"""Funding: free credits, grants and accelerators the owner could apply to, and what each still needs from them
-(docs/AGENTS_ARCHITECTURE.md, "Funding, sponsors and Cerebra's own model").
+"""Funding: free credits, grants and accelerators the owner could apply to, and what each still needs from them.
 
 The programs are a short, hand-checked list: each with its official page and the date it was checked, because amounts and
 windows change. Readiness compares each program's requirements with the owner's own facts and Cerebra's real records

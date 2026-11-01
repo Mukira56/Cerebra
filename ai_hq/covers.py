@@ -1,4 +1,4 @@
-"""Full-wrap paperback covers for KDP low-content books, drawn by code (docs/ETSY_AMAZON_PLAN.md, phase 4).
+"""Full-wrap paperback covers for KDP low-content books, drawn by code.
 
 One PDF page: bleed, back cover, spine, front cover, bleed, sized by books.cover_size from the trim, page count and paper.
 The title, subtitle and author are vector strokes (ai_hq/strokefont.py), so the cover has no font to embed and no AI

@@ -1,5 +1,4 @@
-"""Low-content book interiors for Amazon KDP: print-ready PDFs of ruled, dot-grid and graph pages (docs/ETSY_AMAZON_PLAN.md,
-phase 4).
+"""Low-content book interiors for Amazon KDP: print-ready PDFs of ruled, dot-grid and graph pages.
 
 Drawn by code, not by AI, so Amazon's AI-content disclosure doesn't apply. The pages carry only vector lines and dots:
 KDP requires every font in an interior to be embedded, and a font-free interior can't fail that check. Logbooks and the

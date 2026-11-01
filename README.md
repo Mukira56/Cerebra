@@ -65,8 +65,6 @@ Tests never launch a real AI CLI. They use the fixture agent in `tests/fakes.py`
 - [Security boundaries](docs/SECURITY.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Windows installer](docs/WINDOWS_INSTALLER.md)
-- [Development](docs/DEVELOPMENT.md)
-- [Progress record](docs/progress.md)
 
 ## License
 

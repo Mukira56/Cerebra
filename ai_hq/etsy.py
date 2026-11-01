@@ -1,4 +1,4 @@
-"""Etsy niche finder: what sells, and how crowded it is, from Etsy's own public listings (docs/ETSY_AMAZON_PLAN.md, phase 1).
+"""Etsy niche finder: what sells, and how crowded it is, from Etsy's own public listings.
 
 One search per keyword through Etsy's official Open API v3 (`findAllListingsActive`), with only the owner's app key
 (keystring and shared secret); no shop login and nothing written to Etsy. From the total number of active listings

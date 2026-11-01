@@ -1,5 +1,5 @@
 """Prospector: US local businesses that could use what the owner sells, found in public data, kept only with a concrete
-reason seen on their own website (docs/AGENTS_ARCHITECTURE.md).
+reason seen on their own website.
 
 Where the data comes from, and why:
 - OpenStreetMap, through Nominatim (to find the city) and Overpass (to list the businesses). Both are free and the data

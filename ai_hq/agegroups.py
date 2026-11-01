@@ -1,4 +1,4 @@
-"""Low-content book collections for every age group (docs/ETSY_AMAZON_PLAN.md, phase 4).
+"""Low-content book collections for every age group.
 
 For each age group: two kinds of low-content book that sell steadily to (or for) that age in the US, each an original
 design drawn by code (ai_hq/interiors.py), a cover in the group's own palette and pattern (ai_hq/covers.py), a short
