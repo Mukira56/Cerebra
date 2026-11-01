@@ -1036,7 +1036,7 @@
         hint("Free models allow about 20 requests a minute and 50 a day on an account that never bought credits, and they come and go: each request names free backups. Writing in your name and planning stay on your Claude account by default, for quality."),
         array(state.local_models).length ? hint(`On this computer (free, no daily limit): ${state.local_models.join(", ")}.`)
           : hint("Models on your own computer are free with no daily limit (DeepSeek, Qwen, Llama, Gemma…). Open Ollama, then pull one in a terminal, for example: ollama pull deepseek-r1:8b . It appears here when ready. A 7-8B model needs about 8 GB of memory."),
-        usage.length ? append(el("div"), el("h4", "", "This month"), table(["Kind of work", "Model", "Calls", "Cost"], usage.map(item => [item.category, item.model, String(item.calls), `USD ${item.cost.toFixed(2)}`]))) : null);
+        usage.length ? append(el("div"), el("h4", "", "This month"), table(["Kind of work", "Model", "Calls", "Cost"], usage.map(item => [item.category, item.model, String(item.calls), `$${item.cost.toFixed(2)}`]))) : null);
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
@@ -1101,7 +1101,7 @@
       const posts = array(state.posts), count = status => posts.filter(post => post.status === status).length, limits = state.settings;
       const stats = el("div", "grid stats");
       [["To approve", count("draft"), "drafts waiting for your yes", "amber"], ["Scheduled", count("approved"), "go out by themselves", "cyan"],
-       ["Posted", count("posted") + count("partial"), "on your channels", "green"], ["X this month", `USD ${Number(state.spent_this_month || 0).toFixed(2)}`, `of your USD ${Number(limits.monthly_cap).toFixed(2)} budget`, ""]]
+       ["Posted", count("posted") + count("partial"), "on your channels", "green"], ["X this month", `$${Number(state.spent_this_month || 0).toFixed(2)}`, `of your $${Number(limits.monthly_cap).toFixed(2)} budget`, ""]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
       const writer = state.writer || {};
       const tools = append(el("div", "actions"), button("+ New post", () => postDialog({channels: ["x", "facebook"], status: "draft"}, state), "button primary"),
@@ -1138,7 +1138,7 @@
     text.addEventListener("input", recount); link.addEventListener("input", recount); recount();
     const boxes = Object.entries(state.channels).map(([key, label]) => { const item = check(`${label}${state.accounts[key]?.connected ? "" : " (not connected)"}`, array(post.channels).includes(key)); item.key = key; item.control.disabled = !editable; return item; });
     append(root, field("Post", append(el("div"), text, counter)), field("Link", link), field("Picture", image, "Instagram needs one; it must be a public https:// address (for example from your site)."), append(el("div", "check-list"), ...boxes.map(item => item.wrap)));
-    Object.entries(post.results || {}).forEach(([channel, result]) => root.append(hint(`${state.channels[channel]}: ${result.posted_at ? `posted ${relative(result.posted_at)}${result.cost ? ` · USD ${result.cost}` : ""}${result.url ? ` · ${result.url}` : ""}` : result.error || result.waiting}`, !!result.error)));
+    Object.entries(post.results || {}).forEach(([channel, result]) => root.append(hint(`${state.channels[channel]}: ${result.posted_at ? `posted ${relative(result.posted_at)}${result.cost ? ` · $${result.cost}` : ""}${result.url ? ` · ${result.url}` : ""}` : result.error || result.waiting}`, !!result.error)));
     const payload = () => ({text: text.value, link: link.value.trim(), image_url: image.value.trim(), channels: boxes.filter(item => item.control.checked).map(item => item.key)});
     const save = async () => post.id ? mutate(`/api/social/posts/${post.id}`, payload(), "PATCH") : mutate("/api/social/posts", payload());
     const after = message => result => { if (result) { toast(message); closeDialog(); render(); } };
@@ -1204,7 +1204,7 @@
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
       const goalList = el("div", "row-list");
       goals.forEach(goal => { const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", goal.title),
-        el("div", "row-meta", [goal.rules.public_data_only ? "public data only" : "", goal.rules.ask_before_contact ? "asks before contacting anyone" : "", goal.monthly_cap ? `spend at most USD ${goal.monthly_cap} a month` : ""].filter(Boolean).join(" · "))),
+        el("div", "row-meta", [goal.rules.public_data_only ? "public data only" : "", goal.rules.ask_before_contact ? "asks before contacting anyone" : "", goal.monthly_cap ? `spend at most $${goal.monthly_cap} a month` : ""].filter(Boolean).join(" · "))),
         (state.plans || {})[goal.id] ? badge(`plan ${(state.plans || {})[goal.id].status}`, {proposed: "amber", approved: "green", declined: "muted"}[(state.plans || {})[goal.id].status]) : null,
         badge(goal.status, goal.status === "active" ? "green" : "muted")); row.addEventListener("click", () => goalDialog(goal, (state.plans || {})[goal.id])); goalList.append(row); });
       const jobRows = el("div", "row-list");
@@ -1478,7 +1478,7 @@
   // ---------- books: short nonfiction for Amazon KDP ----------
   const BOOK_STYLE = {planned: "blue", writing: "amber", files_ready: "cyan", published: "green", retired: "muted"};
   const NICHE_STYLE = {idea: "blue", researching: "amber", chosen: "green", dropped: "muted"};
-  const usd = value => `USD ${Number(value || 0).toFixed(2)}`;
+  const usd = value => `$${Number(value || 0).toFixed(2)}`;
   function royaltyLine(name, result) {
     if (!result) return null;
     if (result.problem) return [name, result.problem];
@@ -1512,7 +1512,7 @@
       const list = el("div", "row-list");
       niches.forEach(niche => {
         const data = niche.data || {}, row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", niche.keyword),
-          el("div", "row-meta", [`${Number(data.count || 0).toLocaleString()} listings`, `${data.demand ?? 0} favourites/month on top listings`, data.price ? `median USD ${Number(data.price).toFixed(2)}` : "", niche.digital_only ? "digital only" : ""].filter(Boolean).join(" · "))),
+          el("div", "row-meta", [`${Number(data.count || 0).toLocaleString()} listings`, `${data.demand ?? 0} favourites/month on top listings`, data.price ? `median $${Number(data.price).toFixed(2)}` : "", niche.digital_only ? "digital only" : ""].filter(Boolean).join(" · "))),
           el("span", `badge ${ETSY_STYLE[niche.label] || "muted"}`, `${niche.label.toUpperCase()} ${niche.score}`));
         row.tabIndex = 0; row.setAttribute("role", "button");
         row.addEventListener("click", () => etsyNicheDialog(niche)); row.addEventListener("keydown", event => { if (event.key === "Enter") etsyNicheDialog(niche); });
@@ -1560,15 +1560,15 @@
     const data = niche.data || niche, root = el("div");
     const research = term => act("", () => mutate("/api/etsy/research", {keyword: term, digital_only: niche.digital_only ?? true}, "POST", 60000)).then(found => { if (found) { render(); etsyNicheDialog(found); } });
     append(root, append(el("div", "detail-top"), el("span", `badge ${ETSY_STYLE[data.label] || "muted"}`, `${String(data.label || "").toUpperCase()} ${data.score}`),
-        el("span", "row-meta", `${Number(data.count || 0).toLocaleString()} active listings · prices USD ${(data.spread || [0, 0]).map(value => Number(value).toFixed(2)).join("–")} · ${data.digital_share ?? 0}% digital`)),
+        el("span", "row-meta", `${Number(data.count || 0).toLocaleString()} active listings · prices $${(data.spread || [0, 0]).map(value => Number(value).toFixed(2)).join("–")} · ${data.digital_share ?? 0}% digital`)),
       append(el("ul", "tips"), ...array(data.reasons).map(reason => el("li", "", reason))),
       el("h4", "", "Tags top sellers use"), append(el("div", "chips"), ...array(data.tags).map(item => el("span", "badge muted", `${item.tag} · ${item.uses}`))),
       array(data.longer).length ? append(el("div"), el("h4", "", "Longer keywords to check"), append(el("div", "actions"), ...array(data.longer).map(term => button(term, () => research(term), "button small ghost")))) : null,
-      el("h4", "", "On the first page"), table(["Listing", "Favourites", "Price"], array(data.examples).map(item => [item.title, String(item.favorites), item.price ? `USD ${Number(item.price).toFixed(2)}` : "—"])),
+      el("h4", "", "On the first page"), table(["Listing", "Favourites", "Price"], array(data.examples).map(item => [item.title, String(item.favorites), item.price ? `$${Number(item.price).toFixed(2)}` : "—"])),
       hint("Titles and tags are other sellers' words: use them to understand the niche, never copy a listing."),
       niche.id ? append(el("div"), el("h4", "", "Listings written for it"), (() => { const holder = el("div", "row-list");
         api(`/api/etsy/listings?niche=${encodeURIComponent(niche.id)}`).then(rows => array(rows).forEach(listing => { const row = append(el("div", "row clickable"),
-          append(el("div", "row-main"), el("strong", "", listing.title), el("div", "row-meta", [`USD ${Number(listing.price).toFixed(2)}`, listing.checks.length ? `${listing.checks.length} thing(s) to fix` : "passes Cerebra's checks"].join(" · "))));
+          append(el("div", "row-main"), el("strong", "", listing.title), el("div", "row-meta", [`$${Number(listing.price).toFixed(2)}`, listing.checks.length ? `${listing.checks.length} thing(s) to fix` : "passes Cerebra's checks"].join(" · "))));
           row.addEventListener("click", () => etsyListingDialog(listing, niche)); holder.append(row); })).catch(() => {}); return holder; })()) : null,
       niche.id ? actionsRow(button("Remove", () => act("Removed.", () => api(`/api/etsy/niches/${niche.id}`, {method: "DELETE"})).then(() => { closeDialog(); render(); }), "button ghost"),
         button("✍ Write a listing", () => act("Writing a listing with your AI model (about a minute)…", () => mutate(`/api/etsy/niches/${niche.id}/listing`, {}, "POST", 300000)).then(listing => { if (listing) etsyListingDialog(listing, niche); }), "button primary")) : null);
@@ -1581,7 +1581,7 @@
       el("h4", "", `Title (${listing.title.length}/140)`), el("p", "", listing.title), actionsRow(button("Copy title", () => copy(listing.title, "Title"), "button small")),
       el("h4", "", `Tags (${listing.tags.length}/13)`), append(el("div", "chips"), ...listing.tags.map(tag => el("span", "badge muted", tag))), actionsRow(button("Copy tags", () => copy(listing.tags.join(", "), "Tags"), "button small")),
       el("h4", "", "Description"), el("pre", "lead-description", listing.description), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
-      el("h4", "", "Price and product"), el("p", "", `USD ${Number(listing.price).toFixed(2)} · ${listing.product || "describe the files to make"}`),
+      el("h4", "", "Price and product"), el("p", "", `$${Number(listing.price).toFixed(2)} · ${listing.product || "describe the files to make"}`),
       hint("When you list it on Etsy: tick that AI was used if it was, choose “Designed by” rather than “Made by”, and upload the files you made. Nothing goes to Etsy without your confirmation."),
       actionsRow(button("Back to the niche", () => etsyNicheDialog(niche), "button ghost"),
         listing.job_id ? link("Open its product job →", `job/${listing.job_id}`)
@@ -1615,6 +1615,14 @@
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
+  function coverForm(book) {
+    const form = el("form"), palette = select([["navy", "Navy and cream"]], book.cover_palette || "navy"), author = input("Pen name (optional)", book.cover_author || book.pen_name || ""), make = submitButton("Draw the cover again");
+    api("/api/books/covers/palettes").then(names => { palette.replaceChildren(...Object.entries(names).map(([key, label]) => { const option = el("option", "", label); option.value = key; return option; })); palette.value = book.cover_palette || "navy"; }).catch(() => {});
+    append(form, el("h4", "", "Cover"), hint("Drawn by code to KDP's full-wrap size (back, spine, front and bleed) for this trim and page count: no fonts, no AI images. The spine carries the title from 79 pages."),
+      append(el("div", "form-grid"), field("Colours", palette), field("Author on the cover", author)), actionsRow(make));
+    wireForm(form, make, async () => { const made = await mutate(`/api/books/${encodeURIComponent(book.id)}/cover`, {palette: palette.value, author: author.value}); toast(`Cover saved: ${made.file}`); });
+    return form;
+  }
   function notebookDialog(book, state) {
     const listing = book.listing || {}, root = el("div"), copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy it.", true));
     append(root, array(listing.checks).length ? append(el("div"), el("h4", "", "Fix before uploading"), append(el("ul", "tips"), ...listing.checks.map(item => el("li", "", item))))
@@ -1623,9 +1631,10 @@
       listing.subtitle ? append(el("div"), el("h4", "", "Subtitle"), el("p", "", listing.subtitle), actionsRow(button("Copy subtitle", () => copy(listing.subtitle, "Subtitle"), "button small"))) : null,
       el("h4", "", "Description"), el("pre", "lead-description", listing.description || ""), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
       el("h4", "", "7 keywords (one per box)"), list(array(listing.keywords)), actionsRow(button("Copy keywords", () => copy(array(listing.keywords).join("\n"), "Keywords"), "button small")),
-      kv([["Interior", book.interior || "—"], ["Trim and pages", `${String(book.trim).replace("x", " × ")} in · ${book.pages} pages · ${book.paper} paper`],
-          ["Price", `USD ${Number(listing.price || book.prices?.paperback || 0).toFixed(2)}`], ["You earn per copy", book.royalty ? `USD ${Number(book.royalty.royalty).toFixed(2)}` : `USD ${Number(book.earnings?.paperback?.royalty ?? 0).toFixed(2)}`]]),
-      book.price_tip ? hint(book.price_tip) : null, hint(book.ai_question || ""), hint("Make the cover with KDP's free Cover Creator, upload the interior PDF, then publish. KDP allows about 3 new titles a day."),
+      kv([["Interior", book.interior || "—"], ["Cover", book.cover || "—"], ["Trim and pages", `${String(book.trim).replace("x", " × ")} in · ${book.pages} pages · ${book.paper} paper`],
+          ["Price", `$${Number(listing.price || book.prices?.paperback || 0).toFixed(2)}`], ["You earn per copy", book.royalty ? `$${Number(book.royalty.royalty).toFixed(2)}` : `$${Number(book.earnings?.paperback?.royalty ?? 0).toFixed(2)}`]]),
+      book.price_tip ? hint(book.price_tip) : null, hint(book.ai_question || ""), hint("Upload the interior PDF as the manuscript and the cover PDF as a print-ready cover (KDP adds the barcode on the back), then publish. KDP allows about 3 new titles a day."),
+      coverForm(book),
       actionsRow(button("Open the interiors folder", () => act("Opened.", () => mutate("/api/books/interiors/open", {})), "button"),
         state ? button("Edit details (published, ASIN)", () => bookDialog(book, state), "button ghost") : null));
     showDialog(listing.title || book.title, root);

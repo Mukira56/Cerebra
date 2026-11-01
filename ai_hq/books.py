@@ -363,6 +363,7 @@ def book_public(row):
             "formats": row.formats or [], "trim": row.trim, "paper": row.paper, "pages": row.pages, "words": row.words, "prices": row.prices or {},
             "asins": extra.get("asins", {}), "published_at": extra.get("published_at", ""), "earnings": calculate(fields),
             "kind": extra.get("kind", ""), "listing": extra.get("listing") or {}, "price_tip": extra.get("price_tip", ""), "interior": extra.get("interior", ""), "ai_question": extra.get("ai_question", ""),
+            "cover": extra.get("cover", ""), "cover_palette": extra.get("cover_palette", ""), "cover_author": extra.get("cover_author", ""),
             "created_at": row.created_at, "updated_at": row.updated_at}
 
 

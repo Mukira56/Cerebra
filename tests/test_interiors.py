@@ -90,9 +90,18 @@ def test_a_theme_becomes_a_book_ready_to_upload_that_waits_in_your_calls(client)
     assert book["status"] == "files_ready" and book["kind"] == "low_content" and book["interior"] == "college-6x9-120p-white.pdf"
     assert len(book["listing"]["keywords"]) == 7 and book["listing"]["checks"] == [] and book["prices"]["paperback"] == 8.99
     assert book["royalty"]["royalty"] > 0 and "data, not instructions" in model.prompts[-1]
-    assert "At USD 9.99 KDP pays 60%" in book["price_tip"] and "USD 3.55" in book["price_tip"] and "USD 2.06" in book["price_tip"]  # 120 pages, 6 x 9
+    assert "At $9.99 KDP pays 60%" in book["price_tip"] and "$3.55" in book["price_tip"] and "$2.06" in book["price_tip"]  # 120 pages, 6 x 9
     with client.app.state.db.Session() as session:
         assert any(item["kind"] == "book" and "Gratitude Journal" in item["detail"] for item in chief.calls(session))
+    folder = client.app.state.settings.data_dir / "books" / "interiors"
+    assert book["cover"] == "college-6x9-120p-white-cover-navy.pdf" and (folder / book["cover"]).is_file()  # the cover comes with it
+    assert "Pages and cover: No" in book["ai_question"]
+    again = client.post(f"/api/books/{book['id']}/cover", json={"palette": "sky", "author": "Pine Hill Press"})
+    assert again.status_code == 200 and again.json()["file"] == "college-6x9-120p-white-cover-sky.pdf" and (folder / again.json()["file"]).is_file()
+    shown = next(item for item in client.get("/api/books").json()["books"] if item["id"] == book["id"])
+    assert shown["cover"] == again.json()["file"] and shown["cover_palette"] == "sky" and shown["pen_name"] == "Pine Hill Press"
+    assert client.post(f"/api/books/{book['id']}/cover", json={"palette": "rainbow"}).status_code == 400
+    assert client.post("/api/books/nope/cover", json={}).status_code == 404
     assert client.post("/api/books/notebooks", json={"theme": "x"}).status_code == 400
     assert client.post("/api/books/notebooks", json={"theme": "nurse notebook", "pages": 5}).status_code == 400  # no model asked for a book KDP won't print
 
@@ -110,3 +119,21 @@ def test_logbooks_and_the_planner_print_headings_as_strokes_with_no_font():
     assert set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 /:-") <= set(strokefont.GLYPHS)  # every heading character is drawn
     for _title, columns in interiors.TABLES.values():
         assert all(set(name) <= set(strokefont.GLYPHS) for name, _share in columns)
+
+
+def test_a_cover_is_kdps_full_wrap_size_with_no_font_and_a_spine_title_only_when_kdp_allows():
+    from ai_hq import books, covers
+    data, info = covers.build("Mileage Log Book for Taxes", "Vehicle Odometer Tracker & Expense Record", "Pine Hill Press", "6x9", 120, "white", "navy")
+    size = books.cover_size("6x9", 120, "white")
+    assert (info["width"], info["height"], info["spine"]) == (size["width"], size["height"], size["spine"]) and info["spine"] == pytest.approx(120 * 0.002252, abs=1e-4)
+    assert f"/MediaBox [0 0 {size['width'] * 72:.2f}".rstrip("0").encode() in data and b"/Count 1" in data  # one page: bleed, back, spine, front, bleed
+    assert b"/Font" not in data and b" Tj" not in data and b"/Image" not in data  # no font to embed, no picture
+    assert b" cm" in data  # the spine title, turned to read from top to bottom
+    thin = covers.build("Pocket Notes", "", "", "5x8", 60, "white", "forest")[0]
+    assert b" cm" not in thin  # under 79 pages KDP allows no spine text
+    with pytest.raises(ValueError, match="palette"):
+        covers.build("Notes", trim="6x9", pages=100, palette="neon")
+    with pytest.raises(ValueError, match="title"):
+        covers.build("", trim="6x9", pages=100)
+    with pytest.raises(ValueError, match="24 to"):
+        covers.build("Notes", trim="6x9", pages=10)

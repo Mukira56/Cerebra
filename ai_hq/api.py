@@ -1266,6 +1266,32 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         return notebook_maker.make(payload.get("theme"), str(payload.get("style") or "college"), str(payload.get("trim") or "6x9"), pages,
                                    str(payload.get("paper") or "white"))
 
+    @app.post("/api/books/{book_id}/cover")
+    def books_make_cover(book_id: str, payload: dict):
+        """Draw the book's full-wrap cover again, in another palette or with the pen name on it."""
+        from . import covers
+        from .models import Book
+        with db.Session() as session:
+            row = session.get(Book, book_id)
+            if row is None:
+                raise HTTPException(404, "Book not found")
+            extra, title, subtitle, trim, pages, paper = dict(row.extra or {}), row.title, row.subtitle, row.trim, row.pages, row.paper
+        author = " ".join(str(payload.get("author") or "").split())[:80]
+        palette = str(payload.get("palette") or extra.get("cover_palette") or "navy")
+        name = Path(extra["interior"]).stem if extra.get("interior") else f"book-{book_id[:8]}"
+        made = covers.save(interiors_folder, name, title=title, subtitle=subtitle, author=author, trim=trim, pages=pages, paper=paper, palette=palette)
+        with db.Session.begin() as session:
+            row = session.get(Book, book_id)
+            row.extra = {**(row.extra or {}), "cover": made["file"], "cover_palette": palette, "cover_author": author}
+            if author and not row.pen_name:
+                row.pen_name = author
+        return made
+
+    @app.get("/api/books/covers/palettes")
+    def books_cover_palettes():
+        from . import covers
+        return {key: label for key, (label, *_colours) in covers.PALETTES.items()}
+
     @app.post("/api/books/interiors/open")
     def books_open_interiors():
         interiors_folder.mkdir(parents=True, exist_ok=True)

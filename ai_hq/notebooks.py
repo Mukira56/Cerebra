@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from . import books, interiors
 from .etsy import TRADEMARKS
@@ -108,17 +109,21 @@ class NotebookMaker:
         if not result.success:
             raise ValueError(result.error or "The model couldn't write the listing")
         listing = parse(result.output, made)
+        from . import covers
+        cover = covers.save(self.folder, Path(made["file"]).stem, title=listing["title"], subtitle=listing["subtitle"], trim=trim,
+                            pages=made["pages"], paper=paper, palette="navy")
         royalty = books.print_royalty(listing["price"], made["pages"], trim)
         tip = ""
         if listing["price"] < books.PRINT_RATE_HIGH_FROM:  # KDP pays 60% from 9.99 and 50% below: often a much bigger difference than it looks
             higher = books.print_royalty(books.PRINT_RATE_HIGH_FROM, made["pages"], trim)["royalty"]
-            tip = (f"At USD {books.PRINT_RATE_HIGH_FROM:.2f} KDP pays 60% instead of 50%: you'd earn USD {higher:.2f} a copy instead of "
-                   f"USD {royalty['royalty']:.2f}. Check what similar notebooks cost before choosing.")
+            tip = (f"At ${books.PRINT_RATE_HIGH_FROM:.2f} KDP pays 60% instead of 50%: you'd earn ${higher:.2f} a copy instead of "
+                   f"${royalty['royalty']:.2f}. Check what similar notebooks cost before choosing.")
         with self.db.Session.begin() as session:
             row = Book(title=listing["title"], subtitle=listing["subtitle"], pen_name="", status="files_ready", formats=["paperback"], trim=trim,
                        paper=paper, pages=made["pages"], words=0, prices={"paperback": listing["price"]},
-                       extra={"kind": "low_content", "theme": theme, "interior": made["file"], "style": style, "listing": listing,
-                              "royalty": royalty["royalty"], "price_tip": tip, "ai_question": "Pages: No, they are drawn by code. The listing text was written with your AI: read KDP's AI question as it is worded when you upload, and answer for the cover you make."})
+                       extra={"kind": "low_content", "theme": theme, "interior": made["file"], "cover": cover["file"], "cover_palette": "navy",
+                              "style": style, "listing": listing, "royalty": royalty["royalty"], "price_tip": tip,
+                              "ai_question": "Pages and cover: No, both are drawn by code. The listing text was written with your AI: read KDP's AI question as it is worded when you upload."})
             session.add(row)
             session.flush()
             return {**books.book_public(row), "royalty": royalty}  # the book carries its listing and interior file
