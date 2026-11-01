@@ -714,7 +714,8 @@ def context(session):
         parts.append(f"Business name: {settings['business_name']}")
     from . import business
     currency = business.load(session)["currency"]
-    services = [f"- {item['name']}: {currency} {item['price']:,.2f}" for item in settings.get("services") or []]
+    from .money import _money
+    services = [f"- {item['name']}: {_money(item['price'], currency)}" for item in settings.get("services") or []]
     if services:
         parts.append("Saved services and usual prices:\n" + "\n".join(services))
     parts.append("Kinds of work offered: " + ", ".join(SERVICES[key][0] for key in details["services"]))

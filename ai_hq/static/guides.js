@@ -5,15 +5,16 @@
 window.CerebraGuides = {
   etsy: {
     title: "Etsy",
-    need: ["An Etsy seller account with an open shop", "An Etsy developer app: its keystring and shared secret", "An HTTPS web address you control, registered as the app's callback URL"],
-    quick: ["Open your shop at etsy.com/sell (skip if you have one)", "Create an app on Etsy's developer site", "Register your HTTPS callback URL on the app", "Paste the keystring, shared secret and callback URL here, then Save", "Authorize Etsy, paste the address you land on, Finish, then Check connection"],
+    need: ["An Etsy seller account with an open shop (each further shop: its own Etsy account)", "An Etsy developer app: its keystring and shared secret", "An HTTPS web address you control, registered as the app's callback URL"],
+    quick: ["Open your shop at etsy.com/sell (skip if you have one)", "Create an app on Etsy's developer site", "Register your HTTPS callback URL on the app", "Paste the keystring, shared secret and callback URL here, then Save", "Authorize Etsy, paste the address you land on, Finish, then Check connection", "More shops: sign out of Etsy, press Add another shop…, sign in as that shop and Finish (up to 5, different products in each)"],
     links: [["Open Etsy seller signup", "etsy_sell"], ["Your Etsy apps", "etsy_apps"]],
     sections: [
       {heading: "1. Open an Etsy shop (if you don't have one)", steps: [
         "Go to etsy.com/sell and choose Get started. Sign in or create an Etsy account.",
         "Follow Etsy's setup: shop preferences (language, country, currency), a shop name, your first listing, how you'll get paid, and a billing card.",
-        "Etsy asks you to secure the account (two-factor sign-in) before the shop opens. Some countries also pay a one-time setup fee.",
-        "Etsy charges a listing fee per item and fees per sale. Check Etsy's current Fees & Payments policy for your country."],
+        "Etsy asks you to secure the account (two-factor sign-in) before the shop opens, and may charge a one-time shop setup fee, shown during setup.",
+        "As a US seller you get paid by direct deposit to your US bank account, and Etsy asks for your SSN or EIN for tax reporting (a 1099-K when your sales pass the IRS threshold).",
+        "Etsy's US fees: USD 0.20 to list each item for four months, a 6.5% transaction fee on each sale, and payment processing (3% + USD 0.25). Check Etsy's Fees & Payments policy for current amounts."],
         links: [["Open etsy.com/sell", "etsy_sell"]]},
       {heading: "2. Create your Etsy developer app", steps: [
         "Open Etsy's developer site and register a new app (Create a New App). Describe it truthfully, e.g. “Personal tool that prepares draft listings for my own shop”.",
@@ -31,11 +32,88 @@ window.CerebraGuides = {
         "Press Authorize Etsy…: Etsy opens in your browser. Sign in and allow access to listings and shop.",
         "Etsy then sends your browser to your callback address. Copy the whole address from the browser's address bar (it contains code=… and state=…), even if the page itself is blank.",
         "Paste it in “After Etsy authorization”, press Finish authorization, then Check connection. Cerebra finds your shop ID by itself and shows the shop name."]},
+      {heading: "5. Add more shops (up to 5), each selling different products", steps: [
+        "Etsy allows one person to run several shops, but each shop needs its own Etsy account (its own email address), and the same item may not be listed in two of your shops. Give every shop its own products, ideally its own niche: for example one shop for planners, another for wall art.",
+        "Open the second shop: sign out of Etsy, go to etsy.com/sell, create a new Etsy account with a different email address and set the shop up as in step 1.",
+        "You don't need a second developer app. Your one app's personal access covers up to 5 shops, which is why Cerebra stops at 5.",
+        "In your browser, sign out of Etsy (or sign in as the new shop's account), so Etsy signs in the right shop.",
+        "In Cerebra press Add another shop… under “Your Etsy shops”. Etsy opens: sign in as the new shop's account and allow access.",
+        "Copy the whole address you land on, paste it in “After Etsy authorization” and press Finish authorization. Cerebra finds the shop and lists it. A shop that's already connected is refused.",
+        "Repeat for up to 5 shops. To remove one, press Disconnect next to it, and also remove the app's access in that shop's Etsy settings."]},
+      {heading: "6. Using several shops", steps: [
+        "When you create a draft (Business Studio › job › Run confirmed action › Create an Etsy draft listing), choose the shop in “Etsy shop”.",
+        "Cerebra refuses a draft that would repeat an item already drafted in another of your shops: the same job, or the same title with different capitals or punctuation. Make a different product for the other shop instead.",
+        "Orders from every shop are imported as sales on the Money page."]},
       {heading: "Rules to know", steps: [
         "Cerebra only creates DRAFT listings after a job is reviewed and you confirm. You publish them yourself in Etsy, after adding photos and files.",
         "Follow Etsy's Creativity Standards: disclose AI-assisted work and production partners where required, and only sell designs you have the right to sell.",
         "Access tokens refresh automatically. If you change the app's keys, authorize again."],
         links: [["Etsy Creativity Standards", "etsy_creativity"], ["Etsy API terms", "etsy_api_terms"]]}
+    ]
+  },
+  freelancer: {
+    title: "Freelancer.com",
+    need: ["A Freelancer.com account with a complete profile", "An app on Freelancer.com's developer settings with permission to read projects and place bids", "An OAuth access token for your own account from that app"],
+    quick: ["Complete your Freelancer.com profile and verify it", "Create an app at accounts.freelancer.com › Settings › Developer", "Get an access token for your own account", "Paste it on the Freelance page under Freelancer.com account, then Connect"],
+    links: [["Freelancer.com developer settings", "freelancer_develop"], ["Freelancer.com API docs", "freelancer_api_docs"], ["User Agreement", "freelancer_terms"]],
+    sections: [
+      {heading: "1. Get your account ready", steps: [
+        "Sign in to Freelancer.com. Complete your profile (photo, headline, skills, portfolio) and verify your email, phone and payment method if Freelancer.com asks: verified profiles win more bids.",
+        "Check how many bids your membership gives you each month. Every bid Cerebra sends uses one."]},
+      {heading: "2. Create a developer app and get a token", steps: [
+        "Open accounts.freelancer.com › Settings › Developer and create an app. Describe it truthfully, e.g. “Personal tool to find projects and send my own bids”.",
+        "Give it the permissions to read projects and to place bids. Freelancer.com may show some of these as advanced scopes that it approves before the app can use them.",
+        "Get an OAuth access token for your own account from the app. If the page doesn't offer one, Freelancer.com's API docs explain the sign-in flow, and its identity team answers questions about app access.",
+        "Keep the token private, like a password."],
+        links: [["Developer settings", "freelancer_develop"], ["API docs", "freelancer_api_docs"]]},
+      {heading: "3. Connect your account in Cerebra", steps: [
+        "Open the Freelance page and find the panel Freelancer.com account.",
+        "Paste the token in Access token and press Connect. Cerebra checks it with Freelancer.com and shows your username. A token Freelancer.com refuses isn't kept.",
+        "Bids are only sent when you press Send on a proposal, or under your own Apply automatically rules."]},
+      {heading: "4. Add up to 4 more accounts: each one a different person", steps: [
+        "A Freelancer.com account belongs to one person, and login details must never be shared (its User Agreement). Don't open a second account of your own: sites like Upwork and Fiverr also close people who run several.",
+        "A teammate who works with you creates their own Freelancer.com account and app, and gets their own token, on their own computer or with you watching.",
+        "Under “Add another account”, type their full name in Whose account and they paste their token. Tick that the account belongs to them and that they pasted the token themselves, then press Add this account.",
+        "Each project gets one bid, from one account. Two bids from linked accounts on the same project look like collusion. When you send a bid, choose the account in “From the account”.",
+        "With Apply automatically on, each account gets its own daily number of bids. Wins are checked with the account that placed the bid, and that person does the work and talks to the client.",
+        "To remove an account, press Disconnect next to it, and revoke its token on Freelancer.com."]},
+      {heading: "Rules to know", steps: [
+        "Freelancer.com's User Agreement limits automated access without its permission. Keep Apply automatically to a small daily number, or send bids by hand, and ask Freelancer.com if you plan to rely on automation.",
+        "Write proposals that are true: never claim skills or work a teammate can't deliver."],
+        links: [["User Agreement", "freelancer_terms"]]}
+    ]
+  },
+  shopify: {
+    title: "Shopify",
+    need: ["A Shopify store (its address ends in .myshopify.com)", "Access to Shopify's Dev Dashboard from the organization that owns the store", "An app there with the scopes write_products and read_orders, installed on the store"],
+    quick: ["Open the Dev Dashboard (dev.shopify.com) from the store owner's organization", "Create an app, give it write_products and read_orders, release a version", "Install the app on your store", "Copy the Client ID and secret from the app's Settings", "Paste the store address, Client ID and secret here, then Connect store"],
+    links: [["Shopify Dev Dashboard", "shopify_dev"], ["Start a Shopify store", "shopify_start"], ["How the connection works", "shopify_cc_docs"]],
+    sections: [
+      {heading: "1. Have a store", steps: [
+        "If you don't have one, start a store at shopify.com and choose a plan. Selling needs a paid plan once the trial ends.",
+        "Find the store's address in the Shopify admin under Settings › Domains: the one ending in .myshopify.com, e.g. my-store.myshopify.com."],
+        links: [["Start a Shopify store", "shopify_start"]]},
+      {heading: "2. Create the app in the Dev Dashboard", steps: [
+        "Since 1 January 2026 stores can't make new custom apps inside the admin, so the app is made in Shopify's Dev Dashboard instead.",
+        "Open dev.shopify.com and sign in with the same Shopify account that owns the store, so the app and the store are in the same organization. Shopify refuses the connection otherwise.",
+        "Create an app, for example “Cerebra drafts”.",
+        "Open Versions, add the scopes write_products (to create draft products) and read_orders (to read sales), and release the version."],
+        links: [["Shopify Dev Dashboard", "shopify_dev"]]},
+      {heading: "3. Install it on the store and copy its keys", steps: [
+        "On the app's Home, install it on your store and approve the permissions.",
+        "Open the app's Settings and copy the Client ID and the Client secret. Keep the secret private, like a password."]},
+      {heading: "4. Connect in Cerebra", steps: [
+        "Open Business connections › Shopify stores.",
+        "Paste the store address, Client ID and Client secret, then press Connect store. Cerebra asks Shopify for a token and shows the store's name and currency. The token lasts 24 hours and Cerebra asks for a new one by itself.",
+        "If Shopify answers that the store isn't permitted, the app was made in a different organization: make it again from the store owner's account."],
+        links: [["How the connection works", "shopify_cc_docs"]]},
+      {heading: "5. Add more stores (up to 5)", steps: [
+        "Each store needs its own app installed on it: repeat steps 2–4 for each store, then press Add this store. A store that's already connected is refused.",
+        "Give each store its own products and audience. Shopify doesn't forbid the same product in several of your stores, but different stores for different niches reach more buyers and don't compete with each other.",
+        "To remove a store, press Disconnect next to it, and uninstall the app in that store's admin."]},
+      {heading: "Using your stores", steps: [
+        "Draft products: from a reviewed Business job choose Run confirmed action › Create a Shopify draft product and pick the store. It's created as a Draft. You add the images or download files in Shopify, review it and set it Active yourself.",
+        "Sales: orders from every store appear on the Money page. Each counts what the buyer paid after discounts and refunds, with tax left out and before Shopify's fees."]}
     ]
   },
   printify: {

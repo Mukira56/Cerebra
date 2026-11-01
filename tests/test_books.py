@@ -87,7 +87,7 @@ def test_the_start_publishing_checklist_and_pen_names(client):  # noqa: F811
     saved = client.put("/api/books/settings", json={"done": ["tax", "nonsense"], "pen_names": ["Ann Rivers", "Ann Rivers", " "], "default_trim": "5.5x8.5"}).json()
     assert saved["done"] == ["tax"] and saved["pen_names"] == ["Ann Rivers"] and saved["default_trim"] == "5.5x8.5"
     items = {item["key"]: item for item in client.get("/api/books").json()["checklist"]}
-    assert items["tax"]["done"] and "W-8BEN" in items["tax"]["how"] and not items["kdp_account"]["done"]
+    assert items["tax"]["done"] and "W-9" in items["tax"]["how"] and "W-8BEN" not in items["tax"]["how"] and not items["kdp_account"]["done"]
     assert client.put("/api/books/settings", json={"default_trim": "9x12"}).status_code == 400
 
 

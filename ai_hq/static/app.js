@@ -53,7 +53,7 @@
   function array(value) { return Array.isArray(value) ? value : []; }
   function nice(value) { return String(value ?? "—").replaceAll("_", " ").toLowerCase().replace(/^./, c => c.toUpperCase()); }
   function json(value) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
-  function date(value) { if (!value) return "—"; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"}); }
+  function date(value) { if (!value) return "—"; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("en-US", {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}); }
   function relative(value) { if (!value) return "—"; const delta = Date.now() - new Date(value).getTime(); if (!Number.isFinite(delta)) return date(value); if (delta < 60000) return "just now"; if (delta < 3600000) return `${Math.floor(delta / 60000)} min ago`; if (delta < 86400000) return `${Math.floor(delta / 3600000)} h ago`; return date(value); }
   const STATE_STYLE = {COMPLETED: "green", RUNNING: "blue", VERIFYING: "blue", REVIEWING: "blue", PLANNING: "blue", READY: "blue", FAILED: "red", REJECTED: "red", CANCELLED: "muted", BLOCKED: "amber", NEEDS_CHANGES: "amber", AWAITING_APPROVAL: "amber", PENDING: "muted", APPROVED: "green"};
   function badge(value, style) { const key = String(value ?? "unknown").toUpperCase(); return el("span", `badge ${style || STATE_STYLE[key] || "muted"}`, key.replaceAll("_", " ")); }
@@ -1377,7 +1377,7 @@
     const root = el("div"), kinds = [...new Set(array(state.searches).map(item => item.kind))];
     const kind = select(kinds.map(key => [key, state.kinds[key]]), kinds[0]), out = el("div");
     const show = () => {
-      const offer = (state.offers || {})[kind.value] || {}, price = input("Your price, e.g. USD 1,500 setup + USD 150 a month", offer.price || "");
+      const offer = (state.offers || {})[kind.value] || {}, price = input("Your price, e.g. $1,500 setup + $150 a month", offer.price || "");
       const headline = input("Headline", offer.headline || ""), problem = textarea("The problem", offer.problem || ""), included = textarea("What's included, one per line", array(offer.included).join("\n"));
       const steps = textarea("How it works, one step per line", array(offer.steps).join("\n")), timeline = input("Timeline", offer.timeline || "");
       problem.rows = 3; included.rows = 4; steps.rows = 3;
@@ -1461,15 +1461,15 @@
   }
   function fundingFacts(state) {
     const value = state.facts, form = el("form"), save = submitButton("Save");
-    const company = check("I have a registered company", value.company), country = input("Where it's registered, e.g. Kenya or Delaware, USA", value.company_country);
+    const company = check("I have a registered company", value.company), country = input("The state where it's registered, e.g. Delaware or Texas", value.company_country);
     const website = input("https://your-company.com", value.website), founded = input("2026", value.founded_year || "", "number");
-    const product = check("Something I built is live and people use it", value.product), african = check("I'm an African citizen or resident, 18 or older", value.african);
+    const product = check("Something I built is live and people use it", value.product), usOwned = check("It's a US small business, majority owned by US citizens or permanent residents", value.us_owned);
     const selfFunded = check("No outside investors yet", value.self_funded), awsPaid = check("My AWS account is on a paid plan", value.aws_paid);
-    append(form, company.wrap, append(el("div", "form-grid"), field("Country", country), field("Founded (year)", founded)), field("Company website", website),
-      product.wrap, african.wrap, selfFunded.wrap, awsPaid.wrap, actionsRow(save));
+    append(form, company.wrap, append(el("div", "form-grid"), field("State", country), field("Founded (year)", founded)), field("Company website", website),
+      product.wrap, usOwned.wrap, selfFunded.wrap, awsPaid.wrap, actionsRow(save));
     wireForm(form, save, async () => {
       await mutate("/api/funding/facts", {company: company.control.checked, company_country: country.value, website: website.value, founded_year: Number(founded.value || 0),
-        product: product.control.checked, african: african.control.checked, self_funded: selfFunded.control.checked, aws_paid: awsPaid.control.checked}, "PUT");
+        product: product.control.checked, us_owned: usOwned.control.checked, self_funded: selfFunded.control.checked, aws_paid: awsPaid.control.checked}, "PUT");
       toast("Saved. Readiness updated."); render();
     });
     return form;
@@ -1887,6 +1887,7 @@
           button("Disconnect", () => act(result => result.message, () => api(`/api/freelance/freelancer-account?account=${encodeURIComponent(item.id)}`, {method: "DELETE"})).then(() => render()), "button small ghost")))));
       root.append(list, hint("One bid per project, from one account. With Apply automatically on, each account gets its own daily number of bids."));
     }
+    root.append(actionsRow(button("How to connect, step by step…", () => guideDialog("freelancer"), "button small ghost")));
     if (accounts.length >= (account.max || 5)) return root;
     const form = el("form"), token = input("OAuth access token", "", "password"), holder = input("Their full name", ""), save = submitButton(accounts.length ? "Add this account" : "Connect");
     const confirmed = check("This account belongs to that person, who created it and pasted this token themselves. I won't share login details.");
@@ -2039,7 +2040,7 @@
   }
   // ---------- money: quotes, invoices, earnings ----------
   const DOC_STYLE = {draft: "muted", sent: "blue", accepted: "green", declined: "red", paid: "green", void: "muted"};
-  function cash(amount, currency) { return `${currency} ${Number(amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`; }
+  function cash(amount, currency) { const text = Number(amount || 0).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2}); return !currency || currency === "USD" ? `$${text}` : `${currency} ${text}`; }
   function moneyView() {
     const root = el("div"), token = renderToken;
     root.append(body(el("p", "", "Loading your money…")));
@@ -2070,7 +2071,7 @@
       left.append(plansPanel(state), productsPanel(state));
       if (others.length) left.append(panel("Other currencies", table(["Currency", "Earned this month", "Owed", "Quotes out"], others.map(([currency, values]) => [currency, cash(values.earned_month, currency), cash(values.owed, currency), cash(values.pipeline, currency)]))));
       side.append(panel("Get paid with Stripe", body(stripePanel(state.stripe))), panel("Marketplace sales", body(channelsPanel(state.channels))), panel("Your business", body(moneySettingsForm(state.settings))),
-        panel("Getting paid", body(hint("Each invoice can carry a payment link, shown on it as “Pay online”: a Stripe link Cerebra creates, or one you paste (PayPal, Paystack…). Record other payments you receive (M-Pesa, bank) from the invoice. Payments on a business job's invoice also go into that job's money record."),
+        panel("Getting paid", body(hint("Each invoice can carry a payment link, shown on it as “Pay online”: a Stripe link Cerebra creates, or one you paste (PayPal, Square…). Record other payments you receive (Zelle, ACH, check) from the invoice. Payments on a business job's invoice also go into that job's money record."),
           hint(state.summary.note), exportRow(state))));
       root.replaceChildren(...[startEarning(state), stats, append(el("div", "grid two"), left, side)].filter(Boolean));
     })();
@@ -2184,7 +2185,7 @@
     showDialog(item.id ? item.name : "New product", root);
   }
   function channelsPanel(channels) {
-    const root = el("div"), names = {etsy: ["Etsy", "orders count as sales (before Etsy's fees; tax left out)"], printify: ["Printify", "orders count as costs"]};
+    const root = el("div"), names = {etsy: ["Etsy", "orders count as sales (before Etsy's fees; tax left out)"], shopify: ["Shopify", "orders count as sales (before Shopify's fees; tax left out)"], printify: ["Printify", "orders count as costs"]};
     Object.entries(names).forEach(([source, [label, meaning]]) => {
       const info = channels?.[source] || {}, totals = Object.entries(info.totals || {}).map(([currency, amount]) => cash(amount, currency)).join(", ") || "nothing yet";
       append(root, append(el("div", "action-card"), append(el("div", "row-meta"), badge(info.connected ? "connected" : "not connected", info.connected ? "green" : "muted"), el("strong", "", label)),
@@ -2236,7 +2237,7 @@
     const form = el("form"), save = submitButton("Save");
     const name = input("Your name or business name", settings.business_name), email = input("you@example.com", settings.email, "email"), phone = input("Phone", settings.phone);
     const address = textarea("Address (optional)", settings.address), tax = input("Optional", settings.tax_id), terms = input("14", settings.payment_terms_days, "number"), valid = input("30", settings.quote_valid_days, "number");
-    const how = textarea("How clients can pay you: bank details, M-Pesa till or paybill, PayPal…", settings.payment_instructions);
+    const how = textarea("How clients can pay you: Zelle, ACH bank transfer, check, PayPal, Venmo…", settings.payment_instructions);
     const services = textarea("One per line, name | price. For example:\n5-page website | 600\nLogo design | 150", array(settings.services).map(item => `${item.name} | ${item.price}`).join("\n"));
     append(form, field("Business name", name), append(el("div", "form-grid"), field("Email", email), field("Phone", phone)), field("Address", address),
       append(el("div", "form-grid"), field("Invoices due after (days)", terms), field("Quotes valid for (days)", valid)), field("Tax ID", tax), field("How to pay you", how, "Printed on every invoice."), field("Your services and prices", services, "Pick them when you write a quote or invoice, so each line fills itself in."), actionsRow(save));
@@ -2297,7 +2298,7 @@
     }
     if (doc.kind === "invoice" && doc.status === "sent") actions.append(button(doc.overdue ? "Payment reminder (overdue)" : "Payment reminder", () => reminderDialog(doc, state), doc.overdue ? "button primary" : "button"));
     if (doc.kind === "invoice" && doc.status === "sent") {
-      const amount = input("Amount", doc.balance, "number"), method = input("e.g. M-Pesa, bank, Stripe", ""); amount.step = "any";
+      const amount = input("Amount", doc.balance, "number"), method = input("e.g. Zelle, ACH, check, Stripe", ""); amount.step = "any";
       actions.append(append(el("span", "inline-field"), el("span", "", "Received"), amount, method), button("Record payment", () => reopen(mutate(`/api/money/documents/${doc.id}/payments`, {amount: Number(amount.value || 0), method: method.value}), "Payment recorded."), "button primary"));
     }
     if (doc.id && !["void", "paid", "accepted", "declined"].includes(doc.status)) actions.append(button(draft ? "Delete draft" : `Void this ${word}`, () => reopen(api(`/api/money/documents/${doc.id}`, {method: "DELETE"}), draft ? "Draft deleted." : "Voided. Its number stays used."), "button ghost"));
@@ -2468,12 +2469,22 @@
   }
 
   function externalForm(job, reload) {
-    const form = el("form"), choice = select([["image", "Generate a raster image (paid API)"], ["etsy_draft", "Create an Etsy draft listing"], ["printify_upload", "Upload an image to Printify"], ["printify_draft", "Create a Printify draft product"]], "image");
+    const form = el("form"), choice = select([["image", "Generate a raster image (paid API)"], ["etsy_draft", "Create an Etsy draft listing"], ["shopify_draft", "Create a Shopify draft product"], ["printify_upload", "Upload an image to Printify"], ["printify_draft", "Create a Printify draft product"]], "image");
     const prompt = textarea("Your own original creative instructions (required for image generation)", ""), path = input("e.g. generated/image-….png", "");
     const fields = textarea("Draft fields in JSON. Use real IDs from your account's catalog.", ""); fields.rows = 12;
     const details = el("div"), confirmation = check("I confirm this exact external action on my connected account. Image generation uses paid API credits."), original = check("This uses my original creative input. I will complete required AI and production-partner disclosures before publishing.");
+    const shop = select([["", "Your first shop"]], ""), shopField = field("Etsy shop", shop);
+    api("/api/business/connections").then(value => { const shops = array(value.etsy?.shops).filter(item => item.shop_id);
+      shop.replaceChildren(...shops.map(item => { const option = el("option", "", item.shop_name || `Shop ${item.shop_id}`); option.value = item.id === "main" ? "" : item.id; return option; }));
+      shopField.hidden = shops.length < 2; }).catch(() => { shopField.hidden = true; });
+    shopField.hidden = true;
+    const store = select([], ""), storeField = field("Shopify store", store);
+    api("/api/business/shopify").then(value => { const stores = array(value.stores).filter(item => item.connected);
+      store.replaceChildren(...stores.map(item => { const option = el("option", "", item.name || item.domain); option.value = item.id; return option; }));
+      storeField.hidden = stores.length < 2; }).catch(() => { storeField.hidden = true; });
     const examples = {
       etsy_draft: {quantity: 1, title: job.title, description: job.brief, price: 10, who_made: "i_did", when_made: "made_to_order", taxonomy_id: 0, type: "download"},
+      shopify_draft: {title: job.title, description: job.brief, price: 10, tags: [], product_type: ""},
       printify_draft: {title: job.title, description: job.brief, blueprint_id: 0, print_provider_id: 0, variants: [{id: 0, price: 2000, is_enabled: true}], print_areas: [{variant_ids: [0], placeholders: [{position: "front", images: [{id: "PASTE_UPLOADED_IMAGE_ID", x: .5, y: .5, scale: 1, angle: 0}]}]}]}
     };
     function change() {
@@ -2482,7 +2493,10 @@
       else if (choice.value === "printify_upload") details.append(field("Image path inside this job", path), hint("PNG or JPEG up to 20 MB. The result gives you an image ID for the Printify draft."));
       else { fields.value = json(examples[choice.value]); details.append(field("Review these draft fields", fields), hint("Replace zero IDs with real catalog/category IDs. This creates a draft only. It does not publish, create orders, produce goods or deliver to a client.")); }
       if (choice.value === "etsy_draft") {
-        details.append(original.wrap);
+        details.append(shopField, hint("Each item goes to one shop only: Etsy doesn't allow the same item listed in several of your shops."), original.wrap);
+      }
+      if (choice.value === "shopify_draft") {
+        details.append(storeField, hint("Created as a Draft: add its images or download files in Shopify, review it, then set it Active yourself."));
         // A job made from an Etsy listing: its draft is the listing itself (title, 13 tags, description, price), still yours to review.
         api(`/api/etsy/listings?job=${encodeURIComponent(job.id)}`).then(rows => { const listing = array(rows)[0]; if (!listing || choice.value !== "etsy_draft") return;
           fields.value = json({quantity: 999, title: listing.title, description: listing.description, price: listing.price, tags: listing.tags,
@@ -2494,6 +2508,8 @@
     append(form, link("Account setup →", "connections"), field("Action", choice), details, confirmation.wrap, result, actionsRow(button("Close", closeDialog, "button ghost"), submit));
     wireForm(form, submit, async () => {
       const payload = {action: choice.value, confirmed: confirmation.control.checked, original_confirmed: original.control.checked};
+      if (choice.value === "etsy_draft" && shop.value) payload.shop = shop.value;
+      if (choice.value === "shopify_draft" && store.value) payload.shop = store.value;
       if (choice.value === "image") payload.prompt = prompt.value;
       else if (choice.value === "printify_upload") payload.path = path.value.trim();
       else payload.fields = JSON.parse(fields.value);
@@ -2524,10 +2540,30 @@
   }
   function withNotes(form, key) { return append(el("div", "connection-layout"), append(el("div", "connection-form"), form), guideNotes(key)); }
 
+  function shopifyStores(state) {
+    const stores = array(state.stores), root = el("div");
+    if (stores.length) {
+      const list = el("div", "row-list");
+      stores.forEach(item => list.append(append(el("div", "row"), append(el("div", "row-main"), el("strong", "", item.name || item.domain),
+          el("div", "row-meta", `${item.domain}${item.currency ? ` · ${item.currency}` : ""} · ${item.connected ? "connected" : "not checked"}`)),
+        append(el("div", "actions"), button("Check", () => act(result => result.message, () => mutate(`/api/business/shopify/stores/${encodeURIComponent(item.id)}/check`)).then(() => render()), "button small"),
+          button("Disconnect", () => act(result => result.message, () => api(`/api/business/shopify/stores/${encodeURIComponent(item.id)}`, {method: "DELETE"})).then(() => render()), "button small ghost")))));
+      root.append(list, hint("Draft products go to the store you choose, and orders from every store are imported as sales on the Money page."));
+    }
+    if (stores.length >= (state.max || 5)) return root;
+    const form = el("form"), address = input("my-store.myshopify.com", ""), clientId = input("Client ID", ""), secret = input("Client secret", "", "password"), save = submitButton(stores.length ? "Add this store" : "Connect store");
+    secret.autocomplete = "off";
+    append(form, stores.length ? el("h4", "", `Add another store (${stores.length} of ${state.max || 5})`) : null,
+      hint("In Shopify's Dev Dashboard (dev.shopify.com), from the organization that owns the store: create an app, and under Versions give it the scopes write_products and read_orders and release it. Install it on the store from the app's Home, then copy the Client ID and secret from Settings. The secret is stored encrypted on this computer."),
+      field("Store address", address), field("Client ID", clientId), field("Client secret", secret), actionsRow(save));
+    wireForm(form, save, async () => { const result = await mutate("/api/business/shopify/stores", {domain: address.value.trim(), client_id: clientId.value.trim(), client_secret: secret.value.trim()}); toast(result.message); render(); });
+    return append(root, form);
+  }
+
   function connectionView() {
     const root = el("div", "connection-grid"), token = renderToken;
     (async () => {
-      const [connections, mail, notifications] = await Promise.all([api("/api/business/connections"), api("/api/business/gmail"), api("/api/business/notifications")]);
+      const [connections, mail, notifications, stores] = await Promise.all([api("/api/business/connections"), api("/api/business/gmail"), api("/api/business/notifications"), api("/api/business/shopify")]);
       if (token !== renderToken) return;
       const specs = {
         etsy: {title: "Etsy drafts", help: "Register your own Etsy developer app. Etsy requires a registered HTTPS callback you control. Authorize in your browser, then paste the full redirected callback URL here. Credentials alone do not mean a connection has been verified.", fields: [["api_key", "App keystring", true], ["shared_secret", "Shared secret", true], ["shop_id", "Shop ID (optional: found for you by Check connection)"], ["redirect_uri", "Registered HTTPS callback URL"]]},
@@ -2544,11 +2580,23 @@
         if (provider === "etsy") {
           const callback = textarea("Paste your redirected HTTPS callback URL here", "");
           append(form, field("After Etsy authorization", callback));
-          append(buttons, button("Authorize Etsy…", () => act(value => value.message, () => mutate("/api/business/connections/etsy/authorize"))), button("Finish authorization", () => act(value => { callback.value = ""; result.textContent = value.message; return value.message; }, () => mutate("/api/business/connections/etsy/finish", {redirected_url: callback.value.trim()}))));
+          append(buttons, button("Authorize Etsy…", () => act(value => value.message, () => mutate("/api/business/connections/etsy/authorize"))), button("Finish authorization", () => act(value => { callback.value = ""; result.textContent = value.message; render(); return value.message; }, () => mutate("/api/business/connections/etsy/finish", {redirected_url: callback.value.trim()}))));
+          const shops = array(saved.shops);
+          if (shops.length) {
+            const list = el("div", "row-list");
+            shops.forEach((item, index) => list.append(append(el("div", "row"), append(el("div", "row-main"), el("strong", "", item.shop_name || (item.shop_id ? `Shop ${item.shop_id}` : "Shop not checked yet")),
+                el("div", "row-meta", index ? "Another shop" : "Your first shop")),
+              index ? button("Disconnect", () => act(value => value.message, () => api(`/api/business/connections/etsy/shops/${encodeURIComponent(item.id)}`, {method: "DELETE"})).then(() => render()), "button small ghost") : null)));
+            const room = shops.length < (saved.max_shops || 5);
+            append(form, el("h4", "", `Your Etsy shops (${shops.length} of ${saved.max_shops || 5})`), list,
+              hint("Sell different products in each shop: Cerebra won't draft an item that already has a draft in another of your shops, because Etsy forbids duplicate listings. To add a shop, sign out of Etsy in your browser, press Add another shop…, sign in as that shop's own Etsy account, then paste the address you land on and press Finish authorization. Step-by-step: How to connect…"),
+              room && saved.connected ? actionsRow(button("Add another shop…", () => act(value => value.message, () => mutate("/api/business/connections/etsy/authorize?add=true")))) : null);
+          }
         }
         append(form, buttons, result); wireForm(form, save, async () => { const values = Object.fromEntries(Object.entries(controls).map(([key, control]) => [key, control.value])); await mutate(`/api/business/connections/${provider}`, {values}, "PUT"); spec.fields.forEach(([key,,secret]) => { if (secret) controls[key].value = ""; }); result.textContent = "Settings saved. Check the connection next."; });
         root.append(panel(spec.title, body(withNotes(form, provider)), button("How to connect…", () => guideDialog(provider), "button small ghost")));
       }
+      root.append(panel("Shopify stores", body(withNotes(shopifyStores(stores), "shopify")), button("How to connect…", () => guideDialog("shopify"), "button small ghost")));
       const gmailForm = el("form"), clientId = input("Google Desktop app OAuth client ID", mail.client_id || ""), secret = input("Google client secret", ""); secret.type = "password"; secret.autocomplete = "off";
       const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", "hint", mail.connected ? `Connected read-only: ${mail.email}` : "Not connected");
       append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra can read selected messages; it cannot send, delete or change mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
@@ -2663,7 +2711,7 @@
   function ownerForm() {
     const form = el("form"), grid = el("div", "form-grid"), inputs = {};
     const fields = [["name", "Name", "e.g. Godfrey Mukira"], ["headline", "What you do", "e.g. Software engineer and AI builder"], ["email", "Email", "the address you want on your work"],
-      ["github", "GitHub username", "e.g. Mukira56"], ["linkedin", "LinkedIn", "https://www.linkedin.com/in/…"], ["website", "Website", "https://…"], ["location", "Location", "e.g. Nairobi, Kenya"]];
+      ["github", "GitHub username", "e.g. Mukira56"], ["linkedin", "LinkedIn", "https://www.linkedin.com/in/…"], ["website", "Website", "https://…"], ["location", "Location", "e.g. Austin, TX"]];
     fields.forEach(([key, label, hint_]) => { inputs[key] = input(hint_); grid.append(field(label, inputs[key])); });
     inputs.bio = textarea("A few sentences about you: your background, what you build, what you're proud of."); inputs.preferences = textarea("How you like things done: tone, colours, style, what to avoid.");
     const share = check("Share these details with the AI team (Support, the Council and coding tasks)", true);

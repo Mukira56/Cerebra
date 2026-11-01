@@ -16,6 +16,7 @@ from threading import Lock
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
+from sqlalchemy import select
 
 from . import business, vault
 from .models import BusinessJob, Event, Metadata, Task, now
@@ -27,6 +28,9 @@ IMAGE_MODEL = "gpt-image-2.5-flare"
 SECRET_FIELDS = {"api_key", "shared_secret", "access_token", "refresh_token"}
 FIELDS = {"etsy": {"api_key", "shared_secret", "redirect_uri", "shop_id"},
           "printify": {"api_key", "shop_id"}, "images": {"api_key", "model"}}
+# Etsy shops: the first is the one in the "etsy" connection; up to four more sign in to the same Etsy app and are kept here.
+SHOPS = "etsy_shops"
+MAX_SHOPS = 5
 
 
 class Rejected(ValueError):
@@ -54,7 +58,21 @@ def public(session):
         result[provider].update(configured=bool(item.get("api_key")), connected=bool(item.get("checked_at")),
                                 authorized=bool(item.get("access_token")), key_saved=bool(item.get("api_key")))
     result["images"].setdefault("model", IMAGE_MODEL)
+    result["etsy"].update(shops=shops(value), max_shops=MAX_SHOPS)
     return result
+
+
+def shops(value):
+    """Every connected Etsy shop, the first one first: [{id, shop_id, shop_name, connected}]."""
+    main = value.get("etsy") or {}
+    listed = [{"id": "main", "shop_id": main.get("shop_id", ""), "shop_name": main.get("shop_name", ""), "connected": bool(main.get("checked_at"))}] \
+        if main.get("access_token") else []
+    return listed + [{"id": item["id"], "shop_id": item.get("shop_id", ""), "shop_name": item.get("shop_name", ""), "connected": bool(item.get("checked_at"))}
+                     for item in value.get(SHOPS) or []]
+
+
+def same_title(first, second):
+    return " ".join(re.findall(r"[a-z0-9]+", str(first or "").lower())) == " ".join(re.findall(r"[a-z0-9]+", str(second or "").lower()))
 
 
 def save(session, provider, changes):
@@ -82,6 +100,8 @@ def save(session, provider, changes):
         item.pop("checked_at", None)
         if provider == "etsy":
             for key in ("access_token", "refresh_token", "expires_at"): item.pop(key, None)
+            if any(str(changes.get(key) or "").strip() for key in ("api_key", "shared_secret")):
+                value.pop(SHOPS, None)  # other shops signed in to the old app
     value[provider] = item
     store(session, value)
     return public(session)[provider]
@@ -116,26 +136,47 @@ class Commerce:
         with self.db.Session.begin() as session:
             value = load(session); value[provider] = {**value.get(provider, {}), **fields}; store(session, value)
 
-    def etsy_headers(self):
-        item = self.config("etsy")
+    def shop(self, shop=None):
+        """The tokens and shop ID of one Etsy shop ("main" or None is the first one)."""
+        if not shop or shop == "main": return self.config("etsy")
+        with self.db.Session() as session: found = next((dict(item) for item in load(session).get(SHOPS) or [] if item["id"] == shop), None)
+        if found is None: raise ValueError("That Etsy shop isn't connected")
+        return found
+
+    def update_shop(self, shop, **fields):
+        if not shop or shop == "main": return self.update("etsy", **fields)
+        with self.db.Session.begin() as session:
+            value = load(session)
+            value[SHOPS] = [{**item, **fields} if item["id"] == shop else item for item in value.get(SHOPS) or []]
+            store(session, value)
+
+    def etsy_headers(self, shop=None):
+        app = self.config("etsy"); item = self.shop(shop)
         if not item.get("access_token"): raise ValueError("Authorize Etsy first")
         if time.time() >= item.get("expires_at", 0):
             data = self.request("POST", "https://api.etsy.com/v3/public/oauth/token", data={"grant_type": "refresh_token",
-                                "client_id": vault.unprotect(item["api_key"]), "refresh_token": vault.unprotect(item["refresh_token"])})
-            self.update("etsy", access_token=vault.protect(data["access_token"]), refresh_token=vault.protect(data["refresh_token"]),
-                        expires_at=time.time() + int(data["expires_in"]) - 60)
-            item = self.config("etsy")
-        if not item.get("shared_secret"): raise ValueError("Save the Etsy app's shared secret")
+                                "client_id": vault.unprotect(app["api_key"]), "refresh_token": vault.unprotect(item["refresh_token"])})
+            self.update_shop(shop, access_token=vault.protect(data["access_token"]), refresh_token=vault.protect(data["refresh_token"]),
+                             expires_at=time.time() + int(data["expires_in"]) - 60)
+            item = self.shop(shop)
+        if not app.get("shared_secret"): raise ValueError("Save the Etsy app's shared secret")
         return {"Authorization": "Bearer " + vault.unprotect(item["access_token"]),
-                "x-api-key": vault.unprotect(item["api_key"]) + ":" + vault.unprotect(item["shared_secret"])}
+                "x-api-key": vault.unprotect(app["api_key"]) + ":" + vault.unprotect(app["shared_secret"])}
 
-    def authorize_etsy(self):
+    def etsy_shops(self):
+        with self.db.Session() as session: return shops(load(session))
+
+    def authorize_etsy(self, add=False):
+        """Sign in to Etsy: the first shop, or (add=True) another of your shops, up to MAX_SHOPS."""
         item = self.config("etsy")
         if not item.get("redirect_uri") or not item.get("shared_secret"): raise ValueError("Save the registered HTTPS callback URL and shared secret first")
+        connected = self.etsy_shops()
+        target = "new" if add and connected else "main"
+        if target == "new" and len(connected) >= MAX_SHOPS: raise ValueError(f"Up to {MAX_SHOPS} Etsy shops can be connected; disconnect one first")
         state, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(48)
         with self.lock:
             self.pending = {key: data for key, data in self.pending.items() if time.monotonic() - data[1] < 600}
-            self.pending[state] = (verifier, time.monotonic(), item["redirect_uri"], item["api_key"])
+            self.pending[state] = (verifier, time.monotonic(), item["redirect_uri"], item["api_key"], target)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         return "https://www.etsy.com/oauth/connect?" + urlencode({"response_type": "code", "client_id": vault.unprotect(item["api_key"]),
                    "redirect_uri": item["redirect_uri"], "scope": "shops_r listings_r listings_w transactions_r", "state": state,
@@ -155,9 +196,39 @@ class Commerce:
         if not code: raise ValueError("Etsy did not provide an authorization code")
         data = self.request("POST", "https://api.etsy.com/v3/public/oauth/token", data={"grant_type": "authorization_code",
                             "client_id": vault.unprotect(item["api_key"]), "redirect_uri": pending[2], "code": code, "code_verifier": pending[0]})
-        self.update("etsy", access_token=vault.protect(data["access_token"]), refresh_token=vault.protect(data["refresh_token"]),
-                    expires_at=time.time() + int(data["expires_in"]) - 60)
-        return {"message": "Etsy authorized. Press Check connection to verify your shop."}
+        tokens = {"access_token": vault.protect(data["access_token"]), "refresh_token": vault.protect(data["refresh_token"]),
+                  "expires_at": time.time() + int(data["expires_in"]) - 60}
+        if len(pending) < 5 or pending[4] == "main":
+            self.update("etsy", **tokens)
+            return {"message": "Etsy authorized. Press Check connection to verify your shop."}
+        return self.add_shop(tokens)
+
+    def add_shop(self, tokens):
+        """Another shop signed in: find which shop it is and keep it, unless it's one already connected."""
+        user_id = vault.unprotect(tokens["access_token"]).split(".", 1)[0]  # Etsy tokens begin with the user's numeric ID
+        app = self.config("etsy")
+        headers = {"Authorization": "Bearer " + vault.unprotect(tokens["access_token"]),
+                   "x-api-key": vault.unprotect(app["api_key"]) + ":" + vault.unprotect(app["shared_secret"])}
+        try: owned = self.request("GET", f"https://api.etsy.com/v3/application/users/{user_id}/shops", headers=headers) if user_id.isdigit() else {}
+        except Rejected: owned = {}
+        if not owned.get("shop_id"): raise Rejected("That Etsy account has no shop yet. Open one at etsy.com/sell, then add it again.")
+        shop_id, name = str(owned["shop_id"]), str(owned.get("shop_name", ""))
+        if shop_id in {item["shop_id"] for item in self.etsy_shops()}: raise Rejected(f"The shop {name or shop_id} is already connected")
+        with self.db.Session.begin() as session:
+            value = load(session)
+            if len(shops(value)) >= MAX_SHOPS: raise Rejected(f"Up to {MAX_SHOPS} Etsy shops can be connected")
+            value[SHOPS] = [*(value.get(SHOPS) or []), {"id": secrets.token_hex(4), "shop_id": shop_id, "shop_name": name, "checked_at": now(), **tokens}]
+            store(session, value)
+        return {"message": f"Etsy shop {name or shop_id} added. Choose it when you create a draft; each item goes to one shop only."}
+
+    def disconnect_shop(self, shop):
+        if shop == "main": return self.disconnect("etsy")
+        with self.db.Session.begin() as session:
+            value = load(session)
+            if not any(item["id"] == shop for item in value.get(SHOPS) or []): raise ValueError("That Etsy shop isn't connected")
+            value[SHOPS] = [item for item in value[SHOPS] if item["id"] != shop]
+            store(session, value)
+        return {"message": "Shop removed from this computer. Revoke the app's access in that shop's Etsy settings too."}
 
     def check(self, provider):
         item = self.config(provider)
@@ -184,6 +255,7 @@ class Commerce:
                 self.update("etsy", shop_id=str(owned["shop_id"]))
                 item = self.config("etsy")
             shop = self.request("GET", f"https://api.etsy.com/v3/application/shops/{item['shop_id']}", headers=headers)
+            self.update("etsy", shop_name=str(shop.get("shop_name", "")))
             result = {"shop_id": str(shop["shop_id"]), "message": "Etsy shop verified: " + str(shop.get("shop_name", ""))}
         elif provider == "images":
             model = item.get("model", IMAGE_MODEL)
@@ -196,10 +268,12 @@ class Commerce:
     def disconnect(self, provider):
         if provider not in PROVIDERS: raise ValueError("Unknown connection")
         with self.db.Session.begin() as session:
-            value = load(session); value.pop(provider, None); store(session, value)
+            value = load(session); value.pop(provider, None)
+            if provider == "etsy": value.pop(SHOPS, None)  # they sign in through that app
+            store(session, value)
         return {"message": "Connection removed from this computer. Revoke its token in the provider dashboard if needed."}
 
-    def write_once(self, job_id, action, payload, confirmed, perform):
+    def write_once(self, job_id, action, payload, confirmed, perform, extra=None):
         if confirmed is not True: raise ValueError("Confirm this exact external action first")
         with self.db.Session() as session:
             job = session.get(BusinessJob, job_id)
@@ -215,6 +289,7 @@ class Commerce:
             if previous and previous.value.get("status") != "rejected":
                 raise ValueError("This action is pending or its outcome is uncertain. Check the provider dashboard; Cerebra will not repeat it automatically.")
             reservation = {"job_id": job_id, "action": action, "status": "pending", "at": now()}
+            reservation.update(extra or {})
             if previous: previous.value = reservation
             else: session.add(Metadata(key=key, value=reservation))
         try:
@@ -254,7 +329,19 @@ class Commerce:
             return {"path": str(path), "message": "Image saved locally. Inspect it, then export again to include it. This image has not been independently reviewed.", "usage": data.get("usage")}
         return self.write_once(job_id, "generate_image", {"prompt": prompt, "model": model}, confirmed, perform)
 
-    def etsy_draft(self, job_id, fields, confirmed, original_confirmed):
+    def other_shop_copy(self, job_id, title, shop_id):
+        """A draft of this job, or of an item with the same title, already made in another of your shops (Etsy forbids duplicate listings).
+        Drafts from before several shops existed went to the first shop."""
+        first = self.config("etsy").get("shop_id", "")
+        with self.db.Session() as session:
+            rows = session.scalars(select(Metadata).where(Metadata.key.like("business_operation_%"))).all()
+            for row in rows:
+                value = row.value or {}
+                if value.get("action") != "etsy_draft" or value.get("status") == "rejected": continue
+                if str(value.get("shop") or first) != shop_id and (value.get("job_id") == job_id or same_title(value.get("title"), title)): return value
+        return None
+
+    def etsy_draft(self, job_id, fields, confirmed, original_confirmed, shop=None):
         if confirmed is not True: raise ValueError("Confirm this exact Etsy draft first")
         if original_confirmed is not True: raise ValueError("Confirm your original creative input and required AI/production-partner disclosures")
         required = {"quantity", "title", "description", "price", "who_made", "when_made", "taxonomy_id", "type"}
@@ -271,13 +358,19 @@ class Commerce:
         except (ValueError, TypeError): valid_numbers = False
         if not valid_numbers: raise ValueError("Check quantity, price and a real positive taxonomy ID")
         if not fields["title"].strip() or len(fields["title"]) > 140: raise ValueError("Etsy title must be 1–140 characters")
-        item = self.config("etsy")
+        shop = shop or "main"
+        item = self.shop(shop)
         if not item.get("shop_id"): raise ValueError("Save your Etsy shop ID first")
-        headers = self.etsy_headers()
+        if self.other_shop_copy(job_id, fields["title"], str(item["shop_id"])):
+            raise ValueError("This item already has a draft in another of your Etsy shops. Etsy doesn't allow the same item in several shops: "
+                             "make a different product for this one.")
+        headers = self.etsy_headers(shop)
         def perform(folder):
             data = self.request("POST", f"https://api.etsy.com/v3/application/shops/{item['shop_id']}/listings", headers=headers, data=fields)
-            return {"listing_id": data["listing_id"], "message": "Draft created on Etsy. Review its images, files, AI disclosures and production partners in Etsy. It has not been published."}
-        return self.write_once(job_id, "etsy_draft", {"shop": item["shop_id"], "fields": fields}, confirmed, perform)
+            return {"listing_id": data["listing_id"], "message": "Draft created on Etsy" + (f" in {item['shop_name']}" if item.get("shop_name") else "")
+                    + ". Review its images, files, AI disclosures and production partners in Etsy. It has not been published."}
+        return self.write_once(job_id, "etsy_draft", {"shop": item["shop_id"], "fields": fields}, confirmed, perform,
+                               extra={"shop": str(item["shop_id"]), "title": fields["title"]})  # kept for the one-shop check
 
     def printify_product(self, job_id, fields, confirmed):
         if confirmed is not True: raise ValueError("Confirm this exact Printify draft first")

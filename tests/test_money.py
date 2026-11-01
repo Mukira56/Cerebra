@@ -50,7 +50,7 @@ def test_a_quote_becomes_a_deposit_then_a_balance_invoice_and_is_paid(client):
     assert figures(client)["won_unbilled"] == 450 and figures(client)["pipeline"] == 0
     deposit = step(client, deposit, "issue")
     assert deposit["number"] == "INV-0001" and figures(client)["owed"] == 450
-    deposit = step(client, deposit, "payments", amount=450, method="M-Pesa")
+    deposit = step(client, deposit, "payments", amount=450, method="Zelle")
     assert deposit["status"] == "paid" and figures(client)["earned_month"] == 450 and figures(client)["owed"] == 0
     rest = client.post(f"/api/money/documents/{quote['id']}/balance").json()
     assert rest["total"] == 450 and "Balance for quote Q-0001" in rest["items"][0]["description"]
@@ -128,13 +128,13 @@ def test_reminders_get_firmer_as_an_invoice_gets_later_and_are_sent_by_the_owner
     from datetime import date, timedelta
     from urllib.parse import unquote
     from ai_hq import money
-    client.put("/api/money/settings", json={"business_name": "Mukira Studio", "payment_instructions": "M-Pesa till 123456"})
+    client.put("/api/money/settings", json={"business_name": "Mukira Studio", "payment_instructions": "Zelle to pay@mukira.example"})
     invoice = step(client, new(client, "invoice"), "issue")
     client.patch(f"/api/money/documents/{invoice['id']}", json={"payment_url": "https://buy.stripe.com/test_1"})
     step(client, invoice, "payments", amount=100)
     text = client.get(f"/api/money/documents/{invoice['id']}/reminder").json()
-    assert text["tone"] == "friendly" and "USD 800.00" in text["subject"] and "https://buy.stripe.com/test_1" in text["body"]
-    assert "M-Pesa till 123456" in text["body"] and text["body"].startswith("Hello Ama's Bakery,") and text["body"].endswith("Mukira Studio")
+    assert text["tone"] == "friendly" and "$800.00" in text["subject"] and "https://buy.stripe.com/test_1" in text["body"]
+    assert "Zelle to pay@mukira.example" in text["body"] and text["body"].startswith("Hello Ama's Bakery,") and text["body"].endswith("Mukira Studio")
     assert text["to"] == "ama@example.com" and unquote(text["mailto"]).startswith("mailto:ama@example.com?subject=Invoice INV-0001")
     tones = []
     for late in (3, 12, 45):
@@ -226,7 +226,7 @@ def test_the_year_export_lists_everything_once_and_is_safe_in_excel(client, tmp_
     sneaky = step(client, new(client, "invoice", client="=HYPERLINK(\"http://evil\")"), "issue")
     step(client, sneaky, "payments", amount=900, method="bank")
     job_invoice = step(client, step(client, client.post("/api/money/documents/from-job/job1").json(), "issue"), "accept")
-    step(client, step(client, job_invoice, "issue"), "payments", amount=600, method="M-Pesa")
+    step(client, step(client, job_invoice, "issue"), "payments", amount=600, method="Zelle")
     result = client.post("/api/money/export", json={"year": 2026}).json()
     with open(result["path"], encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -248,7 +248,7 @@ def test_a_job_invoice_in_another_currency_counts_in_that_currency_once(client, 
         session.add(BusinessRecord(job_id="job2", scope={"price": 40000, "currency": "KES", "client": "Wanjiku Salon"}))
     invoice = step(client, step(client, step(client, client.post("/api/money/documents/from-job/job2").json(), "issue"), "accept"), "issue")
     assert invoice["currency"] == "KES"
-    step(client, invoice, "payments", amount=40000, method="M-Pesa")
+    step(client, invoice, "payments", amount=40000, method="Zelle")
     money_by = client.get("/api/money").json()["summary"]["by_currency"]
     assert money_by["KES"]["earned_month"] == 40000 and money_by["USD"]["earned_month"] == 0  # not counted as 40,000 dollars
     ledger = client.get("/api/business/jobs/job2/delivery").json()["money"]["entries"]

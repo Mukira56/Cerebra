@@ -143,7 +143,7 @@ def _apply(session, doc, fields):
     if "currency" in fields:
         currency = str(fields["currency"] or "").upper()
         if not re.fullmatch(r"[A-Z]{3}", currency):
-            raise ValueError("Use a 3-letter currency code such as USD or KES")
+            raise ValueError("Use a 3-letter currency code such as USD")
         doc.currency = currency
     if "job_id" in fields:
         if fields["job_id"] and session.get(BusinessJob, fields["job_id"]) is None:
@@ -370,7 +370,14 @@ def _is_invoice_copy(job_id, item, copies):
 
 
 def _money(amount, currency):
-    return f"{currency} {amount:,.2f}"
+    return f"${amount:,.2f}" if currency == "USD" else f"{currency} {amount:,.2f}"
+
+
+def us_date(value):
+    """2026-11-01 as November 1, 2026."""
+    try: day = date.fromisoformat(str(value)[:10])
+    except ValueError: return value
+    return f"{day:%B} {day.day}, {day.year}"
 
 
 def render(doc, config):
@@ -380,9 +387,9 @@ def render(doc, config):
     title = ("Quote" if doc.kind == "quote" else "Invoice") + (f" {doc.number}" if doc.number else " (draft)")
     rows = "".join(f"<tr><td>{e(item['description'])}</td><td class=n>{item['quantity']:g}</td><td class=n>{e(_money(item['unit_price'], doc.currency))}</td>"
                    f"<td class=n>{e(_money(item['quantity'] * item['unit_price'], doc.currency))}</td></tr>" for item in doc.items or [])
-    paid = "".join(f"<tr><td colspan=3>Paid {e(payment['date'])}{' · ' + e(payment['method']) if payment.get('method') else ''}</td><td class=n>-{e(_money(payment['amount'], doc.currency))}</td></tr>"
+    paid = "".join(f"<tr><td colspan=3>Paid {e(us_date(payment['date']))}{' · ' + e(payment['method']) if payment.get('method') else ''}</td><td class=n>-{e(_money(payment['amount'], doc.currency))}</td></tr>"
                    for payment in doc.payments or [])
-    dates = (f"<p>Date: {e(doc.issued_at)}<br>{'Valid until' if doc.kind == 'quote' else 'Due'}: {e(doc.due_date)}</p>" if doc.issued_at else "<p><strong>DRAFT</strong> — not issued yet</p>")
+    dates = (f"<p>Date: {e(us_date(doc.issued_at))}<br>{'Valid until' if doc.kind == 'quote' else 'Due'}: {e(us_date(doc.due_date))}</p>" if doc.issued_at else "<p><strong>DRAFT</strong> — not issued yet</p>")
     pay = ""
     if doc.kind == "invoice":
         link = f"<p><a href=\"{e(doc.payment_url)}\">Pay online</a>: {e(doc.payment_url)}</p>" if doc.payment_url else ""

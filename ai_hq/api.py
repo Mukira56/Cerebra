@@ -72,6 +72,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from .commerce import Commerce, public as connection_public
     from . import gmail, notify
     commerce = Commerce(db)
+    from .shopify import Shopify
+    shopify = Shopify(db, commerce)
     from .payments import Payments
     payments = Payments(db)
     from . import freelance
@@ -111,6 +113,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         supervisor.shutdown()
         notifier.stop()
         commerce.close()
+        shopify.close()
         payments.client.close()
         finder.client.close()
         bidder.client.close()
@@ -130,6 +133,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.open_document = desktop.open_path  # a page Cerebra just wrote
     app.state.edit_file = desktop.edit_text
     app.state.commerce, app.state.mailbox, app.state.notifier, app.state.payments = commerce, mailbox, notifier, payments
+    app.state.shopify = shopify
     app.state.finder, app.state.drafter, app.state.bidder = finder, drafter, bidder
     app.state.publisher, app.state.post_writer, app.state.pitch_writer = publisher, post_writer, pitch_writer
 
@@ -1918,14 +1922,14 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def import_connected():
         with db.Session() as session:
             linked = channels.status(session)
-        for source, importer in (("etsy", channels.import_etsy), ("printify", channels.import_printify)):
+        for source, importer in (("etsy", channels.import_etsy), ("printify", channels.import_printify), ("shopify", shopify.import_orders)):
             if linked[source]["connected"]:
                 importer(commerce)
     payments.slow_jobs.append(import_connected)
 
     @app.post("/api/money/channels/{source}/import")
     def channel_import(source: str):
-        importers = {"etsy": channels.import_etsy, "printify": channels.import_printify}
+        importers = {"etsy": channels.import_etsy, "printify": channels.import_printify, "shopify": shopify.import_orders}
         if source not in importers:
             raise HTTPException(404, "Unknown marketplace")
         counts = importers[source](commerce)
@@ -2086,10 +2090,28 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def business_connection_check(provider: str): return commerce.check(provider)
 
     @app.post("/api/business/connections/etsy/authorize")
-    def etsy_authorize():
+    def etsy_authorize(add: bool = False):
         import webbrowser
-        url = commerce.authorize_etsy(); webbrowser.open(url)
-        return {"message": "Etsy sign-in opened in your browser. After authorization, paste your redirected HTTPS callback URL here."}
+        url = commerce.authorize_etsy(add); webbrowser.open(url)
+        return {"message": ("Sign in to Etsy as the other shop's account in your browser" if add else "Etsy sign-in opened in your browser")
+                + ". After authorization, paste your redirected HTTPS callback URL here."}
+
+    @app.delete("/api/business/connections/etsy/shops/{shop}")
+    def etsy_shop_delete(shop: str): return commerce.disconnect_shop(shop)
+
+    # ---- Shopify: up to 5 stores, each through its own Dev Dashboard app ----
+    @app.get("/api/business/shopify")
+    def shopify_status(): return shopify.status()
+
+    @app.post("/api/business/shopify/stores")
+    def shopify_add(payload: dict):
+        return shopify.add(payload.get("domain"), payload.get("client_id"), payload.get("client_secret"))
+
+    @app.post("/api/business/shopify/stores/{store}/check")
+    def shopify_check(store: str): return shopify.check(store)
+
+    @app.delete("/api/business/shopify/stores/{store}")
+    def shopify_remove(store: str): return shopify.remove(store)
 
     @app.post("/api/business/connections/etsy/finish")
     def etsy_finish(payload: OAuthFinish): return commerce.finish_etsy(payload.redirected_url)
@@ -2101,7 +2123,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def business_external(job_id: str, payload: BusinessExternal):
         if len(json.dumps(payload.fields)) > 50000: raise ValueError("Draft fields are too large")
         if payload.action == "image": return commerce.image(job_id, payload.prompt, payload.confirmed)
-        if payload.action == "etsy_draft": return commerce.etsy_draft(job_id, payload.fields, payload.confirmed, payload.original_confirmed)
+        if payload.action == "etsy_draft": return commerce.etsy_draft(job_id, payload.fields, payload.confirmed, payload.original_confirmed, payload.shop or None)
+        if payload.action == "shopify_draft": return shopify.draft(job_id, payload.fields, payload.confirmed, payload.shop or None)
         if payload.action == "printify_upload": return commerce.printify_upload(job_id, payload.path, payload.confirmed)
         return commerce.printify_product(job_id, payload.fields, payload.confirmed)
 
@@ -2166,6 +2189,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         "google_permissions": "https://myaccount.google.com/connections",
         "ntfy_app": "https://ntfy.sh/", "ntfy_docs": "https://docs.ntfy.sh/subscribe/phone/", "telegram_botfather": "https://t.me/BotFather",
         "fiverr_sell": "https://www.fiverr.com/start_selling",
+        "freelancer_develop": "https://accounts.freelancer.com/settings/develop", "freelancer_api_docs": "https://developers.freelancer.com/",
+        "freelancer_terms": "https://www.freelancer.com/about/terms",
+        "shopify_dev": "https://dev.shopify.com/dashboard", "shopify_start": "https://www.shopify.com/free-trial",
+        "shopify_cc_docs": "https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/client-credentials-grant",
         "formspree": "https://formspree.io/",
         "fiverr_ai": "https://help.fiverr.com/hc/en-us/articles/37333301560593-Using-AI-on-Fiverr-Guidelines-for-freelancers-and-clients",
     }

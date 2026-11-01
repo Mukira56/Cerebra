@@ -199,12 +199,13 @@ class BusinessConnection(StrictModel):
     values: dict[str, str] = Field(default_factory=dict, max_length=8)
 
 class BusinessExternal(StrictModel):
-    action: Literal["etsy_draft", "printify_draft", "printify_upload", "image"]
+    action: Literal["etsy_draft", "shopify_draft", "printify_draft", "printify_upload", "image"]
     confirmed: bool = False
     original_confirmed: bool = False
     prompt: str = Field(default="", max_length=12000)
     path: str = Field(default="", max_length=1024)
     fields: dict = Field(default_factory=dict)
+    shop: str = Field(default="", max_length=40)  # which Etsy shop or Shopify store gets the draft; blank is the first
 
 class OAuthFinish(StrictModel):
     redirected_url: str = Field(min_length=10, max_length=4096)

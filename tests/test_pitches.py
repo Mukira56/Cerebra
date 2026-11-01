@@ -42,7 +42,7 @@ def test_an_upwork_profile_stays_inside_upworks_limits_and_uses_only_facts(clien
     piece, model = write(client, "upwork", {"title": title, "overview": "I build websites that turn visitors into customers."})
     assert piece["status"] == "ready" and len(piece["data"]["title"]) <= 70 and title.startswith(piece["data"]["title"])  # cut at a word
     prompt = model.prompts[-1]
-    assert "Never invent clients, employers, years of experience" in prompt and "Business website: USD 600.00" in prompt and "at most 70 characters" in prompt
+    assert "Never invent clients, employers, years of experience" in prompt and "Business website: $600.00" in prompt and "at most 70 characters" in prompt
 
 
 def test_a_fiverr_gig_has_an_i_will_title_three_packages_and_clean_tags(client):  # noqa: F811

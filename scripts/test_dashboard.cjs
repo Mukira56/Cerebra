@@ -204,9 +204,9 @@ const path = require('node:path');
 
     await page.locator('[data-page="connections"]').click();
     await page.getByText('Read-only Gmail intake', {exact:true}).waitFor();
-    assert.equal(await page.locator('.connection-grid input[type="password"]').count(), 6, 'Secrets use password fields');
+    assert.equal(await page.locator('.connection-grid input[type="password"]').count(), 7, 'Secrets use password fields (Shopify client secret included)');
     // Setup notes beside each connection, and the full guide in a pop-up.
-    assert.equal(await page.locator('.guide-notes').count(), 6, 'Setup notes beside every connection (Etsy, Printify, images, Gmail, phone, Fiverr)');
+    assert.equal(await page.locator('.guide-notes').count(), 7, 'Setup notes beside every connection (Etsy, Printify, images, Shopify, Gmail, phone, Fiverr)');
     assert.ok(await page.getByText('Fiverr orders', {exact: true}).count(), 'Fiverr card is shown');
     await page.locator('.panel', {hasText: 'Etsy drafts'}).locator('.guide-notes').getByRole('button', {name: 'How to connect…'}).click();
     await page.locator('dialog h3', {hasText: '1. Open an Etsy shop'}).waitFor();

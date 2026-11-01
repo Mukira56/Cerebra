@@ -79,7 +79,7 @@ def test_support_sees_the_money_record_to_suggest_next_steps(client):  # noqa: F
         session.get(MoneyDocument, created["id"]).due_date = "2026-01-01"
     with client.app.state.db.Session() as session:
         text = money.brief(session, today="2026-01-21")
-    assert "overdue: INV-0001 Ama's Bakery, USD 800.00 owed, 20 days late, 0 reminder(s) sent" in text and "ama@example.com" not in text
+    assert "overdue: INV-0001 Ama's Bakery, $800.00 owed, 20 days late, 0 reminder(s) sent" in text and "ama@example.com" not in text
     registry = Capture()
     client.app.state.supervisor.registry = registry
     conversation = client.post("/api/chats", json={"profile": "codex"}).json()["id"]

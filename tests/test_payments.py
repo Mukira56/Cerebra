@@ -102,7 +102,7 @@ def test_stripe_payments_mark_the_invoice_paid_once_and_switch_the_link_off(clie
 def test_a_part_payment_gets_a_new_link_for_the_rest(client, stripe):  # noqa: F811
     invoice = step(client, new(client, "invoice"), "issue")
     client.post(f"/api/money/documents/{invoice['id']}/stripe-link", json={"confirmed": True})
-    step(client, invoice, "payments", amount=400, method="M-Pesa")
+    step(client, invoice, "payments", amount=400, method="Zelle")
     second = client.post(f"/api/money/documents/{invoice['id']}/stripe-link", json={"confirmed": True}).json()
     assert second["url"] == "https://buy.stripe.com/test_2" and stripe.prices["price_2"]["unit_amount"] == "50000"
     assert stripe.links["plink_1"]["active"] is False  # the old amount can't be paid any more

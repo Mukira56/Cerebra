@@ -88,7 +88,7 @@ def save(session, output_root=None, hourly_rate=None, currency=None):
         if not 0 <= float(hourly_rate) <= 10000: raise ValueError("Enter an hourly rate between 0 and 10,000")
         value["hourly_rate"] = round(float(hourly_rate), 2)
     if currency is not None:
-        if not re.fullmatch(r"[A-Z]{3}", str(currency)): raise ValueError("Use a 3-letter currency code such as USD or KES")
+        if not re.fullmatch(r"[A-Z]{3}", str(currency)): raise ValueError("Use a 3-letter currency code such as USD")
         value["currency"] = str(currency)
     row = session.get(Metadata, KEY)
     if row:

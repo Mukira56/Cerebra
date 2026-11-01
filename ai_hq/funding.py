@@ -15,7 +15,8 @@ from .models import Metadata
 
 CHECKED = "2026-10-30"
 # Requirement keys: company (a registered company), website (a working company website), product (something live people use),
-# developer (someone who writes code: the owner counts), african (an African citizen or resident, 18+), self_funded (no outside
+# developer (someone who writes code: the owner counts), us_owned (a US small business, majority owned by US citizens or
+# permanent residents), self_funded (no outside
 # investors yet), young (founded in the last 10 years), revenue (paying customers), aws_paid (an AWS account on a paid plan).
 PROGRAMS = [
     {"key": "google_cloud", "name": "Google for Startups Cloud Program", "kind": "credits", "url": "https://cloud.google.com/startup",
@@ -30,36 +31,35 @@ PROGRAMS = [
     {"key": "nvidia", "name": "NVIDIA Inception", "kind": "credits", "url": "https://www.nvidia.com/en-us/startups/",
      "gives": "Free membership: partner GPU cloud credits (requested one by one, not automatic), discounts on NVIDIA products and training, introductions to investors.",
      "needs": ["company", "website", "developer", "young"], "window": "Rolling: apply any time", "equity": False},
-    {"key": "tef", "name": "Tony Elumelu Foundation Entrepreneurship Programme", "kind": "grant", "url": "https://www.tonyelumelufoundation.org",
-     "gives": "USD 5,000 non-refundable seed capital, 12 weeks of online business training and a mentor.",
-     "needs": ["african"], "window": "Once a year: the 2026 call closed on 1 March 2026; watch for the next one (usually opens in January)", "equity": False},
-    {"key": "google_africa", "name": "Google for Startups Accelerator: Africa", "kind": "accelerator", "url": "https://startup.google.com/programs/accelerator/africa/",
-     "gives": "A 12-week accelerator for AI-first startups (seed to Series A): mentors, Google Cloud credits, early access to AI products. Takes no equity.",
-     "needs": ["african", "company", "product", "revenue"], "window": "Once a year: the 2026 call closed on 18 March 2026", "equity": False},
+    {"key": "nsf_sbir", "name": "America's Seed Fund (NSF SBIR/STTR)", "kind": "grant", "url": "https://seedfund.nsf.gov/",
+     "gives": "Up to USD 305,000 for Phase I research and development (6-18 months), then up to USD 1,250,000 in Phase II. Takes no equity. "
+              "Reauthorized in April 2026 through 2031. Start with a 3-page Project Pitch; NSF invites a full proposal.",
+     "needs": ["company", "us_owned", "developer"], "window": "Project Pitch any time; full proposals by NSF's published deadlines", "equity": False},
     {"key": "ycombinator", "name": "Y Combinator", "kind": "accelerator", "url": "https://www.ycombinator.com/deal",
      "gives": "USD 500,000: USD 125,000 for 7% of the company plus USD 375,000 on an uncapped SAFE (most-favoured-nation terms). Funded companies usually incorporate in the US.",
      "needs": ["product"], "window": "Several batches a year: see ycombinator.com/apply for the next deadline", "equity": True},
 ]
 NEEDS = {
     "company": "a registered company", "website": "a working company website", "product": "a live product people use",
-    "developer": "someone who writes code (you count)", "african": "African citizenship or residence (18+)", "self_funded": "no outside investors yet",
+    "developer": "someone who writes code (you count)", "us_owned": "a US small business, majority owned by US citizens or permanent residents", "self_funded": "no outside investors yet",
     "young": "a company founded in the last 10 years", "revenue": "paying customers", "aws_paid": "an AWS account on a paid plan",
 }
 FACTS_KEY = "funding_facts"
-FACT_FIELDS = ("company", "company_country", "website", "product", "founded_year", "african", "self_funded", "aws_paid")
+FACT_FIELDS = ("company", "company_country", "website", "product", "founded_year", "us_owned", "self_funded", "aws_paid")
 APPLIED_KEY = "funding_applied"
 
 
 def facts(session):
     row = session.get(Metadata, FACTS_KEY)
-    value = {"company": False, "company_country": "", "website": "", "product": False, "founded_year": 0, "african": False, "self_funded": True,
+    value = {"company": False, "company_country": "", "website": "", "product": False, "founded_year": 0, "us_owned": False, "self_funded": True,
              "aws_paid": False, **(row.value if row else {})}
+    value.pop("african", None)  # an earlier, non-US question
     return value
 
 
 def save_facts(session, fields):
     value = facts(session)
-    for key in ("company", "product", "african", "self_funded", "aws_paid"):
+    for key in ("company", "product", "us_owned", "self_funded", "aws_paid"):
         if key in fields:
             value[key] = bool(fields[key])
     if "company_country" in fields:
@@ -99,7 +99,7 @@ def readiness(session, today=None):
     owner, proof = facts(session), evidence(session)
     met_by = {
         "company": owner["company"], "website": bool(owner["website"]), "product": owner["product"], "developer": True,
-        "african": owner["african"], "self_funded": owner["self_funded"], "revenue": proof["paying_customers"], "aws_paid": owner["aws_paid"],
+        "us_owned": owner["us_owned"], "self_funded": owner["self_funded"], "revenue": proof["paying_customers"], "aws_paid": owner["aws_paid"],
         "young": bool(owner["founded_year"]) and today.year - owner["founded_year"] < 10,
     }
     applied = applications(session)
@@ -189,7 +189,8 @@ def draft_prompt(session, key):
     from .freelance import context
     chosen, owner, proof = program(key), facts(session), evidence(session)
     questions = QUESTIONS[chosen["kind"]]
-    earned = ", ".join(f"{currency} {amount:,.2f}" for currency, amount in proof["earned_this_year"].items()) or "none recorded"
+    from .money import _money
+    earned = ", ".join(_money(amount, currency) for currency, amount in proof["earned_this_year"].items()) or "none recorded"
     records = (f"Earned this year: {earned}\nProduct sales: {proof['product_sales']}\nFreelance jobs won: {proof['jobs_won']}\n"
                f"Registered company: {'yes, in ' + owner['company_country'] if owner['company'] and owner['company_country'] else 'yes' if owner['company'] else 'not yet'}\n"
                f"Website: {owner['website'] or 'none yet'}\nFounded: {owner['founded_year'] or 'not stated'}\nOutside investors: {'none' if owner['self_funded'] else 'yes'}")

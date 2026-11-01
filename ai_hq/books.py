@@ -174,8 +174,9 @@ def calculate(fields):
 KEY = "books_settings"
 CHECKLIST = (
     ("kdp_account", "Create your KDP account", "At kdp.amazon.com, with your own name and details (the pen name goes on the books, not the account)."),
-    ("tax", "Complete the US tax interview", "In KDP: Account › Tax information. As a non-US author you fill in form W-8BEN; it sets how much US tax is withheld."),
-    ("payments", "Add how KDP pays you", "In KDP: Account › Getting paid. Add your bank for direct deposit or wire, or choose a check."),
+    ("tax", "Complete the tax interview", "In KDP: Account › Tax information. As a US person you fill in form W-9 with your Social Security number (or your business's EIN). "
+            "Amazon sends you a 1099 for royalties each year; report them on your tax return."),
+    ("payments", "Add how KDP pays you", "In KDP: Account › Getting paid. Add your US bank account (routing and account number) for direct deposit."),
     ("pen_name", "Choose your pen name", "One pen name per niche keeps each niche's books together on Amazon."),
     ("keepa", "Add a Keepa API key (optional)", "Keepa gives sales rank and price history for competing books. Without it, type the numbers from Amazon yourself."),
     ("images", "Add an image API key", "For cover artwork, in Business connections. Cerebra sets the title text itself."),

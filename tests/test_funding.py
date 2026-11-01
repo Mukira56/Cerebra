@@ -18,18 +18,17 @@ def test_readiness_says_what_is_missing_in_plain_words(client):  # noqa: F811
     state = client.get("/api/funding").json()
     google = next(item for item in state["programs"] if item["key"] == "google_cloud")
     assert not google["ready"] and google["missing"] == ["a registered company", "a working company website", "a company founded in the last 10 years"]
-    client.put("/api/funding/facts", json={"company": True, "website": "mukira.example", "founded_year": date.today().year, "african": True, "product": True})
+    client.put("/api/funding/facts", json={"company": True, "website": "mukira.example", "founded_year": date.today().year, "us_owned": True, "product": True})
     state = client.get("/api/funding").json()
     ready = {item["key"] for item in state["programs"] if item["ready"]}
-    assert {"google_cloud", "microsoft", "nvidia", "tef", "ycombinator"} <= ready
+    assert {"google_cloud", "microsoft", "nvidia", "nsf_sbir", "ycombinator"} <= ready
     assert state["facts"]["website"] == "https://mukira.example"
-    africa = next(item for item in state["programs"] if item["key"] == "google_africa")
-    assert africa["missing"] == ["paying customers"]  # checked against Cerebra's records, not the owner's word
+    assert not any(item["key"] in {"tef", "google_africa"} for item in state["programs"])  # US programs only
     aws = next(item for item in state["programs"] if item["key"] == "aws_activate")
     assert aws["missing"] == ["an AWS account on a paid plan"]
     assert state["programs"][0]["ready"] and not state["programs"][-1]["ready"]  # ready ones first
-    first_closed = next(index for index, item in enumerate(state["programs"]) if item["ready"] and not item["open"])
-    assert all(item["open"] for item in state["programs"][:first_closed])  # among ready ones, open calls come before a closed yearly one
+    opens = [item["open"] for item in state["programs"] if item["ready"]]
+    assert opens == sorted(opens, reverse=True)  # among ready ones, open calls come before a closed yearly one
 
 
 def test_a_won_job_counts_as_paying_customers(client):  # noqa: F811
@@ -39,10 +38,10 @@ def test_a_won_job_counts_as_paying_customers(client):  # noqa: F811
 
 
 def test_the_owner_records_applications_and_bad_facts_are_refused(client):  # noqa: F811
-    assert client.put("/api/funding/programs/tef", json={"status": "applied", "note": "Submitted on TEFConnect"}).json()["status"] == "applied"
-    assert next(item for item in client.get("/api/funding").json()["programs"] if item["key"] == "tef")["applied"]["note"] == "Submitted on TEFConnect"
+    assert client.put("/api/funding/programs/nsf_sbir", json={"status": "applied", "note": "Project Pitch submitted on seedfund.nsf.gov"}).json()["status"] == "applied"
+    assert next(item for item in client.get("/api/funding").json()["programs"] if item["key"] == "nsf_sbir")["applied"]["note"] == "Project Pitch submitted on seedfund.nsf.gov"
     assert client.put("/api/funding/programs/nope", json={"status": "applied"}).status_code == 404
-    assert client.put("/api/funding/programs/tef", json={"status": "won the lottery"}).status_code == 400
+    assert client.put("/api/funding/programs/nsf_sbir", json={"status": "won the lottery"}).status_code == 400
     assert client.put("/api/funding/facts", json={"founded_year": 1800}).status_code == 400
 
 
