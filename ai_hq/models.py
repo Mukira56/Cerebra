@@ -417,6 +417,21 @@ class EtsyListing(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
 
 
+class EtsySaleLine(Base):
+    """One item in a paid Etsy order: which listing sold, how many and for how much, so sales can be traced back to the
+    listing and niche Cerebra made them from (docs/ETSY_AMAZON_PLAN.md, phase 3). Replaced on every import of its order."""
+    __tablename__ = "etsy_sale_lines"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # Etsy's transaction ID
+    receipt_id: Mapped[str] = mapped_column(String, index=True)
+    listing_id: Mapped[str] = mapped_column(String, index=True, default="")  # Etsy's listing ID
+    shop_id: Mapped[str] = mapped_column(String, default="")
+    title: Mapped[str] = mapped_column(String, default="")
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)  # price x quantity, before order-level discounts
+    currency: Mapped[str] = mapped_column(String, default="USD")
+    date: Mapped[str] = mapped_column(String, default="")
+
+
 class Book(Base):
     """A book for Amazon KDP: its formats, size, prices and where it is on the way to publishing. Its text lives in files."""
     __tablename__ = "books"

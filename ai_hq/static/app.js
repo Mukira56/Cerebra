@@ -1522,7 +1522,8 @@
       [["Researched", niches.length, "keywords", ""], ["Strong", niches.filter(item => item.label === "strong").length, "worth making for", "green"],
        ["Worth a test", niches.filter(item => item.label === "test").length, "a few listings first", "amber"]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
-      root.replaceChildren(stats, append(el("div", "grid two"),
+      const sells = etsySells(state.performance, niches);
+      root.replaceChildren(stats, sells, append(el("div", "grid two"),
         append(el("div"), panel("Your niches", niches.length ? list : body(empty("No niches yet", "Research a keyword to see if it's worth making for.")), null, niches.length)),
         append(el("div"), panel("Find a niche", body(state.ready ? form : append(el("div"), hint(state.setup, true), link("Business connections →", "connections")))),
           panel("How to read it", body(append(el("ul", "tips"),
@@ -1532,6 +1533,28 @@
             el("li", "", "Etsy requires you to disclose AI use and bans AI-made patterns and recipes. Check Etsy's seller policy before listing.")))))));
     })();
     return root;
+  }
+  function etsySells(performance, niches) {
+    const data = performance || {}, worth = revenue => Object.entries(revenue || {}).map(([currency, amount]) => cash(amount, currency)).join(" + ") || cash(0, "USD");
+    if (!data.orders) return panel("What sells", body(hint("After your first Etsy orders, this shows which niches and listings earn, so you make more of what sells. Orders come in every 6 hours once Etsy is connected (Money page › Import Etsy orders).")));
+    const root = el("div");
+    if (data.niches.length) {
+      root.append(el("h4", "", "Niches that earn"));
+      const list = el("div", "row-list");
+      data.niches.forEach(item => {
+        const niche = niches.find(entry => entry.id === item.id), row = append(el("div", `row${niche ? " clickable" : ""}`), append(el("div", "row-main"), el("strong", "", item.keyword),
+          el("div", "row-meta", `${item.units} sold in ${item.orders} order(s) from ${item.listings} listing(s)${item.last_sale ? ` · last sale ${new Date(`${item.last_sale}T12:00:00`).toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"})}` : ""}`)),
+          el("span", "badge green", worth(item.revenue)));
+        if (niche) { row.tabIndex = 0; row.setAttribute("role", "button"); row.title = "Write another listing for this niche";
+          row.addEventListener("click", () => etsyNicheDialog(niche)); row.addEventListener("keydown", event => { if (event.key === "Enter") etsyNicheDialog(niche); }); }
+        list.append(row);
+      });
+      root.append(list, hint("A niche that earns is the best place for your next listings: open it and write another, a different product for the same buyers."));
+    }
+    root.append(el("h4", "", "Best-selling listings"), table(["Listing", "Niche", "Sold", "Earned"], data.listings.map(item => [item.title || item.listing_id, item.keyword || (item.made_here ? "—" : "made outside Cerebra"), String(item.units), worth(item.revenue)])));
+    if (data.outside.units) root.append(hint(`${data.outside.units} sold (${worth(data.outside.revenue)}) from listings Cerebra didn't make or that have no niche yet.`));
+    root.append(hint("Earned is the item price times quantity, before discounts and Etsy's fees."));
+    return panel("What sells", body(root), null, `${data.orders} order(s)`);
   }
   function etsyNicheDialog(niche) {
     const data = niche.data || niche, root = el("div");

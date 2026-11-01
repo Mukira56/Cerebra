@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from . import commerce as connections, vault
-from .models import ChannelEntry, Event, Metadata, now
+from .models import ChannelEntry, EtsySaleLine, Event, Metadata, now
 
 KEY = "channel_imports"
 MAX_PAGES = 20
@@ -44,6 +44,24 @@ def etsy_sale(receipt):
         return None
     return {"amount": amount, "currency": currency.upper(), "date": _day(receipt.get("created_timestamp") or receipt.get("create_timestamp")),
             "note": f"Etsy order {receipt.get('receipt_id')}" + (" (partly refunded)" if refunded else "")}
+
+
+def store_lines(session, receipt, shop):
+    """The order's items, replaced each import: none when the order no longer counts (cancelled, refunded, unpaid)."""
+    receipt_id = str(receipt.get("receipt_id"))
+    for row in session.scalars(select(EtsySaleLine).where(EtsySaleLine.receipt_id == receipt_id)).all():
+        session.delete(row)
+    sale = etsy_sale(receipt)
+    if sale is None:
+        return
+    for item in receipt.get("transactions") or []:
+        if not isinstance(item, dict) or not item.get("transaction_id"):
+            continue
+        price, currency = _money(item.get("price"))
+        quantity = max(1, int(item.get("quantity") or 1))
+        session.merge(EtsySaleLine(id=str(item["transaction_id"]), receipt_id=receipt_id, listing_id=str(item.get("listing_id") or ""), shop_id=str(shop),
+                                   title=str(item.get("title") or "")[:200], quantity=quantity, amount=round(price * quantity, 2),
+                                   currency=(currency or sale["currency"]).upper(), date=sale["date"]))
 
 
 def printify_cost(order):
@@ -114,6 +132,7 @@ def _import_shop(service, headers, shop, counts):
                 outcome = _store(session, f"etsy:{receipt.get('receipt_id')}", "etsy", "sale", etsy_sale(receipt))
                 if outcome:
                     counts[outcome] += 1
+                store_lines(session, receipt, shop)
         offset += len(results)
         if len(results) < 100 or offset >= int(page.get("count") or 0):
             break

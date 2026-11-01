@@ -23,7 +23,7 @@ from urllib.parse import urlencode
 from sqlalchemy import select
 
 from . import vault
-from .models import EtsyListing, EtsyNiche, now
+from .models import EtsyListing, EtsyNiche, EtsySaleLine, Metadata, now
 
 SEARCH = "https://api.etsy.com/v3/application/listings/active"
 SAMPLE = 100  # Etsy's largest page: one call per keyword (the app's limit is a few thousand calls a day)
@@ -259,6 +259,52 @@ def product_job(listing):
     return {"title": listing.title[:120], "kind": kind, "brief": brief,
             "requirements": ["Every page or element the description promises is made", "Original work only: no trademarks or copied designs",
                              "Prints or cuts cleanly at the stated size"]}
+
+
+def performance(session):
+    """What sells (phase 3): each Etsy sale traced back through the draft Cerebra made to its listing and niche.
+    Sales of listings made outside Cerebra are counted too, by their own title, so the owner sees the whole shop."""
+    lines = session.scalars(select(EtsySaleLine)).all()
+    if not lines:
+        return {"orders": 0, "niches": [], "listings": [], "outside": {"units": 0, "revenue": {}}}
+    jobs = {}  # Etsy listing ID -> the Business Studio job whose draft became it
+    for row in session.scalars(select(Metadata).where(Metadata.key.like("business_operation_%"))).all():
+        value = row.value or {}
+        if value.get("action") == "etsy_draft" and value.get("status") == "succeeded" and (value.get("result") or {}).get("listing_id"):
+            jobs[str(value["result"]["listing_id"])] = value.get("job_id")
+    made = {row.job_id: row for row in session.scalars(select(EtsyListing).where(EtsyListing.job_id != "")).all()}
+    keywords = {row.id: row.keyword for row in session.scalars(select(EtsyNiche)).all()}
+
+    def add(target, line):
+        target["units"] += line.quantity
+        target["revenue"][line.currency] = round(target["revenue"].get(line.currency, 0.0) + line.amount, 2)
+        target["orders"].add(line.receipt_id)
+        target["last_sale"] = max(target["last_sale"], line.date)
+
+    blank = lambda **extra: {"units": 0, "revenue": {}, "orders": set(), "last_sale": "", **extra}  # noqa: E731
+    by_listing, by_niche, outside = {}, {}, blank()
+    for line in lines:
+        listing = made.get(jobs.get(line.listing_id))
+        niche_id = listing.niche_id if listing and listing.niche_id in keywords else None
+        entry = by_listing.setdefault(line.listing_id or line.title, blank(listing_id=line.listing_id, title=line.title, niche_id=niche_id,
+                                                                            keyword=keywords.get(niche_id, ""), made_here=listing is not None))
+        add(entry, line)
+        if niche_id:
+            add(by_niche.setdefault(niche_id, blank(id=niche_id, keyword=keywords[niche_id], listings=set())), line)
+            by_niche[niche_id]["listings"].add(line.listing_id)
+        else:
+            add(outside, line)
+
+    def usd(item): return item["revenue"].get("USD", 0.0)
+
+    def done(item):
+        result = {**item, "orders": len(item["orders"])}
+        if "listings" in item: result["listings"] = len(item["listings"])
+        return result
+    return {"orders": len({line.receipt_id for line in lines}),
+            "niches": [done(item) for item in sorted(by_niche.values(), key=lambda item: (usd(item), item["units"]), reverse=True)],
+            "listings": [done(item) for item in sorted(by_listing.values(), key=lambda item: (usd(item), item["units"]), reverse=True)[:10]],
+            "outside": done(outside)}
 
 
 def listings(session, niche_id=None, job_id=None):

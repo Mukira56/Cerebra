@@ -1183,7 +1183,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 ready, setup = True, ""
             except ValueError as exc:
                 ready, setup = False, str(exc)
-            return {"ready": ready, "setup": setup, "niches": etsy_module.niches(session)}
+            return {"ready": ready, "setup": setup, "niches": etsy_module.niches(session), "performance": etsy_module.performance(session)}
 
     @app.post("/api/etsy/research")
     def etsy_research(payload: dict):
