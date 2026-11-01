@@ -26,7 +26,7 @@ from sqlalchemy import select
 from .network import LazyClient
 from .models import Event, Prospect, ProspectSearch, now
 
-USER_AGENT = "Cerebra prospect research (one page per business, robots.txt respected; https://github.com/Mukira56/Cerebra)"
+USER_AGENT = "Cerebra prospect research (one page per business, robots.txt respected)"
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 ATTRIBUTION = "Business listings © OpenStreetMap contributors (ODbL)"

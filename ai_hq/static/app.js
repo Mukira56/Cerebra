@@ -2860,7 +2860,7 @@
   // ---------- updates ----------
   function updatesPanel() {
     const node = el("div"), state = el("div"), notes = el("div"), log = el("div");
-    append(node, kv([["This version", data.version], ["Updates from", "your GitHub releases (Mukira56/Cerebra)"]]), state, notes, log);
+    append(node, kv([["This version", data.version], ["Updates from", "Cerebra's releases"]]), state, notes, log);
     const check = button("Check for updates", () => run(), "button primary");
     state.append(actionsRow(check), hint("Uses your GitHub sign-in (GitHub page). Updating closes Cerebra, installs the new version and reopens it; running tasks are paused and can be resumed."));
     async function run() {
@@ -2933,8 +2933,8 @@
   // ---------- about you ----------
   function ownerForm() {
     const form = el("form"), grid = el("div", "form-grid"), inputs = {};
-    const fields = [["name", "Name", "e.g. Godfrey Mukira"], ["headline", "What you do", "e.g. Software engineer and AI builder"], ["email", "Email", "the address you want on your work"],
-      ["github", "GitHub username", "e.g. Mukira56"], ["linkedin", "LinkedIn", "https://www.linkedin.com/in/…"], ["website", "Website", "https://…"], ["location", "Location", "e.g. Austin, TX"]];
+    const fields = [["name", "Name", "e.g. Alex Rivera"], ["headline", "What you do", "e.g. Software engineer and AI builder"], ["email", "Email", "the address you want on your work"],
+      ["github", "GitHub username", "e.g. your-github-name"], ["linkedin", "LinkedIn", "https://www.linkedin.com/in/…"], ["website", "Website", "https://…"], ["location", "Location", "e.g. Austin, TX"]];
     fields.forEach(([key, label, hint_]) => { inputs[key] = input(hint_); grid.append(field(label, inputs[key])); });
     inputs.bio = textarea("A few sentences about you: your background, what you build, what you're proud of."); inputs.preferences = textarea("How you like things done: tone, colours, style, what to avoid.");
     const share = check("Share these details with the AI team (Support, the Council and coding tasks)", true);

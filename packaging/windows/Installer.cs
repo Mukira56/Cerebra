@@ -164,7 +164,7 @@ internal static class Setup {
             MoveFolder(stage,options.Target);committed=true; Directory.CreateDirectory(options.Data);
             using(var key=Registry.CurrentUser.CreateSubKey(options.Registration)) {
                 key.SetValue("DisplayName",options.TestRegistration?"Cerebra Installer Test":Shared.Product);key.SetValue("DisplayVersion",Shared.Version);
-                key.SetValue("Publisher","Cerebra (Mukira56)");key.SetValue("InstallLocation",options.Target);key.SetValue("DisplayIcon",Path.Combine(options.Target,"AIHQ.exe"));
+                key.SetValue("Publisher","Cerebra");key.SetValue("InstallLocation",options.Target);key.SetValue("DisplayIcon",Path.Combine(options.Target,"AIHQ.exe"));
                 key.SetValue("UninstallString",Shared.Quote(Path.Combine(options.Target,"Uninstall.exe")));key.SetValue("QuietUninstallString",Shared.Quote(Path.Combine(options.Target,"Uninstall.exe"))+" --quiet");
                 key.SetValue("NoModify",1,RegistryValueKind.DWord);key.SetValue("NoRepair",1,RegistryValueKind.DWord);
             }

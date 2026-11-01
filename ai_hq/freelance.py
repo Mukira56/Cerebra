@@ -23,7 +23,7 @@ from .models import Event, FreelanceLead, Metadata, Project, Task, now, uid
 from .security import redact
 
 KEY = "freelance_profile"
-USER_AGENT = "Cerebra (personal freelance job search; https://github.com/Mukira56/Cerebra)"
+USER_AGENT = "Cerebra (personal freelance job search)"
 SERVICES = {
     "web": ("Websites & web apps", ["website", "web app", "landing page", "wordpress", "shopify", "woocommerce", "e-commerce", "ecommerce", "react",
                                      "next.js", "nextjs", "vue", "angular", "frontend", "front-end", "full stack", "full-stack", "django", "flask",

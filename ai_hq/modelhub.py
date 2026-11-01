@@ -107,7 +107,7 @@ def usage_summary(session, now=None):
 class Hub:
     def __init__(self, db, client=None):
         self.db = db
-        self.client = client or LazyClient(timeout=180, headers={"HTTP-Referer": "https://github.com/Mukira56/Cerebra", "X-Title": "Cerebra"})
+        self.client = client or LazyClient(timeout=180, headers={"X-Title": "Cerebra"})
         self._catalog, self._catalog_at, self._lock = [], 0.0, threading.Lock()
 
     def ready(self):

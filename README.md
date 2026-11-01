@@ -2,23 +2,18 @@
 
 # Cerebra
 
-**The AI engineering brain.** A Windows desktop app where real AI coding agents (Claude and ChatGPT/Codex) plan, build, test and review software for you, under a supervisor you control.
+Cerebra is a desktop app that puts the best AI models to work in one place. I connected Claude, ChatGPT (Codex), a set of free open models and the local models on your own computer, and gave them one job: build software properly and help run a small online business, with you deciding every step.
 
-- **Real agents, your accounts.** OpenAI Codex and Anthropic Claude Code plan, write and review code using your own ChatGPT/Claude sign-in. There are no API keys to paste and no demo mode.
-- **A supervisor, not a chatbot.** A deterministic Python supervisor gives each task to a planner, a coder and an *independent* reviewer from a different provider. It runs your project's real tests itself and repairs failures up to three times.
-- **You approve every step.** The plan, letting agents run, and merging the result each need your yes. Code is written in an isolated Git worktree; your project changes only when you approve the merge.
-- **See inside.** The *System view* is a live map of the backend: web server, supervisor, AI roles, working copy, test runner, approval gate, database and logs, lighting up as work flows through them.
-- **Explained simply.** Every task gets a plain-language *Report* that anyone can read: what was asked, who did what, whether the tests passed, and where everything is saved.
-- **Business Studio**: paste a client brief and get original, checked and independently reviewed deliverables (website, listing copy, SVG design, document) exported to a folder on your laptop with a README, manifest and review findings.
-- **Support chat** that knows every project and task: ask "why did EstatePilot fail?", paste a client's request to have it understood and planned, or say "build this". It proposes or, if you let it, creates and starts the projects and tasks itself.
-- **The right model for each job.** Pick models yourself (Claude Opus 5.5, Sonnet 5.5, Haiku 5.5; GPT-6-Astra, GPT-6.1-Sol, GPT-6-Luna and whatever else your Codex plan lists), or leave a role on **Auto**. The supervisor then rates each task and gives hard work to frontier models and small jobs to fast ones. It can also ask a *supervisor model* to choose, and checks its answer before using it.
-- **Away mode**: Cerebra keeps working while you're away. It approves plans and runs for you for a set time, and can optionally merge and push work that passes every test and review.
-- **Full access (opt-in)**: let the coding agents run any command on your laptop and use your GitHub login.
-- **Models & sign-in**: sign in and out from the dashboard, and save your own model profiles.
-- **GitHub**: connect your account, clone repositories, publish and push.
-- **Toolchain**: check and install Git, Node.js, Python, .NET, Java, Go, Rust, Docker, VS Code and the AI CLIs in one place.
+**What it does**
 
-Everything except AI inference runs on `127.0.0.1`. Data stays in a local SQLite database.
+- **Builds software with a real review process.** One model plans the work, another writes the code, and a model from a different company reviews it. Cerebra runs your project's own tests, sends failures back to be fixed, and only merges when you say yes. The code is written in a separate copy of your project, so nothing touches your work until you approve it.
+- **Uses the right model for each job.** Claude and ChatGPT through your own accounts, free models through OpenRouter, and local models through Ollama, at no cost. Hard work goes to the strongest models and quick jobs to the fast ones, or you choose yourself.
+- **Finds and wins work.** It finds freelance jobs and local businesses that need a website, reads what they actually need, drafts proposals and emails in your voice, and follows up. You can send each one with a click, or let it run on its own within limits you set.
+- **Makes things to sell.** Amazon KDP notebooks, logbooks and planners with their covers and listings, Etsy printables, and print-ready designs for shirts and mugs, all made on your computer.
+- **Keeps the money straight.** Quotes, invoices with payment links, and orders and sales from Etsy, Shopify and Printify, in one place.
+- **Shows you what's happening.** A live view of every part at work, and a plain-English report for every task: what was asked, who did what, and whether the tests passed.
+
+Everything runs on your own computer. Your data stays in a local database, and the only things that leave it are the requests you send to the AI models and the services you connect.
 
 ## Install (Windows 10/11 x64)
 
@@ -75,4 +70,4 @@ Tests never launch a real AI CLI. They use the fixture agent in `tests/fakes.py`
 
 ## License
 
-Proprietary. All rights reserved. See [LICENSE](LICENSE).
+Copyright (c) 2026 Godfrey Mukira. All rights reserved. The code is public to read, not to use or copy: see [LICENSE](LICENSE).
