@@ -405,6 +405,35 @@ class Commerce:
             return {"image_id": data["id"], "message": "Image uploaded to your Printify library. Use this image ID in the product draft's print areas."}
         return self.write_once(job_id, "printify_upload", {"path": relative_path}, confirmed, perform)
 
+    # ---- Printify's catalog (read-only): pick a product instead of typing its IDs ----
+    def _printify_get(self, path, **params):
+        item = self.config("printify")
+        return self.request("GET", "https://api.printify.com/v1/catalog/" + path, params=params or None,
+                            headers={"Authorization": "Bearer " + vault.unprotect(item["api_key"])})
+
+    def printify_catalog(self, query):
+        """Products whose name matches every word typed, e.g. "unisex tee" or "mug 11oz". The catalog is read once an hour."""
+        words = [word for word in str(query or "").lower().split() if word][:6]
+        if not words:
+            raise ValueError("Type what to sell, for example “unisex t-shirt”, “mug” or “poster”")
+        cached = getattr(self, "_blueprints", None)
+        if not cached or time.monotonic() - cached[0] > 3600:
+            cached = (time.monotonic(), self._printify_get("blueprints.json"))
+            self._blueprints = cached
+        found = [item for item in cached[1] if all(word in f"{item.get('title', '')} {item.get('brand', '')} {item.get('model', '')}".lower() for word in words)]
+        return [{"id": item["id"], "title": item.get("title", ""), "brand": item.get("brand", ""), "model": item.get("model", "")} for item in found[:25]]
+
+    def printify_providers(self, blueprint_id):
+        return [{"id": item["id"], "title": item.get("title", "")} for item in self._printify_get(f"blueprints/{int(blueprint_id)}/print_providers.json")]
+
+    def printify_variants(self, blueprint_id, provider_id):
+        """The provider's in-stock variants (colour and size) and where a design can go on them."""
+        data = self._printify_get(f"blueprints/{int(blueprint_id)}/print_providers/{int(provider_id)}/variants.json")
+        variants = [{"id": item["id"], "title": item.get("title", ""), "options": item.get("options") or {},
+                     "positions": sorted({spot.get("position") for spot in item.get("placeholders") or [] if spot.get("position")})}
+                    for item in (data.get("variants") or [])[:400]]
+        return {"title": data.get("title", ""), "variants": variants}
+
     def operations(self, job_id):
         with self.db.Session() as session:
             rows = session.query(Metadata).filter(Metadata.key.like("business_operation_%")).all()

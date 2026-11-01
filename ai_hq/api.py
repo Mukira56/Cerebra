@@ -2171,6 +2171,15 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.post("/api/business/connections/etsy/finish")
     def etsy_finish(payload: OAuthFinish): return commerce.finish_etsy(payload.redirected_url)
 
+    @app.get("/api/business/printify/catalog")
+    def printify_catalog(query: str = ""): return commerce.printify_catalog(query)
+
+    @app.get("/api/business/printify/catalog/{blueprint_id}/providers")
+    def printify_providers(blueprint_id: int): return commerce.printify_providers(blueprint_id)
+
+    @app.get("/api/business/printify/catalog/{blueprint_id}/providers/{provider_id}/variants")
+    def printify_variants(blueprint_id: int, provider_id: int): return commerce.printify_variants(blueprint_id, provider_id)
+
     @app.get("/api/business/jobs/{job_id}/operations")
     def business_operations(job_id: str): return commerce.operations(job_id)
 

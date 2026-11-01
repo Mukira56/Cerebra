@@ -2525,6 +2525,45 @@
     return root;
   }
 
+  function printifyPicker(job, fields) {
+    // Pick the product from Printify's catalog instead of typing its IDs; the draft fields below are filled in for review.
+    const root = el("div", "action-card"), query = input("unisex t-shirt, mug, poster…", ""), product = select([], ""), provider = select([], ""), filter = input("e.g. Black, or leave empty for all", "");
+    const price = input("24.99", "24.99", "number"), image = input("from Upload an image to Printify", ""), position = select([["front", "front"]], "front"), status = el("p", "row-meta", "");
+    let variants = []; price.step = "0.01";
+    const fill = () => {
+      const keep = variants.filter(item => !filter.value.trim() || item.title.toLowerCase().includes(filter.value.trim().toLowerCase()));
+      if (!keep.length) { status.textContent = "No variant matches that filter."; return; }
+      const ids = keep.slice(0, 100).map(item => item.id), cents = Math.round(Number(price.value || 0) * 100);
+      fields.value = json({title: job.title, description: job.brief, blueprint_id: Number(product.value), print_provider_id: Number(provider.value),
+        variants: ids.map(id => ({id, price: cents, is_enabled: true})),
+        print_areas: [{variant_ids: ids, placeholders: [{position: position.value, images: [{id: image.value.trim() || "PASTE_UPLOADED_IMAGE_ID", x: .5, y: .5, scale: 1, angle: 0}]}]}]});
+      status.textContent = `${ids.length} variant(s) at $${(cents / 100).toFixed(2)} each. Check Printify's cost for this product: your price must be above it.`;
+    };
+    const loadVariants = async () => {
+      if (!provider.value) return;
+      const data = await api(`/api/business/printify/catalog/${product.value}/providers/${provider.value}/variants`);
+      variants = array(data.variants);
+      const spots = [...new Set(variants.flatMap(item => array(item.positions)))];
+      position.replaceChildren(...(spots.length ? spots : ["front"]).map(spot => { const option = el("option", "", spot); option.value = spot; return option; }));
+      status.textContent = `${variants.length} in-stock variant(s).`;
+    };
+    const loadProviders = async () => {
+      const list = await api(`/api/business/printify/catalog/${product.value}/providers`);
+      provider.replaceChildren(...list.map(item => { const option = el("option", "", item.title); option.value = item.id; return option; }));
+      await loadVariants();
+    };
+    product.addEventListener("change", () => loadProviders().catch(issue => notice(issue.message, true)));
+    provider.addEventListener("change", () => loadVariants().catch(issue => notice(issue.message, true)));
+    api(`/api/business/jobs/${encodeURIComponent(job.id)}/operations`).then(items => { const uploaded = array(items).filter(item => item.action === "printify_upload" && item.result?.image_id).pop(); if (uploaded && !image.value) image.value = uploaded.result.image_id; }).catch(() => {});
+    append(root, el("strong", "", "Pick the product"), hint("Search Printify's catalog, choose the product and the print provider, and Cerebra fills in the IDs below."),
+      append(el("div", "form-grid"), field("Product", query), field("Results", product)),
+      actionsRow(button("Search the catalog", () => act("", () => api(`/api/business/printify/catalog?query=${encodeURIComponent(query.value)}`)).then(list => {
+        if (!list) return; product.replaceChildren(...list.map(item => { const option = el("option", "", `${item.title}${item.brand ? ` · ${item.brand}` : ""}`); option.value = item.id; return option; }));
+        status.textContent = list.length ? `${list.length} product(s) found.` : "Nothing found: try fewer words."; if (list.length) loadProviders().catch(issue => notice(issue.message, true)); }), "button small")),
+      append(el("div", "form-grid"), field("Print provider", provider), field("Only variants containing", filter), field("Your price (USD)", price), field("Print position", position)),
+      field("Uploaded image ID", image), status, actionsRow(button("Fill the draft fields", fill, "button small primary")));
+    return root;
+  }
   function externalForm(job, reload) {
     const form = el("form"), choice = select([["image", "Generate a raster image (paid API)"], ["etsy_draft", "Create an Etsy draft listing"], ["shopify_draft", "Create a Shopify draft product"], ["printify_upload", "Upload an image to Printify"], ["printify_draft", "Create a Printify draft product"]], "image");
     const prompt = textarea("Your own original creative instructions (required for image generation)", ""), path = input("e.g. generated/image-….png", "");
@@ -2552,6 +2591,7 @@
       if (choice.value === "etsy_draft") {
         details.append(shopField, hint("Each item goes to one shop only: Etsy doesn't allow the same item listed in several of your shops."), original.wrap);
       }
+      if (choice.value === "printify_draft") details.prepend(printifyPicker(job, fields));
       if (choice.value === "shopify_draft") {
         details.append(storeField, hint("Created as a Draft: add its images or download files in Shopify, review it, then set it Active yourself."));
         // A job made from an Etsy listing: its draft is the listing itself (title, 13 tags, description, price), still yours to review.
