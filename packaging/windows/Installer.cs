@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Cerebra Setup")]
-[assembly: AssemblyVersion("0.68.0.0")]
+[assembly: AssemblyVersion("0.69.0.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
