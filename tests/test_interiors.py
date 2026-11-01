@@ -95,3 +95,18 @@ def test_a_theme_becomes_a_book_ready_to_upload_that_waits_in_your_calls(client)
         assert any(item["kind"] == "book" and "Gratitude Journal" in item["detail"] for item in chief.calls(session))
     assert client.post("/api/books/notebooks", json={"theme": "x"}).status_code == 400
     assert client.post("/api/books/notebooks", json={"theme": "nurse notebook", "pages": 5}).status_code == 400  # no model asked for a book KDP won't print
+
+
+def test_logbooks_and_the_planner_print_headings_as_strokes_with_no_font():
+    from ai_hq import strokefont
+    for style in ("mileage", "reading", "workout", "blood_pressure", "weekly"):
+        data, info = interiors.build(style, "6x9", 120)
+        assert b"/Font" not in data and b" Tj" not in data and b"BT" not in data  # headings are lines, so KDP's font check can't fail
+        right_hand, left_hand = streams(data)
+        assert right_hand.count(b" re S") >= 1 and right_hand.count(b" l") > 100 and right_hand != left_hand  # gutter side differs
+    mileage = streams(interiors.build("mileage", "6x9", 24)[0])[0].decode()
+    assert strokefont.draw("MILEAGE LOG", 0, 0, 9).split(" ")[0] != "" and "1 J 1 j" in mileage
+    assert strokefont.width("Date", 6) == strokefont.width("DATE", 6) > 0 and strokefont.width("", 6) == 0
+    assert set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 /:-") <= set(strokefont.GLYPHS)  # every heading character is drawn
+    for _title, columns in interiors.TABLES.values():
+        assert all(set(name) <= set(strokefont.GLYPHS) for name, _share in columns)
