@@ -1526,6 +1526,52 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                  refresh_prospects, 7 * 24 * 60)
     app.state.refresh_prospects = refresh_prospects
 
+    # ---- automatic outreach: find, research, write, send and follow up, from the owner's Gmail (ai_hq/outreach.py) ----
+    from . import outreach as outreach_module
+    outreach = outreach_module.Outreach(db, settings, mailbox, prospect_writer, prospector, notifier)
+    app.state.outreach = outreach
+    registry.add("outreach", "Email local businesses", "Finds US businesses in your cities, reads their websites, emails them about what you saw and follows up, "
+                 "within your daily number on weekdays; stops on any reply and never writes again to anyone who says no (Prospects › Automatic outreach).",
+                 outreach.tick, 15, outward=True)
+    registry.add("prospect_emails", "Find business emails", "Reads the websites of businesses found before emails were looked up, a few each run, for the public email "
+                 "to put in their drafts. Nothing is sent.", outreach.find_missing_emails, 20)
+
+    @app.get("/api/outreach")
+    def outreach_overview():
+        with db.Session() as session:
+            return outreach.overview(session)
+
+    @app.put("/api/outreach")
+    def outreach_save(payload: dict):
+        with db.Session.begin() as session:  # the cities and mode in this same request count
+            saved = outreach_module.save_settings(session, {**payload, "enabled": False} if payload.get("enabled") is True else payload)
+            if payload.get("enabled") is True:
+                session.flush()
+                problems = outreach.ready(session)
+                if problems:
+                    raise ValueError("Before switching it on: " + "; ".join(problems))
+                saved = outreach_module.save_settings(session, {"enabled": True})
+            return saved
+
+    @app.post("/api/outreach/run")
+    def outreach_run():
+        return outreach.tick()
+
+    @app.get("/api/prospects/{prospect_id}/email")
+    def prospect_email(prospect_id: str):
+        try:
+            return outreach.lookup_email(prospect_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.post("/api/prospects/{prospect_id}/send")
+    def prospect_send(prospect_id: str, payload: dict):
+        """The owner's one click: send the email exactly as they edited it, from their Gmail."""
+        try:
+            return outreach.send_one(prospect_id, payload.get("to"), payload.get("text"), payload.get("follow_up") is not False)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
     @app.get("/api/prospects")
     def prospects_overview():
         with db.Session() as session:

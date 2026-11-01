@@ -159,7 +159,7 @@ def test_gmail_state_scope_body_and_disconnect(client):
     assert client.put("/api/business/gmail",json={"client_id":"123-abc.apps.googleusercontent.com","client_secret":"fixture-google-secret"}).status_code==200
     mailbox=client.app.state.mailbox
     params=parse_qs(urlparse(mailbox.authorization_url()).query)
-    assert params["scope"]==[gmail.SCOPE] and params["code_challenge_method"]==["S256"]
+    assert params["scope"]==[f"{gmail.SCOPE} {gmail.SEND}"] and params["code_challenge_method"]==["S256"]
     assert client.get("/oauth/gmail/callback?state=invalid&code=invalid",headers={"Sec-Fetch-Site":"cross-site"}).status_code==400
     def handle(request):
         if request.url.host=="oauth2.googleapis.com":

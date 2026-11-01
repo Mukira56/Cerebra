@@ -521,6 +521,23 @@ class Prospect(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
+class Outbox(Base):
+    """Automatic outreach to one business (ai_hq/outreach.py): the address, every email sent with when, the Gmail thread,
+    when the next follow-up is due and the reply. stage: drafting | sent | followed_up | done | replied | opted_out |
+    bounced | no_email | skipped."""
+    __tablename__ = "outreach"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    prospect_id: Mapped[str] = mapped_column(String, index=True)
+    email: Mapped[str] = mapped_column(String, default="", index=True)
+    stage: Mapped[str] = mapped_column(String, default="drafting", index=True)
+    thread_id: Mapped[str] = mapped_column(String, default="")
+    emails: Mapped[list] = mapped_column(JSON, default=list)
+    next_at: Mapped[str] = mapped_column(String, default="")
+    reply: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class ModelUsage(Base):
     """One call through the model hub: which kind of work, which model, the tokens and what it cost (USD)."""
     __tablename__ = "model_usage"

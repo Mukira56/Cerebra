@@ -178,6 +178,7 @@ class Finder:
             found.append({"osm": f"{element['type']}/{element['id']}", "name": tags.get("name", "")[:200],
                           "website": normal_site(tags.get("website") or tags.get("contact:website") or tags.get("url")),
                           "phone": (tags.get("phone") or tags.get("contact:phone") or "")[:40],
+                          "email": (tags.get("email") or tags.get("contact:email") or "").strip().lower()[:200],  # listed on the map
                           "address": address[:200],  # the city is shown from the search
                           "brand": bool(tags.get("brand") or tags.get("brand:wikidata"))})
         return found
@@ -204,25 +205,35 @@ class Finder:
             known = {row.osm for row in session.scalars(select(Prospect)).all()}
         fresh = [item for item in independent if item["osm"] not in known][:limit]
         kept = without_site = unreadable = 0
+        from .outreach import EMAIL, find_email, remember_email
+        found_emails = 0
         for item in fresh:
-            facts, note, status = [], "", "dropped"
+            facts, note, status, email = [], "", "dropped", item.get("email", "") if EMAIL.fullmatch(item.get("email", "")) else ""
             if not item["website"]:
                 # The map lists no website; the business may still have one. Not a reason to pitch until the owner checks.
                 note, status, without_site = "OpenStreetMap lists no website for them. Search for it before assuming they have none.", "new", without_site + 1
             elif read_sites:
                 try:
-                    facts = facts_from(self.reader.page(item["website"]))
+                    page = self.reader.page(item["website"])
+                    facts = facts_from(page)
                     status = "kept" if facts else "dropped"
+                    if status == "kept" and not email:  # the email to write to, from the page just read and its contact page
+                        email = find_email(self.reader, item["website"], home=page)
                 except (Blocked, httpx.HTTPError) as exc:
                     note, unreadable = str(exc)[:200], unreadable + 1
                 time.sleep(self.pause)
             kept += status == "kept"
             with self.db.Session.begin() as session:
-                session.add(Prospect(search_id=search_id, osm=item["osm"], name=item["name"], kind=kind, city=city, state=state, website=item["website"],
-                                     phone=item["phone"], address=item["address"], facts=facts, status=status, notes=note))
+                row = Prospect(search_id=search_id, osm=item["osm"], name=item["name"], kind=kind, city=city, state=state, website=item["website"],
+                               phone=item["phone"], address=item["address"], facts=facts, status=status, notes=note)
+                session.add(row)
+                session.flush()
+                if status != "dropped" and (email or item["website"]):
+                    remember_email(session, row.id, email)
+                    found_emails += bool(email)
         with self.db.Session.begin() as session:
             row = session.get(ProspectSearch, search_id)
-            row.counts = {**row.counts, "new": len(fresh), "kept": kept, "without_site": without_site, "unreadable": unreadable}
+            row.counts = {**row.counts, "new": len(fresh), "kept": kept, "without_site": without_site, "unreadable": unreadable, "emails": found_emails}
             session.add(Event(kind="prospects", message=f"Prospects: {KINDS[kind][0].lower()} in {city}, {state}: {len(everything)} found, "
                                                           f"{row.counts['chains']} chains left out, {kept} worth contacting", data={"search": search_id}))
             return {"search_id": search_id, **row.counts}
@@ -236,13 +247,15 @@ def public(row):
 
 
 def overview(session):
+    from .outreach import emails
     rows = session.scalars(select(Prospect).where(Prospect.status != "dropped").order_by(Prospect.updated_at.desc()).limit(500)).all()
+    found = emails(session, [row.id for row in rows])
     searches = [{"id": row.id, "kind": row.kind, "kind_label": KINDS.get(row.kind, ("",))[0], "city": row.city, "state": row.state, "counts": row.counts or {},
                  "created_at": row.created_at} for row in session.scalars(select(ProspectSearch).order_by(ProspectSearch.created_at.desc()).limit(50)).all()]
     counts = {status: 0 for status in STATUSES}
     for status in session.scalars(select(Prospect.status)).all():
         counts[status] = counts.get(status, 0) + 1
-    return {"prospects": [public(row) for row in rows], "searches": searches, "counts": counts,
+    return {"prospects": [{**public(row), "email": found.get(row.id, ""), "email_checked": row.id in found} for row in rows], "searches": searches, "counts": counts,
             "kinds": {key: label for key, (label, _, _) in KINDS.items()}, "attribution": ATTRIBUTION}
 
 

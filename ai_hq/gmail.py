@@ -1,9 +1,11 @@
-"""Read-only Gmail access with the user's own Google OAuth client (installed-app flow with PKCE).
+"""Gmail access with the user's own Google OAuth client (installed-app flow with PKCE).
 
 The user creates a free "Desktop app" OAuth client in their Google Cloud project and pastes its ID and
 secret. Sign-in happens in their normal browser on Google's own page. Google redirects back to this local
-server, and Cerebra keeps only the refresh token, encrypted with DPAPI. The only scope requested is
-gmail.readonly: Cerebra can never send, delete or change mail.
+server, and Cerebra keeps only the refresh token, encrypted with DPAPI. Two scopes are requested:
+gmail.readonly, to see wins and replies, and gmail.send, used only by automatic outreach when the owner
+switches it on (ai_hq/outreach.py). Cerebra can never delete or change mail. An account connected before
+sending existed keeps working read-only until the owner connects again.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from .network import LazyClient
 
 KEY = "gmail_oauth"
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+SEND = "https://www.googleapis.com/auth/gmail.send"
 AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -36,7 +39,8 @@ def load(session):
 
 def public(value):
     return {"configured": bool(value.get("client_id")), "client_id": value.get("client_id", ""),
-            "connected": bool(value.get("refresh_token")), "email": value.get("email", ""), "connected_at": value.get("connected_at", "")}
+            "connected": bool(value.get("refresh_token")), "email": value.get("email", ""), "connected_at": value.get("connected_at", ""),
+            "can_send": bool(value.get("refresh_token") and value.get("can_send"))}
 
 
 def _store(session, value):
@@ -77,7 +81,7 @@ class Gmail:
         self._pending = {key: item for key, item in self._pending.items() if time.monotonic() - item[1] < 900}
         self._pending[state] = (verifier, time.monotonic())
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-        return AUTH + "?" + urlencode({"client_id": value["client_id"], "redirect_uri": self.redirect_uri, "response_type": "code", "scope": SCOPE,
+        return AUTH + "?" + urlencode({"client_id": value["client_id"], "redirect_uri": self.redirect_uri, "response_type": "code", "scope": f"{SCOPE} {SEND}",
                                        "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": challenge, "code_challenge_method": "S256"})
 
     def finish(self, state, code):
@@ -97,7 +101,8 @@ class Gmail:
         email = self.get("profile").get("emailAddress", "")
         with self.db.Session.begin() as session:
             stored = load(session)
-            stored.update(refresh_token=vault.protect(tokens["refresh_token"]), email=email, connected_at=now())
+            stored.update(refresh_token=vault.protect(tokens["refresh_token"]), email=email, connected_at=now(),
+                          can_send=SEND in tokens.get("scope", "").split())  # the owner may allow reading only
             _store(session, stored)
         return email
 
@@ -122,6 +127,39 @@ class Gmail:
         if response.status_code != 200:
             raise ValueError(f"Gmail returned {response.status_code}")
         return response.json()
+
+    def send(self, to, subject, body, thread_id=None, reply_to_message_id=None):
+        """Send one plain-text email from the connected address. A follow-up goes into the same thread."""
+        from email.message import EmailMessage
+        with self.db.Session() as session:
+            value = load(session)
+        if not value.get("can_send"):
+            raise ValueError("Gmail can't send yet: connect Gmail again and allow sending email")
+        message = EmailMessage()
+        message["From"], message["To"], message["Subject"] = value.get("email", ""), to, subject
+        if reply_to_message_id:
+            message["In-Reply-To"] = message["References"] = reply_to_message_id
+        message.set_content(body)
+        payload = {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
+        if thread_id:
+            payload["threadId"] = thread_id
+        response = self.client.post(f"{API}/messages/send", json=payload, headers={"Authorization": f"Bearer {self._token()}"})
+        if response.status_code != 200:
+            raise ValueError(f"Gmail didn't send it ({response.status_code})")
+        sent = response.json()
+        headers = self.get(f"messages/{sent['id']}", format="metadata", metadataHeaders="Message-ID").get("payload", {}).get("headers", [])
+        message_id = next((item["value"] for item in headers if item["name"].lower() == "message-id"), "")
+        return {"id": sent["id"], "thread_id": sent.get("threadId", ""), "message_id": message_id}
+
+    def thread(self, thread_id):
+        """The messages in a thread, oldest first: who sent each, its subject and the start of its text."""
+        data = self.get(f"threads/{thread_id}", format="metadata", metadataHeaders=["From", "Subject", "Date"])
+        result = []
+        for item in data.get("messages", []):
+            headers = {header["name"].lower(): header["value"] for header in item.get("payload", {}).get("headers", [])}
+            result.append({"id": item["id"], "from": headers.get("from", ""), "subject": headers.get("subject", ""), "date": headers.get("date", ""),
+                           "snippet": html.unescape(item.get("snippet", "")), "labels": item.get("labelIds", [])})
+        return result
 
     def search(self, query, limit=20):
         return [item["id"] for item in self.get("messages", q=query, maxResults=limit).get("messages", [])]

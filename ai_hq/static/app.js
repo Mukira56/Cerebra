@@ -1357,7 +1357,8 @@
       const list = el("div", "row-list");
       shown.slice(0, 200).forEach(item => { const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name),
         el("div", "row-meta", [item.kind_label, `${item.city}, ${item.state}`, item.website ? item.website.replace(/^https?:\/\//, "").replace(/\/$/, "") : "no website"].join(" · ")),
-        el("div", "row-meta", array(item.facts).map(fact => fact.text).slice(0, 2).join(" · "))), badge(item.status, PROSPECT_STYLE[item.status]));
+        el("div", "row-meta", array(item.facts).map(fact => fact.text).slice(0, 2).join(" · ")),
+        el("div", "row-meta", item.email ? `✉ ${item.email}` : item.email_checked ? "No public email: call them, or type one you know" : item.website ? "Email: being looked up" : "No website listed")), badge(item.status, PROSPECT_STYLE[item.status]));
         row.addEventListener("click", () => prospectDialog(item)); list.append(row); });
       const searches = array(state.searches).slice(0, 8).map(item => [`${item.kind_label} in ${item.city}, ${item.state}`, `${item.counts.found ?? "…"} found · ${item.counts.chains ?? 0} chains left out · ${item.counts.kept ?? 0} kept`]);
       const left = append(el("div"), panel("Businesses", append(el("div"), body(append(el("div", "actions"), pick)),
@@ -1369,8 +1370,44 @@
         searches.length ? panel("Your offer", body(offerPanel(state))) : null,
         panel("How it works", body(hint("Each fact comes from the business's own home page, read once where its robots.txt allows, and shows where it was seen. A site that turns robots away gets no claim at all. Chains (brand-tagged, or 3 or more locations in the city) are left out."),
           el("p", "row-meta", state.attribution))));
-      root.replaceChildren(stats, append(el("div", "grid two"), left, side));
+      root.replaceChildren(stats, panel("Automatic outreach", body(outreachPanel(state.kinds)), null), append(el("div", "grid two"), left, side));
     })();
+    return root;
+  }
+  const OUTREACH_STAGE = {sent: ["emailed", "blue"], followed_up: ["followed up", "amber"], done: ["no answer yet", "muted"], replied: ["replied", "green"],
+                          opted_out: ["said no: never again", "muted"], bounced: ["bounced", "red"], drafting: ["writing", "cyan"]};
+  function outreachPanel(kinds) {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/outreach").then(state => {
+      const rules = state.settings, form = el("form"), save = submitButton(rules.enabled ? "Save" : "Save and switch on");
+      const on = check("Work on its own: find businesses, research them and write to them", rules.enabled), mode = select([["draft", "Draft each email; I read, edit and send it with one click"], ["send", "Send the emails automatically"]], rules.mode || "draft"), perDay = input("10", rules.per_day, "number");
+      const first = input("4", rules.follow_up_days[0] ?? 4, "number"), second = input("7", rules.follow_up_days[1] ?? 7, "number");
+      const places = textarea("One city per line, such as Austin, TX", array(rules.places).map(item => `${item.city}, ${item.state}`).join("\n")); places.rows = 3;
+      const chosen = new Set(array(rules.kinds)), boxes = Object.entries(kinds || {}).map(([key, label]) => { const box = check(label, chosen.has(key)); box.key = key; return box; });
+      perDay.min = 1; perDay.max = state.max_per_day;
+      const counts = state.counts || {}, summary = el("div", "grid stats");
+      [["Emailed today", `${state.sent_today} of ${rules.per_day}`, "first emails and follow-ups", "blue"], ["Waiting for an answer", (counts.sent || 0) + (counts.followed_up || 0), "follow-ups are automatic", "amber"],
+       ["Replied", counts.replied || 0, "your turn: answer them", "green"], ["Said no", (counts.opted_out || 0) + (counts.bounced || 0), "never written to again", "muted"]]
+        .forEach(([label, value, note, style]) => summary.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      append(root.replaceChildren() || root, summary,
+        array(state.ready).length ? append(el("div"), el("h4", "", "Before it can start"), append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))), actionsRow(link("Business connections →", "connections"), link("Money › Your business →", "money"))) : null,
+        state.status?.message ? hint(`Last run ${state.status.at ? date(state.status.at) : ""}: ${state.status.message}`, state.status.state === "error") : null,
+        hint("Draft mode: new businesses get their email written for you; open one below (Worth contacting), edit anything and press Send. Send mode sends them too. Either way, what it does: finds independent businesses in your cities (Prospects searches), reads each one's website for problems you can fix and its public email, has your AI write a short email in your voice about only what it saw, sends it from your Gmail, and follows up in the same thread when there's no answer. It stops the moment someone replies and tells you; anyone who says no, or whose address bounces, is never written to again. Every email carries your name, postal address and an opt-out line, as US law (CAN-SPAM) requires. Emails go out on weekdays in business hours, a few at a time."));
+      append(form, on.wrap, field("What it does with each email", mode), append(el("div", "form-grid"), field("Emails or drafts a day", perDay), field("First follow-up after (days)", first), field("Second follow-up after (days)", second)),
+        field("Cities", places), el("h4", "", "Kinds of business (none ticked: all)"), append(el("div", "check-grid"), ...boxes.map(box => box.wrap)), actionsRow(save,
+          button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/outreach/run", {}, "POST", 600000)).then(() => render()), "button ghost")));
+      wireForm(form, save, async () => {
+        const list = places.value.split("\n").map(line => line.split(",")).filter(parts => parts.length >= 2 && parts[0].trim() && parts[1].trim()).map(parts => ({city: parts[0].trim(), state: parts.slice(1).join(",").trim()}));
+        await mutate("/api/outreach", {enabled: on.control.checked, mode: mode.value, per_day: Number(perDay.value || 10), follow_up_days: [Number(first.value || 4), Number(second.value || 7)].filter(Boolean),
+          places: list, kinds: boxes.filter(box => box.control.checked).map(box => box.key)}, "PUT");
+        toast(on.control.checked ? "Automatic outreach is on." : "Saved. Automatic outreach is off."); render();
+      });
+      root.append(form);
+      if (array(state.recent).length) root.append(el("h4", "", "Recent"), table(["Business", "Email", "Stage", "Emails", "Next follow-up"],
+        state.recent.map(item => [item.name, item.email, append(el("span"), badge((OUTREACH_STAGE[item.stage] || [item.stage])[0], (OUTREACH_STAGE[item.stage] || [, "muted"])[1]), item.reply?.snippet ? el("div", "row-meta", item.reply.snippet.slice(0, 120)) : null),
+          String(item.emails), item.next_at ? date(item.next_at) : "—"])));
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
   function offerPanel(state) {
@@ -1401,16 +1438,23 @@
     const draft = button(item.opener ? "Draft again" : "Draft a first email", () => act(result => result.missing?.length ? "Drafted. Add the missing details before sending." : "Drafted. Read it before you send it.",
       () => mutate(`/api/prospects/${item.id}/opener`, {}, "POST", 300000)).then(result => { if (result) { opener.value = result.opener; prospectSender = result.missing; } }), "button");
     const copy = button("Copy", () => navigator.clipboard.writeText(opener.value).then(() => toast("Copied. Paste it into your email.")), "button ghost");
+    const to = input("their email address", item.email || ""), followUp = check("Follow up automatically if they don't answer (stops when they reply)", true); to.type = "email";
+    if (!item.email && item.website) { to.placeholder = "Looking for their email on their website…";
+      api(`/api/prospects/${item.id}/email`).then(found => { if (found.email && !to.value) to.value = found.email; else if (!found.email) to.placeholder = "No email on their site: type one you know, or call them"; to.dispatchEvent(new Event("input")); }).catch(() => {}); }
+    const send = button("Send with Gmail", () => act(result => result.message, () => mutate(`/api/prospects/${item.id}/send`, {to: to.value.trim(), text: opener.value, follow_up: followUp.control.checked}, "POST", 120000))
+      .then(result => { if (result) { closeDialog(); render(); } }), "button primary");
+    const ready = () => { send.disabled = !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.value.trim()); send.title = send.disabled ? "Add their email address first" : ""; };
+    to.addEventListener("input", ready); ready();
     const status = select([["new", "To check by hand"], ["kept", "Worth contacting"], ["contacted", "Contacted"], ["replied", "Replied"], ["won", "Won: became a client"], ["lost", "Lost"], ["dropped", "Not a fit"]], item.status);
     const facts = el("ul", "tips"); array(item.facts).forEach(fact => facts.append(append(el("li"), document.createTextNode(fact.text), el("span", "row-meta", ` (seen at ${fact.seen})`))));
     append(root, kv([["Business", item.kind_label], ["Where", [item.address, `${item.city}, ${item.state}`].filter(Boolean).join(", ")], ["Website", item.website || "None listed"], ["Phone", item.phone || "Not listed"]]),
       el("h3", "", "What Cerebra saw"), array(item.facts).length ? facts : hint(item.notes || "No issue seen on the home page."),
       append(el("div", "form-grid"), field("Status", status)), field("Notes", notes),
-      el("h3", "", "First email"), opener,
+      el("h3", "", "First email"), field("To", to), opener, followUp.wrap,
       missing.length ? hint(`Before sending, add ${missing.join(" and ")} in Money › Your business details.`, true) : null,
-      hint("Read it, change anything, then send it yourself from your own email. In the US, cold emails need your real postal address and a way to opt out (CAN-SPAM); Cerebra adds both."),
-      actionsRow(array(item.facts).length ? draft : null, copy,
-        button("Save", () => act("Saved.", () => mutate(`/api/prospects/${item.id}`, {status: status.value, notes: notes.value, opener: opener.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+      hint("Read it, change anything, then press Send: it goes from your Gmail exactly as written. In the US, cold emails need your real postal address and a way to opt out (CAN-SPAM); Cerebra keeps both in, and never writes again to anyone who says no."),
+      actionsRow(array(item.facts).length ? draft : null, copy, ["contacted", "replied", "won", "lost"].includes(item.status) ? null : send,
+        button("Save", () => act("Saved.", () => mutate(`/api/prospects/${item.id}`, {status: status.value, notes: notes.value, opener: opener.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } }), "button")));
     showDialog(item.name, root);
   }
 
@@ -2714,8 +2758,8 @@
       }
       root.append(panel("Shopify stores", body(withNotes(shopifyStores(stores), "shopify")), button("How to connect…", () => guideDialog("shopify"), "button small ghost")));
       const gmailForm = el("form"), clientId = input("Google Desktop app OAuth client ID", mail.client_id || ""), secret = input("Google client secret", ""); secret.type = "password"; secret.autocomplete = "off";
-      const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", "hint", mail.connected ? `Connected read-only: ${mail.email}` : "Not connected");
-      append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra can read selected messages; it cannot send, delete or change mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
+      const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", "hint", mail.connected ? (mail.can_send ? `Connected: ${mail.email} (reads, and sends what you send from Prospects)` : `Connected read-only: ${mail.email}. Connect Gmail again and allow sending to email businesses from Prospects.`) : "Not connected");
+      append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra reads messages to see wins and replies, and sends only the emails you send from Prospects (or Automatic outreach, if you switch it on). It never deletes or changes mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
       wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Read-only Gmail intake", body(withNotes(gmailForm, "gmail")), button("How to connect…", () => guideDialog("gmail"), "button small ghost")));
       const notifyForm = el("form"), ntfy = check("Send progress notifications through ntfy", notifications.ntfy_enabled), telegram = check("Send progress notifications to my Telegram bot", notifications.telegram_enabled);
       const server = input("HTTPS ntfy server", notifications.ntfy_server), bot = input("Telegram bot token (blank keeps saved token)", ""), chat = input("Your private Telegram chat ID", notifications.telegram_chat_id || ""); bot.type = "password"; bot.autocomplete = "off";

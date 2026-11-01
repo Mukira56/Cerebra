@@ -161,7 +161,7 @@ window.CerebraGuides = {
     ]
   },
   gmail: {
-    title: "Gmail (read-only)",
+    title: "Gmail",
     need: ["Your Google account", "A free Google Cloud project with the Gmail API turned on", "An OAuth client of type Desktop app (client ID and client secret)"],
     quick: ["Create a Google Cloud project", "Enable the Gmail API", "Set up the sign-in screen and add yourself as a test user", "Create a Desktop app OAuth client", "Paste the ID and secret here, then Connect Gmail"],
     links: [["Google Cloud console", "google_console"], ["Enable the Gmail API", "google_gmail_api"]],
@@ -175,7 +175,7 @@ window.CerebraGuides = {
       {heading: "3. Set up the sign-in screen", steps: [
         "Open Google Auth Platform (formerly “OAuth consent screen”) and press Get started.",
         "Enter an app name (Cerebra) and your email. For Audience choose External. Under Test users add your own Gmail address.",
-        "Data access (scopes): add …/auth/gmail.readonly. Cerebra asks only for read-only access.",
+        "Data access (scopes): add …/auth/gmail.readonly and …/auth/gmail.send. Reading finds wins and replies; sending is used only for emails you send with one click from Prospects, or by automatic outreach if you switch it on. Cerebra never deletes or changes mail.",
         "While the app stays in Testing, Google signs you out after about 7 days. Connect again when that happens, or publish the app for personal use."],
         links: [["Google Auth Platform", "google_auth"]]},
       {heading: "4. Create the Desktop app client", steps: [
@@ -184,8 +184,8 @@ window.CerebraGuides = {
         links: [["Google OAuth clients", "google_clients"]]},
       {heading: "5. Connect in Cerebra", steps: [
         "Paste the Client ID and Client secret, press Save Google settings, then Connect Gmail…. Google's page opens in your browser.",
-        "Allow read-only access. Google may warn that the app isn't verified, because it's your own app: choose Continue.",
-        "Back in Cerebra, search your inbox and turn any order email into a Business Studio job. Nothing is read or sent automatically.",
+        "Allow reading and sending. Google may warn that the app isn't verified, because it's your own app: choose Continue. If you connected before, connect again so Cerebra may send.",
+        "Back in Cerebra, search your inbox and turn any order email into a Business Studio job. Emails go out only when you press Send on a business in Prospects, or within the rules you set in Automatic outreach.",
         "To remove access later, press Disconnect Gmail and remove Cerebra under your Google Account's third-party connections."],
         links: [["Google third-party connections", "google_permissions"]]}
     ]

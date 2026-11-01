@@ -155,9 +155,9 @@ def test_openers_and_the_offer_are_drafted_from_facts_and_nothing_is_sent(client
     hill = next(item for item in client.get("/api/prospects?").json()["prospects"] if item["name"] == "Hill Family Dentistry")
     refused = client.post(f"/api/prospects/{hill['id']}/opener")
     assert refused.status_code == 400 and "nothing honest" in refused.json()["detail"]  # no fact: no opener
-    client.put("/api/money/settings", json={"business_name": "Mukira Studio", "email": "hi@mukira.example", "address": "PO Box 100, Nairobi, Kenya"})
+    client.put("/api/money/settings", json={"business_name": "Mukira Studio", "email": "hi@mukira.example", "address": "PO Box 100, Austin, TX 78701"})
     signed = client.post(f"/api/prospects/{smile['id']}/opener").json()
-    assert signed["missing"] == [] and "PO Box 100, Nairobi, Kenya" in signed["opener"] and "Mukira Studio" in signed["opener"]
+    assert signed["missing"] == [] and "PO Box 100, Austin, TX 78701" in signed["opener"] and "Mukira Studio" in signed["opener"]
     client.put("/api/prospects/offer/dentists", json={"price": "USD 1,500 setup + 200/month"})
     offer = client.post("/api/prospects/offer/dentists").json()
     assert offer["headline"] == "Online booking for Austin dentists" and offer["price"] == "USD 1,500 setup + 200/month"  # the owner's price stays
