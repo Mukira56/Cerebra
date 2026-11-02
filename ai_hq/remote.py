@@ -4,6 +4,7 @@ The bot already set up for progress notifications (ai_hq/notify.py) now also lis
 saved chat are read: anyone else who finds the bot is ignored without a reply. Commands answer from Cerebra's own
 records, and the buttons act on them:
   /status    what's waiting and what's working today
+  /calls     everything waiting for you; plans and merges can be approved or declined with one tap
   /drafts    the next drafted business email, with Send, Skip and Next buttons (Send goes from the owner's Gmail)
   /replies   businesses that answered, newest first
   /sent      where the emailed businesses stand
@@ -26,6 +27,7 @@ from .models import Book, Metadata, Prospect, now
 OFFSET = "telegram_offset"
 HELP = ("Cerebra on your phone:\n"
         "/status - what's waiting and what's working\n"
+        "/calls - everything waiting for you: approve with one tap\n"
         "/drafts - drafted business emails: send or skip with one tap\n"
         "/replies - businesses that answered\n"
         "/sent - where emailed businesses stand\n"
@@ -36,8 +38,8 @@ HELP = ("Cerebra on your phone:\n"
 
 
 class Remote:
-    def __init__(self, db, notifier, outreach, drafter=None, bidder=None):
-        self.db, self.notifier, self.outreach, self.drafter, self.bidder = db, notifier, outreach, drafter, bidder
+    def __init__(self, db, notifier, outreach, drafter=None, bidder=None, supervisor=None):
+        self.db, self.notifier, self.outreach, self.drafter, self.bidder, self.supervisor = db, notifier, outreach, drafter, bidder, supervisor
         self._stop, self._thread = threading.Event(), None
 
     # ---- Telegram ----
@@ -98,6 +100,8 @@ class Remote:
                 return self.show_draft(settings, after=value)
             if action == "ans":
                 return self.send_reply_answer(settings, value)
+            if action in {"apr", "dec"}:
+                return self.answer_approval(settings, value, action == "apr")
             if action == "prop":
                 return self.write_proposal(settings, value)
             if action == "hide":
@@ -112,7 +116,7 @@ class Remote:
         if str(message.get("chat", {}).get("id")) != settings["chat"]:
             return 0  # strangers get no reply at all
         command = str(message.get("text") or "").strip().split()[0].lower().split("@")[0] if message.get("text") else ""
-        handlers = {"/status": self.status, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/jobs": self.jobs, "/books": self.books,
+        handlers = {"/status": self.status, "/calls": self.calls, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/jobs": self.jobs, "/books": self.books,
                     "/money": self.money, "/outreach": self.run_outreach}
         handler = handlers.get(command)
         if handler is None:
@@ -219,6 +223,44 @@ class Remote:
         lines = [f"{words.get(stage, stage)}: {count}" for stage, count in counts.items()]
         recent = [f"- {item['name']}: {words.get(item['stage'], item['stage'])}" for item in items[:6]]
         self.say(settings, f"Emailed {len(items)} business(es)\n" + "\n".join(lines) + "\n\nLatest:\n" + "\n".join(recent))
+        return 1
+
+    # ---- decisions waiting for the owner ----
+    def calls(self, settings):
+        """Everything that waits for the owner; approvals come one by one with Approve and Decline buttons."""
+        from . import chief
+        from .models import Approval, Task
+        with self.db.Session() as session:
+            waiting = chief.calls(session)
+            pending = [(row.id, row.kind, " ".join((session.get(Task, row.task_id).description if session.get(Task, row.task_id) else "").split())[:300])
+                       for row in session.scalars(select(Approval).where(Approval.status.in_(["pending", "PENDING"])).order_by(Approval.created_at)).all()][:5]
+        others = [item for item in waiting if item["kind"] != "approval"]
+        if not waiting:
+            self.say(settings, "Nothing is waiting for you.")
+            return 1
+        if others:
+            self.say(settings, f"{len(waiting)} thing(s) wait for you:\n" + "\n".join(f"- {item['title']}: {item['detail'][:120]}" for item in others[:12])
+                     + "\n\n/drafts, /replies and /jobs handle the email and freelance ones from here.")
+        words = {"plan": "Approve this plan?", "merge": "Merge this finished work into your project?", "live_execution": "Let the AI team start this task?",
+                 "review_findings": "Accept the review's findings?"}
+        if self.supervisor is not None:
+            for approval_id, kind, task in pending:
+                self.say(settings, f"{words.get(kind, kind.replace('_', ' ').capitalize() + '?')}\n\n{task}",
+                         buttons=[[("Approve ✓", f"apr:{approval_id}"), ("Decline", f"dec:{approval_id}")]])
+        return 1
+
+    def answer_approval(self, settings, approval_id, approve):
+        from .models import Approval
+        if self.supervisor is None:
+            return 0
+        with self.db.Session() as session:
+            row = session.get(Approval, approval_id)
+            open_ = row is not None and str(row.status).lower() == "pending"
+        if not open_:
+            self.say(settings, "That was already answered.")
+            return 1
+        self.supervisor.resolve_approval(approval_id, approve)
+        self.say(settings, "Approved: Cerebra carries on." if approve else "Declined.")
         return 1
 
     # ---- freelance jobs ----

@@ -148,3 +148,32 @@ def test_the_best_new_jobs_come_to_the_phone_with_a_proposal_one_tap_away(client
     with client.app.state.db.Session() as session:
         assert session.get(FreelanceLead, "remotive:2").status == "hidden"
         assert session.get(FreelanceLead, "remotive:1").proposal["status"] == "ready"
+
+
+def test_decisions_waiting_for_the_owner_can_be_approved_from_the_phone(client):  # noqa: F811
+    from ai_hq.models import Approval, Project, Task
+    bot = phone(client)
+    answered = []
+
+    class Supervisor:  # stands in for the real one: records the answer and closes the approval, as the real one does
+        def resolve_approval(self, approval_id, approve):
+            answered.append((approval_id, approve))
+            with client.app.state.db.Session.begin() as session:
+                session.get(Approval, approval_id).status = "approved" if approve else "rejected"
+
+    client.app.state.remote.supervisor = Supervisor()
+    with client.app.state.db.Session.begin() as session:
+        session.add(Project(id="proj", name="Shop site", path="C:/shop", default_branch="main"))
+        session.flush()
+        session.add(Task(id="t1", project_id="proj", description="Add online booking to the shop site", state="AWAITING_APPROVAL"))
+        session.flush()
+        session.add(Approval(id="a1", task_id="t1", kind="plan", status="pending", payload={}))
+    bot.message(OWNER, "/calls")
+    client.app.state.remote.poll(wait=0)
+    plan = next(item for item in bot.said if "Approve this plan?" in item["text"])
+    assert "Add online booking" in plan["text"] and plan["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "apr:a1"
+    bot.tap(STRANGER, "apr:a1")  # not the owner: nothing happens
+    bot.tap(OWNER, "apr:a1")
+    bot.tap(OWNER, "apr:a1")  # pressed twice: answered once
+    client.app.state.remote.poll(wait=0)
+    assert answered == [("a1", True)] and "Approved" in bot.said[-2]["text"] and "already answered" in bot.said[-1]["text"]
