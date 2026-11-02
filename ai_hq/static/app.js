@@ -1748,6 +1748,38 @@
     wireForm(form, make, async () => { const made = await mutate(`/api/books/${encodeURIComponent(book.id)}/cover`, {palette: palette.value, author: author.value}); toast(`Cover saved: ${made.file}`); });
     return form;
   }
+  function ebookPanel() {
+    const root = el("div"), form = el("form"), brief = textarea("e.g. easy indoor gardening for beginners in small apartments", ""), go = submitButton("Plan the book"), list = el("div");
+    brief.rows = 2;
+    append(form, hint("Your AI plans a short, practical nonfiction eBook: title, chapters, description, 7 keywords and a price. Approve the outline and the chapters are written one by one in the background; then a Kindle file (EPUB) is made, ready to upload. Facts that need a source are marked [CHECK] for you."),
+      field("What the book is about, and who it's for", brief), actionsRow(go));
+    wireForm(form, go, async () => { await mutate("/api/ebooks", {brief: brief.value}, "POST", 300000); toast("Outline drafted."); render(); });
+    const call = (path, done, wait = 300000) => act(done, () => mutate(path, {}, "POST", wait)).then(result => { if (result) render(); });
+    api("/api/ebooks").then(items => {
+      array(items).forEach(book => {
+        const card = el("div", "action-card"), outline = book.outline || {};
+        append(card, el("strong", "", book.title || "Planning…"), el("div", "row-meta", book.subtitle || book.brief));
+        if (book.stage === "outline_ready") {
+          append(card, append(el("ol", "tips"), ...array(outline.chapters).map(item => el("li", "", item.title))),
+            el("p", "row-meta", `${outline.keywords?.length || 0} keywords · $${Number(outline.price || 0).toFixed(2)} (you earn about $${Number(book.royalty?.royalty || 0).toFixed(2)} a copy)`),
+            array(outline.checks).length ? hint(outline.checks.join(" · "), true) : null,
+            actionsRow(button("Approve and start writing", () => call(`/api/ebooks/${book.id}/approve`, "Approved: chapters are written in the background."), "button small primary"),
+              button("Plan it again", () => call(`/api/ebooks/${book.id}/outline`, "Planned again."), "button small ghost")));
+        } else if (book.stage === "writing") {
+          append(card, el("p", "row-meta", `${book.written} of ${book.total} chapters written · ${Number(book.words).toLocaleString()} words. A chapter is written every 20 minutes.`),
+            book.error ? hint(book.error, true) : null,
+            actionsRow(button("Write the next chapter now", () => call(`/api/ebooks/${book.id}/write`, "Chapter written."), "button small")));
+        } else if (book.stage === "ready") {
+          append(card, el("p", "row-meta", `Ready to upload: ${book.total} chapters, ${Number(book.words).toLocaleString()} words.`),
+            array(book.checks_to_verify).length ? hint(`Verify ${book.checks_to_verify.length} [CHECK] note(s) before publishing: ${book.checks_to_verify.slice(0, 3).join(" ")}…`, true) : hint("No facts flagged for checking."),
+            hint("Upload the .epub in KDP › Kindle eBook › Manuscript, make the cover with KDP's free Cover Creator, and answer Yes for AI-generated text unless you rewrote it."),
+            actionsRow(button("Open the folder", () => act("Opened.", () => mutate(`/api/ebooks/${book.id}/open`, {})), "button small")));
+        }
+        list.append(card);
+      });
+    }).catch(() => {});
+    return append(root, form, list);
+  }
   function collectionPanel() {
     const root = el("div");
     root.append(el("p", "row-meta", "Loading…"));
@@ -1824,7 +1856,7 @@
           niches.length ? nicheList : body(empty("No niches yet", "Add a problem people already pay to fix. Check its trend on Google Trends and its competing books on Amazon.", null, "◎"))), null, niches.length),
         panel("Books", append(el("div"), body(append(el("div", "actions"), button("+ New book", () => bookDialog(null, state), "button primary"))),
           books.length ? bookList : body(empty("No books yet", "Start one from a niche you chose. Cerebra shows what each format earns before you write a word.", null, "▤"))), null, books.length));
-      const side = append(el("div"), panel("Books for every age group", body(collectionPanel())), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
+      const side = append(el("div"), panel("Write a Kindle eBook", body(ebookPanel())), panel("Books for every age group", body(collectionPanel())), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
         panel("How it works", body(hint("You pick a niche, Cerebra helps plan, write and check the book, and prepares the files and listing. KDP has no publishing API, so you upload and click Publish yourself, including Amazon's AI-content question. KDP allows 3 new titles a day."),
           el("p", "row-meta", `KDP's numbers were checked on ${state.checked} against its help pages: ${Object.values(state.sources).join(" · ")}`))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));

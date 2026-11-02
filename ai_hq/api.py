@@ -1313,6 +1313,47 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         from . import covers
         return {key: label for key, (label, *_colours) in covers.PALETTES.items()}
 
+    # ---- Kindle eBooks written with the owner's AI: outline, chapters, EPUB ----
+    from . import ebooks as ebooks_module
+    ebook_writer = ebooks_module.EbookWriter(db, settings, chat_registry, settings.data_dir / "books" / "manuscripts")
+    app.state.ebook_writer = ebook_writer
+    registry.add("ebook_writer", "Write eBooks", "Writes the next chapter of an approved eBook outline, one chapter per run; the Kindle file is made after the last.",
+                 ebook_writer.tick, 20)
+
+    def ebook_call(work):
+        try:
+            return work()
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/ebooks")
+    def ebooks_list():
+        with db.Session() as session:
+            return ebooks_module.ebooks(session)
+
+    @app.post("/api/ebooks")
+    def ebooks_start(payload: dict):
+        return ebook_call(lambda: ebook_writer.start(payload.get("brief")))
+
+    @app.post("/api/ebooks/{book_id}/outline")
+    def ebooks_outline(book_id: str):
+        return ebook_call(lambda: ebook_writer.outline(book_id))
+
+    @app.post("/api/ebooks/{book_id}/approve")
+    def ebooks_approve(book_id: str):
+        return ebook_call(lambda: ebook_writer.approve(book_id))
+
+    @app.post("/api/ebooks/{book_id}/write")
+    def ebooks_write(book_id: str):
+        return ebook_call(lambda: ebook_writer.write_next(book_id))
+
+    @app.post("/api/ebooks/{book_id}/open")
+    def ebooks_open(book_id: str):
+        folder = settings.data_dir / "books" / "manuscripts" / book_id
+        folder.mkdir(parents=True, exist_ok=True)
+        app.state.open_document(str(folder))
+        return {"opened": True}
+
     @app.post("/api/books/{book_id}/etsy")
     def books_etsy_version(book_id: str, payload: dict):
         """One design, many places: the book's pages as an Etsy printable, with its listing ready on the Etsy page."""
