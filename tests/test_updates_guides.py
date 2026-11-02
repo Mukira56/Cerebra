@@ -24,7 +24,7 @@ class FakeGh:
     def release(self, tag=None):
         self.calls.append(["release", tag or "latest"])
         name = f"Cerebra-Setup-{self.tag[1:]}-Windows-x64.exe"
-        base = f"https://github.com/Mukira56/Cerebra/releases/download/{self.tag}/"
+        base = f"https://github.com/example/cerebra/releases/download/{self.tag}/"
         assets = [{"name": name, "size": len(INSTALLER), "url": base + name},
                   {"name": name + ".sha256", "size": 90, "url": base + name + ".sha256"}] if self.assets else []
         return {"tagName": self.tag, "name": f"Cerebra {self.tag}", "body": "## New\n- Faster", "publishedAt": "2026-10-25T10:00:00Z", "assets": assets}
@@ -35,6 +35,7 @@ windows_installer = pytest.mark.skipif(os.name != "nt", reason="installer update
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(updates, "REPOSITORY", "example/cerebra")
     monkeypatch.setattr(updates.shutil, "which", lambda name: "C:/tools/gh.exe")
     app = create_app(Settings(data_dir=tmp_path / "data"), bootstrap_key=KEY, start_worker=False)
     spawned = []

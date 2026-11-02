@@ -1,0 +1,44 @@
+// Isolated first-run UI verification. No account sign-in, model call or job source is enabled.
+const {chromium} = require(process.env.AIHQ_PLAYWRIGHT);
+const assert = require('node:assert/strict');
+const path = require('node:path');
+(async () => {
+  const browser = await chromium.launch({channel: 'msedge', headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1440, height: 960}});
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(process.env.AIHQ_URL);
+    await page.getByRole('button', {name: 'Set up my workspace', exact: true}).waitFor();
+    const snapshot = await page.evaluate(async () => (await fetch('/api/onboarding')).json());
+    assert.equal(snapshot.needs_setup, true);
+    assert.equal(snapshot.profile.name, '');
+    assert.deepEqual(snapshot.freelance.skills, []);
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'customer-welcome.png')});
+    await page.getByRole('button', {name: 'Set up my workspace', exact: true}).click();
+    assert.equal(await page.locator('dialog input[type=checkbox]:checked').count(), 0);
+    await page.setViewportSize({width: 390, height: 844});
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'customer-setup-mobile.png')});
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.setViewportSize({width: 1440, height: 960});
+    await page.getByPlaceholder('Your name or business name (optional)').fill('Example Studio');
+    await page.getByPlaceholder('Your skills, separated by commas').fill('Illustration, Brand design');
+    await page.locator('dialog select').selectOption('EUR');
+    await page.getByRole('button', {name: 'Save workspace setup', exact: true}).click();
+    await page.locator('dialog').waitFor({state: 'hidden'});
+    const saved = await page.evaluate(async () => (await fetch('/api/onboarding')).json());
+    assert.equal(saved.complete, true);
+    assert.equal(saved.profile.name, 'Example Studio');
+    assert.equal(saved.profile.share, false);
+    assert.equal(Object.values(saved.freelance.sources).some(Boolean), false);
+    await page.locator('[data-page="projects"]').click();
+    await page.getByRole('heading', {name: 'Projects', exact: true, level: 1}).waitFor();
+    assert.equal(await page.locator('.card h3', {hasText: 'Cerebra'}).count(), 0);
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'customer-projects.png')});
+    await page.locator('[data-page="freelance"]').click();
+    await page.getByRole('heading', {name: 'Freelance', exact: true, level: 1}).waitFor();
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'customer-freelance.png')});
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({fresh_setup:true, defaults_opt_out:true, personalization_saved:true, empty_projects:true, mobile_width:true, page_errors:errors}));
+  } finally {await browser.close();}
+})().catch(error => {console.error(error); process.exitCode = 1;});

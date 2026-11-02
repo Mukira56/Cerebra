@@ -1,7 +1,7 @@
 """A project's local settings files (.env, .env.local…) for its tests, without showing them to the AI.
 
 Settings files hold the owner's own database URLs and secrets, so projects keep them out of Git, and a task's fresh
-working copy never has them: EstatePilot's sign-up returned 503 in every test run for that reason. Cerebra lends the
+working copy never has them: your project's sign-up returned 503 in every test run for that reason. Cerebra lends the
 project's settings files to the working copy only while its own test run happens, then removes them again, so the
 coding and reviewing models never see them. When a project only has an example file (.env.example) and no real
 settings, Cerebra lists the setting names the owner needs to fill in (never values).
@@ -19,7 +19,7 @@ EXAMPLES = re.compile(r"\.(example|sample|template|dist|defaults)$", re.I)
 SKIP = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next"}
 DEPTH = 3
 NAME = re.compile(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=", re.M)
-# "# Copy to apps/web/.env.local" in the example says where the real file belongs (EstatePilot's web app reads it there).
+# "# Copy to apps/web/.env.local" in the example says where the real file belongs (your project's web app reads it there).
 TARGET = re.compile(r"copy\s+(?:this\s+file\s+|it\s+)?to\s+[`'\"]?((?:[\w.-]+[\\/])*\.env(?:\.[\w-]+)*)", re.I)
 
 

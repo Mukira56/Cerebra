@@ -1,7 +1,7 @@
 """Support chat: what the chat model knows about the workspace, and what it may ask Cerebra to do.
 
 Every message carries a fresh, bounded brief of the real records (projects, tasks, states, errors,
-tests, pending approvals), so questions like "where are we on EstatePilot and why did it fail?" are
+tests, pending approvals), so questions like "where are we on your project and why did it fail?" are
 answered from facts. The model can request actions in a fenced ```cerebra-actions``` JSON block. Its
 text is only a request: each action is validated against a small fixed vocabulary and runs through the
 same supervisor methods as the dashboard buttons. Approval gates are unchanged (Away mode may answer

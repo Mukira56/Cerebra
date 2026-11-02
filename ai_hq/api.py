@@ -22,7 +22,7 @@ from .models import Project, Task, Run, Review, Approval, Event, Dependency, Met
 from .schemas import (ProjectCreate, TaskCreate, SessionCreate, SettingsUpdate, ApprovalDecision, ProfileCreate, ProfileUpdate,
                       RolesUpdate, AgentPermissions, ChatCreate, ChatSend, GithubClone, GithubPublish, DemoCleanup, AutopilotUpdate, FullAccess, RoutingUpdate, SupportSettings, ActionDecision, AutoFixSettings, TaskAutoFix, AutoFixChoice, TaskDelete, TaskTeam, AssistantAccess, OwnerProfile,
                       BusinessJobCreate, BusinessSettingsUpdate, BusinessExport, BusinessOpen, BusinessConnection, BusinessExternal,
-                      OAuthFinish, GmailSetup, NotificationSetup)
+                      OAuthFinish, GmailSetup, NotificationSetup, WorkspaceSetup)
 from .security import redact
 from . import __version__
 
@@ -248,6 +248,18 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         values["cost_information"] = "AI usage is billed by your provider account (ChatGPT, Claude, GitHub). Cerebra does not estimate costs."
         return values
 
+    @app.get("/api/onboarding")
+    def workspace_setup_status():
+        from . import onboarding
+        with db.Session() as session:
+            return onboarding.status(session)
+
+    @app.post("/api/onboarding")
+    def workspace_setup_save(payload: WorkspaceSetup):
+        from . import onboarding
+        with db.Session.begin() as session:
+            return onboarding.complete(session, payload.model_dump())
+
     HEAVY_RESULTS = {"diff", "architecture", "handoff_note", "changed_paths", "disputed_findings"}
 
     finished_cache = {}
@@ -314,10 +326,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             from . import chief as chief_glance_module
             waiting = chief_glance_module.calls(session)
             earn = {"today": freelance.today(session), "gaps": chief_glance_module.earning_gaps(session, bidder.status()["connected"])}
+            from . import onboarding
+            workspace_setup = onboarding.status(session)
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"earn":earn,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"earn":earn,"onboarding":workspace_setup,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -1160,7 +1174,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     # ---- Chief of Staff: one scheduler for the money-making workers, every run on the record ----
     from . import chief
-    registry = chief.Registry()
+    registry = chief.Registry(default_enabled=False)
     registry.add("auto_apply", "Bid on Freelancer.com", "Writes a tailored proposal for each new match above your score and bids, within your daily number (Apply automatically).",
                  applier.tick, 10, outward=True)
     registry.add("win_watch", "Notice what you won", "Checks your Freelancer.com bids and your Gmail for awards, hires and orders.", watcher.tick, 10)
@@ -1647,7 +1661,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def prospect_send(prospect_id: str, payload: dict):
         """The owner's one click: send the email exactly as they edited it, from their Gmail."""
         try:
-            return outreach.send_one(prospect_id, payload.get("to"), payload.get("text"), payload.get("follow_up") is not False)
+            return outreach.send_one(prospect_id, payload.get("to"), payload.get("text"), payload.get("follow_up") is True)
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 

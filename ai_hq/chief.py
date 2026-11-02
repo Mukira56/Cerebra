@@ -37,10 +37,13 @@ class Worker:
 
 
 class Registry:
-    def __init__(self):
+    def __init__(self, default_enabled=True):
         self.workers = {}
+        self.default_enabled = default_enabled
 
-    def add(self, key, label, about, run, every_minutes, outward=False, enabled=True):
+    def add(self, key, label, about, run, every_minutes, outward=False, enabled=None):
+        if enabled is None:
+            enabled = self.default_enabled
         self.workers[key] = Worker(key, label, about, run, every_minutes, outward, enabled)
         return self.workers[key]
 
@@ -389,7 +392,7 @@ def calls(session):
 
 # ---- the morning brief ----
 BRIEF_KEY = "chief_settings"
-BRIEF_DEFAULTS = {"brief": True, "brief_hour": 8, "last_brief": ""}
+BRIEF_DEFAULTS = {"brief": False, "brief_hour": 8, "last_brief": ""}
 
 
 def chief_settings(session):

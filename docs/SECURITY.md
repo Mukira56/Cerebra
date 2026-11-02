@@ -177,13 +177,13 @@ Under policy B:
 
 - Claude uses read-only tools for planning and independent review (Read, Grep and Glob in `dontAsk` mode). Implementation additionally permits Edit/Write through CLI rules for the task's allowed paths and denies `.git` edits. Shell/network/MCP tools are excluded. The supervisor executes authorized tests separately.
 - Codex runs with `--sandbox read-only` for review and planning, and with `workspace-write` for implementation. On Windows the adapter also passes `-c windows.sandbox="elevated"`, because `--ignore-user-config` otherwise drops the sandbox mode and Codex rejects every command.
-  - Measured on this laptop on 23 October 2026 with `codex sandbox -P :workspace` (Codex CLI 0.163.0), outside `%TEMP%`:
+  - Measured on a validation host on 23 October 2026 with `codex sandbox -P :workspace` (Codex CLI 0.163.0), outside `%TEMP%`:
     - writes inside the workspace: allowed
     - writes to a sibling folder or the parent folder: **blocked**
     - network: **blocked**
     - reads outside the workspace: **allowed**
   - `%TEMP%` is writable by Codex's design.
-  - The elevated sandbox depends on Codex's one-time Windows sandbox setup, which already exists on this laptop.
+  - The elevated sandbox depends on Codex's one-time Windows sandbox setup. Each customer must complete the provider's setup on their own computer; these historical measurements do not verify that computer.
 - **Residual risk: outside-repository reads remain possible with your Windows account's rights.** Read-only tools and CLI write restrictions do not establish OS read isolation.
 
 Use the accepted policy for trusted project/test code and the explicit task scope. It does not grant unrelated operations or permission to extract secrets. To revoke it, stop the application, run `manage revoke-cli-confinement`, and restart. The supervisor, dashboard, logs, and Git operations are local; provider inference can send task/workspace content to Codex/Claude services under their account settings.

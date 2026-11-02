@@ -23,7 +23,7 @@ from .models import Event, FreelanceLead, Metadata, Project, Task, now, uid
 from .security import redact
 
 KEY = "freelance_profile"
-USER_AGENT = "Cerebra (personal freelance job search)"
+USER_AGENT = "Cerebra job search"
 SERVICES = {
     "web": ("Websites & web apps", ["website", "web app", "landing page", "wordpress", "shopify", "woocommerce", "e-commerce", "ecommerce", "react",
                                      "next.js", "nextjs", "vue", "angular", "frontend", "front-end", "full stack", "full-stack", "django", "flask",
@@ -45,14 +45,14 @@ SOURCES = {
     "hn": {"label": "Hacker News hiring threads", "every": 3 * 60 * 60, "url": "https://news.ycombinator.com"},
 }
 STATUSES = {"new", "saved", "hidden", "applied", "interview", "awarded", "won", "lost"}  # awarded: the client chose you; won: the work is on
-# The owner's own words for what they do (2026-10-30): every application leads with these.
-DEFAULT_SKILLS = ["Cybersecurity", "AI integration", "Web development", "API integration"]
-# How everything sent in the owner's name must read (the owner, 2026-10-30): as the owner, never as a tool's output.
+# A new workspace has no assumed skills. Each customer supplies their own profile.
+DEFAULT_SKILLS = []
+# Applications use the customer's confirmed skills and preferences.
 VOICE = ("Write as the freelancer, in the first person, as a person applying in their own name. Never mention Cerebra, or any AI tool,"
          " assistant or agent helping with the work or the writing. Never present the freelancer's own portfolio or personal website as"
          " a client project or as something they are building. Lead with the SKILLS listed.")
-DEFAULTS = {"services": list(SERVICES), "keywords": [], "exclude": [], "min_budget": 0.0, "currency": "USD", "skills": DEFAULT_SKILLS,
-            "sources": {name: True for name in SOURCES}, "checked": {}}
+DEFAULTS = {"services": [], "keywords": [], "exclude": [], "min_budget": 0.0, "currency": "USD", "skills": DEFAULT_SKILLS,
+            "sources": {name: False for name in SOURCES}, "checked": {}}
 MAX_DESCRIPTION = 6000
 GOOD = 50  # a strong match: worth a phone alert and the top of the list
 TAG = re.compile(r"<[^>]+>")
@@ -83,8 +83,6 @@ def save_profile(session, changes):
     value = profile(session)
     if "services" in changes:
         chosen = [item for item in changes["services"] or [] if item in SERVICES]
-        if not chosen:
-            raise ValueError("Choose at least one kind of work you sell")
         value["services"] = chosen
     for key in ("keywords", "exclude"):
         if key in changes:
@@ -97,7 +95,9 @@ def save_profile(session, changes):
             raise ValueError("Enter a minimum budget of 0 or more")
         value["min_budget"] = round(budget, 2)
     if "sources" in changes:
-        value["sources"] = {name: bool((changes["sources"] or {}).get(name, value["sources"].get(name, True))) for name in SOURCES}
+        value["sources"] = {name: bool((changes["sources"] or {}).get(name, value["sources"].get(name, False))) for name in SOURCES}
+    if any(value["sources"].values()) and not value["services"]:
+        raise ValueError("Choose at least one kind of work before enabling job sources")
     row = session.get(Metadata, KEY)
     if row:
         row.value = value
@@ -1004,8 +1004,8 @@ class Bidder:
 
 # ---- Phase 4b: applying by itself (Freelancer.com only: Upwork and Fiverr ban automated proposals) ----
 AUTO_KEY = "freelance_auto"
-AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True, "ahead": True, "ahead_per_day": 5,
-                 "alert": True, "alert_score": 50, "alert_bids": 15, "alert_usd": 250}
+AUTO_DEFAULTS = {"enabled": False, "min_score": 40, "per_day": 15, "accept_awards": False, "committee": True, "ahead": False, "ahead_per_day": 5,
+                 "alert": False, "alert_score": 50, "alert_bids": 15, "alert_usd": 250}
 RARE_HOURLY = 20  # USD an hour: the hourly side of "a real budget" for a rare chance
 
 

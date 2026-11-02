@@ -227,7 +227,7 @@ class Outreach:
             problems.append("Add at least one city to search, such as Austin, TX")
         return problems
 
-    def send_one(self, prospect_id, to, text, follow_up=True):
+    def send_one(self, prospect_id, to, text, follow_up=False):
         """The owner's one click: send this email (as they edited it) to this business, and follow up if there's no answer."""
         to = str(to or "").strip().lower()
         if not EMAIL.fullmatch(to):
@@ -496,7 +496,7 @@ class Outreach:
                 draft_email, opener = (draft.email if draft else ""), session.get(Prospect, prospect_id).opener
             if draft_email:
                 result = self.send_one(prospect_id, draft_email, opener if opener.lower().startswith("subject:") else
-                                       self.writer.opener(prospect_id)["opener"])  # the owner's edits, if they made any
+                                       self.writer.opener(prospect_id)["opener"], follow_up=True)  # enabled automatic outreach has its own follow-up policy
                 sent += bool(result)
                 continue
             email = find_email(reader, website)

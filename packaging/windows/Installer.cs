@@ -9,13 +9,27 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Cerebra Setup")]
-[assembly: AssemblyVersion("0.74.5.0")]
+[assembly: AssemblyVersion("0.74.6.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
     internal int Port=8765;
-    internal bool Quiet, Desktop=true, Shortcuts=true, TestRegistration, InstallGit;
+    internal bool Quiet, Desktop=true, Shortcuts=true, TestRegistration, InstallGit, TargetExplicit, DataExplicit;
     internal string Registration { get { return Shared.RegistryPath + (TestRegistration ? ".InstallerTest" : ""); } }
+    internal void SelectRegisteredInstall(Func<string> readLocation) {
+        if(TestRegistration) {
+            if(!TargetExplicit || !DataExplicit) throw new ArgumentException("Test installations require explicit --dir and --data folders.");
+            return;
+        }
+        if(TargetExplicit) return;
+        string location=readLocation(), previous;
+        if(!string.IsNullOrEmpty(location) && Shared.InstalledData(location,out previous)) Target=Shared.Full(location);
+    }
+    internal void ResolveData() {
+        if(DataExplicit) return;
+        string previous;
+        Data=Shared.InstalledData(Target,out previous)?previous:Shared.DefaultData;
+    }
 }
 internal static class Prerequisites {
     internal const string GitPage="https://git-scm.com/download/win";
@@ -77,8 +91,8 @@ internal static class Setup {
         try {
             for(int i=0;i<args.Length;i++) {
                 if(args[i]=="--quiet") options.Quiet=true;
-                else if(args[i]=="--dir") options.Target=args[++i];
-                else if(args[i]=="--data") options.Data=args[++i];
+                else if(args[i]=="--dir") { options.Target=args[++i]; options.TargetExplicit=true; }
+                else if(args[i]=="--data") { options.Data=args[++i]; options.DataExplicit=true; }
                 else if(args[i]=="--port") options.Port=int.Parse(args[++i]);
                 else if(args[i]=="--no-shortcuts") { options.Shortcuts=false; options.Desktop=false; }
                 else if(args[i]=="--no-desktop") options.Desktop=false;
@@ -91,6 +105,10 @@ internal static class Setup {
                 }
                 else throw new ArgumentException("Unknown setup argument: " + args[i]);
             }
+            options.SelectRegisteredInstall(delegate {
+                using(var key=Registry.CurrentUser.OpenSubKey(Shared.RegistryPath)) return key==null?null:key.GetValue("InstallLocation") as string;
+            });
+            options.ResolveData();
             if(options.Quiet) {
                 // Quiet installs (updates, tests) never install system software unless --install-git explicitly allows it.
                 if(options.InstallGit && Prerequisites.FindGit()==null) {
@@ -124,6 +142,8 @@ internal static class Setup {
         }
     }
     internal static void Install(InstallOptions options, Action<int> progress) {
+        if(string.IsNullOrWhiteSpace(options.Target) || (options.DataExplicit && string.IsNullOrWhiteSpace(options.Data))) throw new ArgumentException("Choose dedicated program and data directories.");
+        options.ResolveData();
         options.Target=Shared.Full(options.Target); options.Data=Shared.Full(options.Data);
         if(options.Port<1024 || options.Port>65535) throw new ArgumentException("Port must be between 1024 and 65535.");
         if(options.Target==Path.GetPathRoot(options.Target).TrimEnd('\\') || options.Target==Shared.Full(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))) throw new IOException("Choose a dedicated program directory.");
@@ -194,6 +214,7 @@ internal sealed class SetupForm:Form {
     private readonly Button install=new Button();
     private readonly ProgressBar progress=new ProgressBar();
     private readonly Label state=new Label();
+    private bool refreshingData;
     internal SetupForm(InstallOptions value) {
         options=value;Text="Cerebra Setup";ClientSize=new Size(620,495);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;Font=new Font("Segoe UI",10);
         Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
@@ -202,11 +223,20 @@ internal sealed class SetupForm:Form {
         Controls.Add(new Label{Text="Version "+Shared.Version+"  |  Windows 10/11 x64  |  Installs for your account",Location=new Point(30,76),AutoSize=true,ForeColor=Color.DimGray});
         Controls.Add(new Label{Text="Program location",Location=new Point(30,121),AutoSize=true});target.SetBounds(30,146,555,29);target.Text=options.Target;Controls.Add(target);
         Controls.Add(new Label{Text="Project data and history (kept during uninstall)",Location=new Point(30,192),AutoSize=true});data.SetBounds(30,217,555,29);data.Text=options.Data;Controls.Add(data);
-        Controls.Add(new Label{Text="Existing data stays in its current folder. Python is included.\nCerebra needs Git: Setup checks for it and can install it for you first.",Location=new Point(30,265),Size=new Size(555,47),ForeColor=Color.DimGray});
+        Controls.Add(new Label{Text="Your data has its own folder. Verified upgrades keep that location.\nTo reuse another installation's history, choose its data folder above.",Location=new Point(30,265),Size=new Size(555,47),ForeColor=Color.DimGray});
         desktop.Text="Create a desktop shortcut";desktop.Checked=true;desktop.SetBounds(30,323,330,26);Controls.Add(desktop);
         launch.Text="Open Cerebra after installation";launch.Checked=!File.Exists(Path.Combine(options.Data,"server.json"));launch.SetBounds(30,350,330,26);Controls.Add(launch);
         state.SetBounds(30,389,555,24);state.Text="Close a running Cerebra or AI HQ before launching the installed version.";Controls.Add(state);
         progress.SetBounds(30,421,390,23);Controls.Add(progress);install.SetBounds(450,416,135,34);install.Text="Install";install.Click+=Install;Controls.Add(install);
+        data.TextChanged+=delegate { if(!refreshingData) options.DataExplicit=true; };
+        target.Leave+=delegate {
+            if(options.DataExplicit) return;
+            try {
+                options.Target=target.Text; options.ResolveData();
+                refreshingData=true; data.Text=options.Data;
+            } catch(Exception error) { state.Text=error.Message; }
+            finally { refreshingData=false; }
+        };
         FormClosing+=delegate(object sender,FormClosingEventArgs args) {if(!install.Enabled)args.Cancel=true;};
     }
     private void Unlock() { install.Enabled=true;target.Enabled=true;data.Enabled=true;desktop.Enabled=true;launch.Enabled=true; }
@@ -237,6 +267,9 @@ internal sealed class SetupForm:Form {
     private async void Install(object sender,EventArgs args) {
         install.Enabled=false;target.Enabled=false;data.Enabled=false;desktop.Enabled=false;launch.Enabled=false;
         options.Target=target.Text;options.Data=data.Text;options.Desktop=desktop.Checked;
+        try { options.ResolveData(); refreshingData=true; data.Text=options.Data; }
+        catch(Exception error) { MessageBox.Show(error.Message,"Cerebra Setup",MessageBoxButtons.OK,MessageBoxIcon.Error); Unlock(); return; }
+        finally { refreshingData=false; }
         if(!await EnsureGit()) { state.Text="Setup paused. Press Install when you're ready."; Unlock(); return; }
         try {
             await Task.Run(()=>Setup.Install(options,p=>BeginInvoke((Action)(()=>{progress.Value=p;state.Text="Installing bundled application files...";}))));

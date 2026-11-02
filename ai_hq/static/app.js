@@ -11,7 +11,7 @@
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
     overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
-    chat: ["WORKSPACE", "Support", "Ask about any project or task (“why did EstatePilot fail?”), or have Cerebra plan, create and start the work."],
+    chat: ["WORKSPACE", "Support", "Ask about a project or task, or have Cerebra plan, create and start the work."],
     council: ["BUILD", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     marketing: ["EARN", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
@@ -174,6 +174,38 @@
   }
 
   // ---------- overview ----------
+  function customerWelcome(state) {
+    return panel("Welcome to Cerebra", body(
+      el("p", "", "Set up this workspace with your own details and preferences. Personal details are optional, and you can browse before saving."),
+      el("p", "row-meta", "Job sources and automatic sending stay off unless you enable them. Connect your own provider accounts when you need them."),
+      actionsRow(button("Set up my workspace", () => customerSetupForm(state), "button primary"), link("Models & sign-in", "models"),
+        link("Business connections", "connections"), link("Projects", "projects"))));
+  }
+  function customerSetupForm(state) {
+    const profile = state.profile || {}, freelance = state.freelance || {}, options = state.options || {}, form = el("form"), save = submitButton("Save workspace setup");
+    const name = input("Your name or business name (optional)", profile.name || ""), headline = input("What you do (optional)", profile.headline || ""),
+      location = input("City and country (optional)", profile.location || ""), skills = input("Your skills, separated by commas", array(freelance.skills).join(", "));
+    name.maxLength = 120; headline.maxLength = 200; location.maxLength = 120;
+    const share = check("Share my profile details with AI tools when working on my requests", false);
+    const currency = select([["", "Choose a currency"], ...array(options.currencies).map(value => [value, value])], state.currency || ""); currency.required = true;
+    const services = Object.entries(options.services || {}).map(([key, label]) => { const item = check(label, array(freelance.services).includes(key)); item.key = key; return item; });
+    const sources = Object.entries(options.sources || {}).map(([key, label]) => { const item = check(label, false); item.key = key; return item; });
+    append(form, el("p", "", "Use your own information. Leave optional fields blank if you prefer; do not enter passwords or API keys here."),
+      append(el("div", "form-grid"), field("Display name", name), field("What you do", headline), field("Location", location), field("Business currency", currency, "Confirm the currency used for your business records.")),
+      share.wrap, el("h3", "", "Optional job search"), field("Your skills", skills, "Only include skills you can offer. These are used in proposals and matching."),
+      el("p", "row-meta", "Choose the kinds of work you offer. Leave them blank if you are using other parts of Cerebra."), append(el("div", "check-list"), ...services.map(item => item.wrap)),
+      el("h3", "", "Public job sources"), el("p", "row-meta", "All sources start off. Selecting a source allows periodic public job searches; it does not enable bidding, email sending or AI agents."),
+      append(el("div", "check-list"), ...sources.map(item => item.wrap)),
+      actionsRow(button("Cancel", closeDialog, "button ghost"), save));
+    wireForm(form, save, async () => {
+      const selectedServices = services.filter(item => item.control.checked).map(item => item.key), selectedSources = sources.filter(item => item.control.checked).map(item => item.key);
+      if (selectedSources.length && !selectedServices.length) throw new Error("Choose at least one kind of work before enabling job sources.");
+      await mutate("/api/onboarding", {name: name.value.trim(), headline: headline.value.trim(), location: location.value.trim(), share_profile: share.control.checked,
+        skills: skills.value.split(",").map(item => item.trim()).filter(Boolean), services: selectedServices, sources: selectedSources, currency: currency.value});
+      closeDialog(); await refresh(true); toast("Workspace setup saved.");
+    });
+    showDialog("Set up your workspace", form);
+  }
   function setupChecklist() {
     const signIn = name => cache.providers?.find(item => item.id === name)?.sign_in?.signed_in === true || agentRow(name).authentication === "verified_by_execution";
     const items = [
@@ -235,7 +267,8 @@
   }
   function overview() {
     const node = el("div"), tasks = realTasks(), active = tasks.filter(task => ACTIVE.includes(task.state)), setup = setupChecklist();
-    if (!setup.complete) node.append(panel("Get started", body(setup.list)));
+    if (data.onboarding?.needs_setup && !data.onboarding.existing_workspace) node.append(customerWelcome(data.onboarding));
+    if (!setup.complete) node.append(panel("Get started", body(el("p", "row-meta", "These steps apply when you want Cerebra to run a coding task. You can use other workspace tools before completing them."), setup.list)));
     // Tasks paused because Cerebra closed or stopped, or waiting for an AI model with usage left.
     const stopped = tasks.filter(task => task.state === "BLOCKED" && ["paused_on_close", "interrupted_restart"].includes(task.results?.blocked_reason));
     const noUsage = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_usage");
@@ -1487,7 +1520,7 @@
     const copy = button("Copy", () => navigator.clipboard.writeText(opener.value).then(() => toast("Copied. Paste it into your email.")), "button ghost");
     const sender = el("div");
     api("/api/outreach").then(state => sender.replaceChildren(senderLine(state.sender))).catch(() => {});
-    const to = input("their email address", item.email || ""), followUp = check("Follow up automatically if they don't answer (stops when they reply)", true); to.type = "email";
+    const to = input("their email address", item.email || ""), followUp = check("Follow up automatically if they don't answer (stops when they reply)", false); to.type = "email";
     if (!item.email && item.website) { to.placeholder = "Looking for their email on their website…";
       api(`/api/prospects/${item.id}/email`).then(found => { if (found.email && !to.value) to.value = found.email; else if (!found.email) to.placeholder = "No email on their site: type one you know, or call them"; to.dispatchEvent(new Event("input")); }).catch(() => {}); }
     const send = button("Send with Gmail", () => act(result => result.message, () => mutate(`/api/prospects/${item.id}/send`, {to: to.value.trim(), text: opener.value, follow_up: followUp.control.checked}, "POST", 120000))
@@ -2239,7 +2272,7 @@
     const services = Object.entries(state.services).map(([key, label]) => { const item = check(label, array(settings.services).includes(key)); item.key = key; return item; });
     const words = textarea("Extra skills or tools, one per line (e.g. Supabase, Tailwind)", array(settings.keywords).join("\n")), exclude = textarea("Words that rule a job out, one per line (e.g. unpaid, crypto)", array(settings.exclude).join("\n"));
     const minimum = input("0", settings.min_budget || 0, "number"); minimum.min = 0; minimum.step = "any";
-    const skills = input("Cybersecurity, AI integration, Web development, API integration", array(settings.skills).join(", "));
+    const skills = input("Your skills, separated by commas", array(settings.skills).join(", "));
     append(form, field("Your skills", skills, "How you describe yourself, separated by commas. Every proposal, email and profile leads with these, written as you."),
       append(el("div", "check-list"), ...services.map(item => item.wrap)), field("Extra skills", words), field("Rule out jobs that mention", exclude), field("Smallest budget you take (USD)", minimum, "Jobs below it sink to the bottom."), actionsRow(save));
     wireForm(form, save, async () => {

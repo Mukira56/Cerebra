@@ -26,7 +26,10 @@ from .config import ROOT
 from .processes import ProcessRunner
 from .security import redact
 
-REPOSITORY = "Mukira56/Cerebra"
+# Distributors configure their own public release channel. Customer packages inherit no developer account.
+REPOSITORY = os.environ.get("CEREBRA_UPDATE_REPOSITORY", "").strip()
+if REPOSITORY and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", REPOSITORY):
+    raise ValueError("CEREBRA_UPDATE_REPOSITORY must be a public owner/repository name")
 TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 INSTALLER = re.compile(r"^Cerebra-Setup-(\d+\.\d+\.\d+)-Windows-x64\.exe$")
 
@@ -108,6 +111,8 @@ class PublicGitHub:
 
     def release(self, tag=None):
         """The newest release (or the one with this tag) as {tagName, name, body, publishedAt, assets: [{name, size, url}]}, or None."""
+        if not REPOSITORY:
+            raise ValueError("No update channel is configured for this edition")
         import httpx
         path = f"/releases/tags/{tag}" if tag else "/releases/latest"
         try:
@@ -150,9 +155,11 @@ class Updater:
                               "message": f"Cerebra {pending['tag'][1:]} is downloaded and verified. Press Install and restart when you're ready."}
 
     def check(self):
-        release = self.github.release()
         current = __version__
         base = {"current": current, "repository": REPOSITORY, "installed": installed_root() is not None, "last_log": self.last_log()}
+        if not REPOSITORY:
+            return {**base, "available": False, "message": "No update channel is configured for this edition. Use an installer supplied by your distributor."}
+        release = self.github.release()
         if release is None:
             return {**base, "available": False, "message": "No releases have been published yet."}
         tag = release.get("tagName", "")

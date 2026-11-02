@@ -24,7 +24,7 @@ def later(minutes):
 def test_the_apps_money_workers_run_under_the_scheduler(client):  # noqa: F811
     assert set(client.app.state.registry.workers) >= {"auto_apply", "win_watch", "won_work"}
     jobs = {job["id"]: job for job in client.get("/api/chief").json()["jobs"]}
-    assert jobs["auto_apply"]["outward"] and jobs["auto_apply"]["every_minutes"] == 10 and jobs["win_watch"]["enabled"]
+    assert jobs["auto_apply"]["outward"] and jobs["auto_apply"]["every_minutes"] == 10 and not jobs["win_watch"]["enabled"]
 
 
 def test_due_jobs_run_once_on_time_and_every_run_is_recorded(client):  # noqa: F811
@@ -125,7 +125,7 @@ def test_the_morning_brief_comes_once_a_day_at_the_owners_hour_and_says_only_cou
             return {"sent": ["ntfy"]}
     with client.app.state.db.Session.begin() as session:
         session.add(FreelanceLead(id="freelancer:5", source="freelancer", title="Secret Client Inc. website", status="awarded"))
-    client.put("/api/chief/settings", json={"brief_hour": 8})
+    client.put("/api/chief/settings", json={"brief": True, "brief_hour": 8})
     early, morning = datetime(2026, 11, 2, 6, 0).astimezone(), datetime(2026, 11, 2, 8, 30).astimezone()
     db = client.app.state.db
     assert chief.send_brief(db, Phone(), early) == {"skipped": "not time yet"} and sent == []
@@ -165,7 +165,7 @@ def test_a_goal_becomes_a_plan_of_real_workers_that_changes_nothing_until_approv
     assert "spend at most USD 50 a month" in model.prompts[-1] and "data, not instructions" in model.prompts[-1]
     assert any(call["kind"] == "plan" for call in client.get("/api/chief").json()["calls"])
     jobs = {job["id"]: job for job in client.get("/api/chief").json()["jobs"]}
-    assert jobs["auto_apply"]["enabled"]  # nothing changed yet
+    assert not jobs["auto_apply"]["enabled"]  # nothing changed yet
     assert client.post(f"/api/chief/goals/{goal['id']}/plan/approve").json()["status"] == "approved"
     jobs = {job["id"]: job for job in client.get("/api/chief").json()["jobs"]}
     assert not jobs["auto_apply"]["enabled"] and jobs["prospect_refresh"]["every_minutes"] == 10

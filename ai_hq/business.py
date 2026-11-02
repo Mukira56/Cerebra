@@ -71,7 +71,7 @@ def default_root():
 
 def load(session):
     row = session.get(Metadata, KEY)
-    return {"output_root": str(default_root()), "hourly_rate": 25, "currency": "USD", **(row.value if row else {})}
+    return {"output_root": str(default_root()), "hourly_rate": 0, "currency": "USD", **(row.value if row else {})}
 
 
 def save(session, output_root=None, hourly_rate=None, currency=None):

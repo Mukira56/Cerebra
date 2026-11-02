@@ -6,6 +6,16 @@ from .security import relative_paths, redact
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+class WorkspaceSetup(StrictModel):
+    name: str = Field(default="", max_length=120)
+    headline: str = Field(default="", max_length=200)
+    location: str = Field(default="", max_length=120)
+    share_profile: bool = False
+    skills: list[str] = Field(default_factory=list, max_length=12)
+    services: list[str] = Field(default_factory=list, max_length=4)
+    sources: list[str] = Field(default_factory=list, max_length=5)
+    currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+
 class ProjectCreate(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     path: str = Field(default="", max_length=2048)

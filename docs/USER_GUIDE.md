@@ -98,7 +98,7 @@ Support can start a business job for you too. Ask it, for example: "Make listing
 ## Support
 
 **Support** is your support engineer. Every message includes the live record of all your projects and tasks: states, errors, test output and what's waiting for you. So you can ask:
-- "Where are we in EstatePilot, and why did it fail?"
+- "Where are we in your project, and why did it fail?"
 - "What is waiting for my approval?"
 - "Build me a booking web app." Support plans it and proposes the project and tasks.
 - "Here is a client's request: …" Support works out what the client really wants, lists questions to ask, drafts a reply for you to send, and plans the work.

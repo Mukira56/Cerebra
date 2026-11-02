@@ -9,23 +9,20 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.74.5";
+    internal const string Version = "0.74.6";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
-    // Product name. Internal ids (AppId, registry key, AIHQ.exe, install/data folders) keep their pre-rename
-    // values so upgrades from "AI HQ" replace the same installation and keep the same data.
+    // Keep existing install identities for upgrades; fresh installs use product-named folders.
     internal const string Product = "Cerebra";
     internal const string MenuName = "Cerebra", TestMenuName = "Cerebra InstallerTest", ShortcutFile = "Cerebra.lnk", UninstallShortcutFile = "Uninstall Cerebra.lnk";
     internal const string LegacyMenuName = "AI Development HQ", LegacyTestMenuName = "AI HQ InstallerTest", LegacyShortcutFile = "AI Development HQ.lnk", LegacyUninstallShortcutFile = "Uninstall AI HQ.lnk";
     internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16777216 };
     internal static string Root { get { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar); } }
-    internal static string DefaultInstall { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "AI HQ"); } }
-    internal static string DefaultData {
-        get {
-            string previous = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AI-Development-HQ", "data");
-            return File.Exists(Path.Combine(previous, "hq.sqlite3")) ? previous : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AI HQ", "data");
-        }
-    }
+    internal static string FreshInstall(string localApplicationData) { return Path.Combine(localApplicationData, "Programs", "Cerebra"); }
+    internal static string FreshData(string localApplicationData) { return Path.Combine(localApplicationData, "Cerebra", "data"); }
+    internal static string DefaultInstall { get { return FreshInstall(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)); } }
+    internal static string DefaultData { get { return FreshData(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)); } }
     internal static string Full(string path) { return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar); }
+    private static bool Absolute(string path) { return !string.IsNullOrWhiteSpace(path) && Path.IsPathRooted(path) && Path.GetPathRoot(path).Length>1 && !Path.GetPathRoot(path).EndsWith(":"); }
     internal static bool Inside(string path, string root) { return Full(path).StartsWith(Full(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase); }
     internal static void RejectLinks(string path) {
         DirectoryInfo part = new DirectoryInfo(Full(path));
@@ -48,6 +45,29 @@ internal static class Shared {
     internal static Dictionary<string, object> ReadJson(string path) { return Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8)); }
     internal static void WriteJson(string path, object value) { File.WriteAllText(path, Json.Serialize(value), new UTF8Encoding(false)); }
     internal static Dictionary<string, object> Config(string root) { return ReadJson(Path.Combine(root, "desktop-settings.json")); }
+    // Only the selected installed application can supply upgrade data. Never discover source-checkout
+    // databases, copy history, or inspect the selected data directory while choosing a location.
+    internal static bool InstalledData(string root, out string data) {
+        data=null;
+        RejectLinks(root);
+        string marker=Path.Combine(root,"aihq-install.json"), settings=Path.Combine(root,"desktop-settings.json");
+        if(!File.Exists(marker)) return false;
+        if((File.GetAttributes(marker)&FileAttributes.ReparsePoint)!=0) throw new IOException("The install record is a link. Choose an ordinary program directory.");
+        var record=ReadJson(marker); object id;
+        if(record==null || !record.TryGetValue("app_id",out id) || !string.Equals(id as string,AppId,StringComparison.Ordinal)) return false;
+        try {
+            if(!File.Exists(settings) || (File.GetAttributes(settings)&FileAttributes.ReparsePoint)!=0) throw new IOException();
+            var config=ReadJson(settings); object configId, stored, recorded;
+            if(config==null || !config.TryGetValue("app_id",out configId) || !string.Equals(configId as string,AppId,StringComparison.Ordinal)
+                || !config.TryGetValue("data_dir",out stored) || !record.TryGetValue("data_dir",out recorded)
+                || !(stored is string) || !(recorded is string) || !Absolute((string)stored) || !Absolute((string)recorded)
+                || !string.Equals(Full((string)stored),Full((string)recorded),StringComparison.OrdinalIgnoreCase)) throw new IOException();
+            data=Full((string)stored); return true;
+        } catch(Exception error) {
+            if(!(error is IOException || error is ArgumentException || error is InvalidOperationException)) throw;
+            throw new IOException("The existing installation's data location could not be verified. Select its existing data folder explicitly (or use --data); Setup has not changed it.",error);
+        }
+    }
     internal static string Python(string root) { return Path.Combine(root, "runtime", "python.exe"); }
     internal static void AssertStopped(string root) {
         foreach(var process in Process.GetProcesses()) {

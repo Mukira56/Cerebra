@@ -13,9 +13,11 @@ import shutil
 import subprocess
 import sys
 import zipfile
+import tomllib
+from release_privacy import audit, copy_app, copy_dependencies
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.74.5'
+VERSION='0.74.6'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 TRACE_MODULES=['ai_hq.api','ai_hq.manage','ai_hq.doctor','ai_hq.telemetry','ai_hq.gitops','ai_hq.agents','ai_hq.supervisor','ai_hq.processes',
@@ -30,7 +32,7 @@ def precompile(stage,build):
     """Ship checked-hash bytecode for modules the app actually loads.
 
     The installed launcher sets PYTHONDONTWRITEBYTECODE, so without this every start recompiles
-    FastAPI, Pydantic and SQLAlchemy from source (20+ seconds on this laptop). Checked-hash pycs stay
+    FastAPI, Pydantic and SQLAlchemy from source on each start. Checked-hash pycs stay
     valid after extraction resets file times, and are ignored if a source file differs.
     """
     import importlib.util, py_compile
@@ -41,7 +43,7 @@ def precompile(stage,build):
     sources={Path(path).resolve() for path in traced}|{path.resolve() for path in (stage/'ai_hq').rglob('*.py')}
     for source in sorted(sources):
         if not source.is_relative_to(stage.resolve()): raise RuntimeError('Trace imported a module outside the payload: '+str(source))
-        py_compile.compile(str(source),cfile=importlib.util.cache_from_source(str(source)),doraise=True,
+        py_compile.compile(str(source),cfile=importlib.util.cache_from_source(str(source)),dfile=source.relative_to(stage.resolve()).as_posix(),doraise=True,
                            invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
     return len(sources)
 
@@ -88,7 +90,7 @@ def main():
     build=args.build_dir.resolve();stage=build/'payload'
     if (stage/'data').exists() or (stage/'desktop-settings.json').exists(): raise RuntimeError('Build payload contains runtime data; use a new build directory')
     # Start from an empty payload so files dropped from the release (or stale pycs) cannot leak into it.
-    if stage.exists(): shutil.rmtree(stage)
+    if stage.exists(): raise RuntimeError('Use a new build directory; existing payloads are preserved')
     stage.mkdir(parents=True)
     args.output.mkdir(parents=True,exist_ok=True)
     base=Path(sys.base_prefix);runtime=stage/'runtime';runtime.mkdir(exist_ok=True)
@@ -101,15 +103,14 @@ def main():
             (runtime/'DLLs').mkdir(exist_ok=True);shutil.copy2(path,runtime/'DLLs'/path.name)
     site=Path(sys.prefix)/'Lib/site-packages'
     # pip is not needed to run the app; nobody should install into the private runtime.
-    excluded={path.name for path in site.iterdir() if path.name.startswith(('__editable__','ai_development_hq','pip-')) or path.name=='pip'}
-    copy_tree(site,runtime/'Lib/site-packages',excluded)
+    project=tomllib.loads((ROOT/'pyproject.toml').read_text(encoding='utf-8'))['project']
+    packages=copy_dependencies(site,runtime/'Lib/site-packages',project['dependencies']+project['optional-dependencies']['dev'])
     (runtime/'python313._pth').write_text('Lib\nDLLs\nLib\\site-packages\n..\nimport site\n',encoding='utf-8')
     (runtime/'Lib/site-packages/sitecustomize.py').write_text("import sys\nfor stream in (sys.stdout,sys.stderr):\n    if stream is not None and hasattr(stream,'reconfigure'): stream.reconfigure(encoding='utf-8')\n",encoding='utf-8')
-    copy_tree(ROOT/'ai_hq',stage/'ai_hq')
+    copy_app(ROOT,stage)
     (stage/'docs').mkdir(exist_ok=True)
     for name in PUBLIC_DOCS:shutil.copy2(ROOT/'docs'/name,stage/'docs'/name)
     shutil.copy2(ROOT/'docs/WINDOWS_INSTALLER.md',stage/'README.txt')
-    packages=sorted((dist.metadata['Name'],dist.version) for dist in importlib.metadata.distributions(path=[str(site)]) if not dist.metadata['Name'].lower().startswith('ai-development-hq'))
     (stage/'THIRD-PARTY-NOTICES.txt').write_text('Python runtime: runtime/LICENSE.txt\nThird-party package licenses and metadata are under runtime/Lib/site-packages/*.dist-info.\n\n'+'\n'.join(name+' '+version for name,version in packages)+'\n',encoding='utf-8')
     print('Precompiled '+str(precompile(stage,build))+' imported modules.',flush=True)
     print('Compiling native launcher and uninstaller...',flush=True)
@@ -124,7 +125,10 @@ def main():
     subprocess.run([str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-File',str(ROOT/'scripts/build_icon.ps1'),'-OutputPath',str(icon)],check=True)
     compile_program(compiler,'Launcher.cs',stage/'AIHQ.exe',icon=icon)
     compile_program(compiler,'Uninstaller.cs',stage/'Uninstall.exe',icon=icon)
-    files={path.relative_to(stage).as_posix():hashlib.file_digest(path.open('rb'),'sha256').hexdigest() for path in sorted(stage.rglob('*')) if path.is_file() and included_in_release(path,stage)}
+    print('Auditing every customer payload file...',flush=True)
+    files=audit(stage)
+    if any(not included_in_release(stage/name,stage) for name in files): raise RuntimeError('Payload contains an uninventoried release file')
+    (args.output/'customer-privacy-report.json').write_text(json.dumps({'version':VERSION,'passed':True,'files_checked':len(files),'checks':['Git-inventoried application files','Declared dependency closure','No databases, secrets, history or local settings','No known developer identity or paths','Relative bytecode source paths'],'files':files},indent=2),encoding='utf-8')
     (stage/'release-files.json').write_text(json.dumps({'app_id':'AIDevelopmentHQ','version':VERSION,'files':files},indent=2),encoding='utf-8')
     print('Compressing '+str(len(files))+' files...',flush=True)
     payload=build/'payload.zip'

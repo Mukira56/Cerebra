@@ -18,7 +18,7 @@ FIELDS = {  # name: (label, longest allowed)
     "linkedin": ("LinkedIn", 300), "website": ("Website", 300), "location": ("Location", 120),
     "bio": ("About you", 1500), "preferences": ("How you like things done", 1500),
 }
-EMPTY = {name: "" for name in FIELDS} | {"share": True}
+EMPTY = {name: "" for name in FIELDS} | {"share": False}
 
 
 def load(session):

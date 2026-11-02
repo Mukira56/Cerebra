@@ -23,6 +23,23 @@ def run(args,**kwargs):
     if result.returncode: raise RuntimeError(str(args[0])+': '+result.stdout+'\n'+result.stderr)
     return result.stdout.strip()
 
+CUSTOMER_TEST=r'''
+import json
+from fastapi.testclient import TestClient
+from ai_hq.api import create_app
+from ai_hq.config import Settings
+from ai_hq.models import Project, Task, FreelanceLead, Prospect, Book
+from sqlalchemy import select,func
+app=create_app(Settings(),bootstrap_key='customer-fixture-key-at-least-32-characters',start_worker=False)
+with TestClient(app) as c:
+    c.headers['X-CSRF-Token']=c.post('/api/session',json={'key':'customer-fixture-key-at-least-32-characters'}).json()['csrf_token']
+    setup=c.get('/api/onboarding').json()
+    with app.state.db.Session() as session:
+        empty=all(session.scalar(select(func.count()).select_from(model))==0 for model in (Project,Task,FreelanceLead,Prospect,Book))
+    jobs=c.get('/api/chief').json()['jobs']
+    print(json.dumps({'empty':empty,'setup':setup['needs_setup'],'private':not setup['profile']['share'] and not setup['profile']['name'],'jobs_off':not any(j['enabled'] for j in jobs)}))
+'''
+
 MISSING_GIT=r'''
 import json,os,tempfile
 from pathlib import Path
@@ -107,13 +124,16 @@ def main():
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY) as registry:assert winreg.QueryValueEx(registry,'InstallLocation')[0]==str(target)
     menu=Path(manifest['menu']);assert (menu/'Cerebra.lnk').is_file()
     python=target/'runtime/python.exe';launcher=target/'AIHQ.exe'
-    env=os.environ.copy();env['PYTHONPATH']=r'C:\Users\ADMIN\AI-Development-HQ';env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
+    env=os.environ.copy();env['PYTHONPATH']=str(ROOT);env['PYTHONDONTWRITEBYTECODE']='1';env['AIHQ_DATA_DIR']=str(data)
     code="import ai_hq,fastapi,pydantic,sqlalchemy,pytest,httpx,json,sys;print(json.dumps({'file':ai_hq.__file__,'version':ai_hq.__version__,'path':sys.path}))"
     modules=json.loads(run([python,'-X','utf8','-c',code],cwd=target,env=env))
-    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.74.5'
-    assert r'C:\Users\ADMIN\AI-Development-HQ' not in modules['path']
+    assert Path(modules['file']).is_relative_to(target) and modules['version']=='0.74.6'
+    assert str(ROOT) not in modules['path']
     assert not any('__editable__' in p.name for p in target.rglob('*'))
     print('Private runtime imports application/dependencies without source Python...',flush=True)
+    fresh=json.loads(run([python,'-X','utf8','-c',CUSTOMER_TEST],cwd=target,env={**env,'AIHQ_DATA_DIR':str(args.test_root/'fresh-customer-data')}))
+    assert fresh=={'empty':True,'setup':True,'private':True,'jobs_off':True},fresh
+    print('Installed customer workspace starts empty, private and unconfigured...',flush=True)
     # A laptop without Git: the packaged app must still start and point to Required tools instead of crashing.
     nogit=MISSING_GIT.replace('KEY',secrets.token_urlsafe(32))
     missing=json.loads(run([python,'-X','utf8','-c',nogit],cwd=target,env={**env,'PATH':system32,'AIHQ_DATA_DIR':str(args.test_root/'no-git-data')}))
@@ -126,7 +146,7 @@ def main():
         began=time.monotonic();run([launcher,'--start-no-browser'],cwd=target,timeout=120);started=True
         startup_seconds=round(time.monotonic()-began,2)
         with urlopen('http://127.0.0.1:18765/health',timeout=10) as response:health=json.load(response)
-        assert health['version']=='0.74.5'
+        assert health['version']=='0.74.6'
         with urlopen('http://127.0.0.1:18765/',timeout=10) as response:assert b'Cerebra' in response.read()
         try:urlopen('http://127.0.0.1:18765/api/overview',timeout=10);raise AssertionError('Unauthenticated API allowed')
         except HTTPError as error:assert error.code==401
@@ -164,7 +184,7 @@ def main():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY):raise AssertionError('Test uninstall registration was not removed')
     except FileNotFoundError:pass
     report={'installer':str(args.installer),'installer_sha256':hashlib.file_digest(args.installer.open('rb'),'sha256').hexdigest(),'version':health['version'],'private_runtime':True,'native_launch_stop':True,'startup_seconds':startup_seconds,'upgrade_cleanup':True,'embedded_desktop':desktop,'authentication_boundary':True,'pipeline':proof,'git_found_on_and_off_path':True,'starts_without_git':True,'registration_shortcuts':True,'uninstall':True,'database_retained':True,'unknown_user_file_retained':True,'live_provider_calls':False}
-    (ROOT/'work/windows-build/installer-test-results.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+    (args.test_root/'installer-test-results.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     print(json.dumps(report),flush=True)
 
 if __name__=='__main__':main()

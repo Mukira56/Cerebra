@@ -64,6 +64,12 @@ class Sources:
 @pytest.fixture
 def client(tmp_path):
     app = create_app(Settings(data_dir=tmp_path / "data"), bootstrap_key=KEY, start_worker=False)
+    # This fixture represents a customer who explicitly configured job discovery.
+    with app.state.db.Session.begin() as session:
+        freelance.save_profile(session, {"services": list(freelance.SERVICES),
+            "skills": ["Web development", "API integration"],
+            "sources": {key: True for key in freelance.SOURCES}})
+        freelance.save_auto(session, {"ahead": True, "alert": True})
     app.state.sources = Sources()
     app.state.finder.client = httpx.Client(transport=httpx.MockTransport(app.state.sources), headers={"User-Agent": freelance.USER_AGENT})
     app.state.opened = []

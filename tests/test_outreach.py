@@ -108,6 +108,7 @@ def test_one_click_sends_the_edited_draft_keeps_the_legal_footer_and_never_twice
     edited = "Subject: A faster way to book\n\nHi Smile Dental team, I noticed your site has no online booking. Happy to help."
     sent = client.post(f"/api/prospects/{smile['id']}/send", json={"to": smile["email"], "text": edited})
     assert sent.status_code == 200, sent.text
+    assert client.get('/api/outreach/sent').json()[0]['next_at'] == ''  # follow-ups require a separate opt-in
     mail = state.outreach.gmail.sent[0]
     assert mail["to"] == "hello@smile-dental.example" and mail["subject"] == "A faster way to book" and mail["body"].startswith("Hi Smile Dental team")
     assert "PO Box 100, Austin, TX 78701" in mail["body"] and "no thanks" in mail["body"]  # the owner removed the footer: it's put back (CAN-SPAM)
@@ -206,7 +207,7 @@ def test_emailed_businesses_leave_worth_contacting_and_show_their_progress(clien
     state.prospector.search("dentists", "Austin", "Texas")
     smile = next(item for item in client.get("/api/prospects").json()["prospects"] if item["name"] == "Smile Dental")
     before = client.get("/api/prospects").json()["counts"]["kept"]
-    client.post(f"/api/prospects/{smile['id']}/send", json={"to": smile["email"], "text": "Subject: Online booking\n\nHello, a short note about booking on your website."})
+    client.post(f"/api/prospects/{smile['id']}/send", json={"follow_up": True, "to": smile["email"], "text": "Subject: Online booking\n\nHello, a short note about booking on your website."})
     with state.db.Session.begin() as session:  # even if its status is set back by hand, an emailed business isn't "worth contacting" again
         session.get(Prospect, smile["id"]).status = "kept"
     data = client.get("/api/prospects").json()
