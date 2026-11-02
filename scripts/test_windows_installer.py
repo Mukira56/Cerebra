@@ -102,7 +102,7 @@ def main():
     run([args.installer,'--quiet','--dir',target,'--data',data,'--port','18765','--no-desktop','--test-registration'],timeout=360)
     manifest=json.loads((target/'aihq-install.json').read_text(encoding='utf-8'))
     assert manifest['data_dir']==str(data) and manifest['registry']==REGISTRY
-    assert 'docs/progress.md' not in manifest['files'] and 'docs/environment-report.md' not in manifest['files']
+    assert {name for name in manifest['files'] if name.startswith('docs/')} <= {'docs/ARCHITECTURE.md','docs/SECURITY.md','docs/USER_GUIDE.md','docs/WINDOWS_INSTALLER.md'}  # only the user guides ship
     assert not (target/'data').exists() and not (target/'.env').exists()
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,REGISTRY) as registry:assert winreg.QueryValueEx(registry,'InstallLocation')[0]==str(target)
     menu=Path(manifest['menu']);assert (menu/'Cerebra.lnk').is_file()
