@@ -1611,7 +1611,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from .remote import Remote
     app.state.remote = Remote(db, notifier, outreach, drafter, bidder, supervisor)
     registry.add("outreach", "Email local businesses", "Finds US businesses in your cities, reads their websites, emails them about what you saw and follows up, "
-                 "within your daily number on weekdays; stops on any reply and never writes again to anyone who says no (Prospects › Automatic outreach).",
+                 "any day and time within your daily number; stops on any reply and never writes again to anyone who says no (Prospects › Automatic outreach).",
                  outreach.tick, 15, outward=True)
     registry.add("prospect_emails", "Find business emails", "Reads the websites of businesses found before emails were looked up, a few each run, for the public email "
                  "to put in their drafts. Nothing is sent.", outreach.find_missing_emails, 20)

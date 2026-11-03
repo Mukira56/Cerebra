@@ -16,6 +16,23 @@ from test_product_api import KEY
 INSTALLER = b"MZ fixture installer bytes"
 
 
+def test_distributor_channel_and_explicit_environment_override(tmp_path, monkeypatch):
+    monkeypatch.setattr(updates, 'ROOT', tmp_path)
+    monkeypatch.delenv('CEREBRA_UPDATE_REPOSITORY', raising=False)
+    assert updates.release_repository() == ''
+    channel = tmp_path / 'release-channel.json'
+    channel.write_text(json.dumps({'repository': 'example/cerebra'}), encoding='utf-8')
+    assert updates.release_repository() == 'example/cerebra'
+    monkeypatch.setenv('CEREBRA_UPDATE_REPOSITORY', 'other/distribution')
+    assert updates.release_repository() == 'other/distribution'
+    monkeypatch.setenv('CEREBRA_UPDATE_REPOSITORY', '')
+    assert updates.release_repository() == ''
+    monkeypatch.delenv('CEREBRA_UPDATE_REPOSITORY')
+    channel.write_text(json.dumps({'repository': 'https://example.invalid/app'}), encoding='utf-8')
+    with pytest.raises(ValueError, match='public owner/repository'):
+        updates.release_repository()
+
+
 class FakeGh:
     """Answers like GitHub's public releases API would, from fixture data (no sign-in involved)."""
     def __init__(self, tag="v99.0.0", assets=True, corrupt=False):

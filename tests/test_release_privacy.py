@@ -1,5 +1,6 @@
 """Real payload audit adversarial fixtures; no owner folders or real secrets are used."""
 import importlib.util
+import json
 from pathlib import Path
 import py_compile
 import sys
@@ -77,4 +78,18 @@ def test_public_certificate_exception_still_rejects_private_key_material(tmp_pat
     assert audit(tmp_path)
     ca.write_text('-----BEGIN PRIVATE KEY-----\nprivate fixture\n', encoding='ascii')
     with pytest.raises(ValueError, match='credential'):
+        audit(tmp_path)
+
+
+def test_public_channel_exception_is_only_a_canonical_repository_record(tmp_path):
+    channel = tmp_path / 'release-channel.json'
+    channel.write_text(json.dumps({'repository': 'Mukira56/Cerebra'}, indent=2), encoding='utf-8')
+    assert 'release-channel.json' in audit(tmp_path)
+    for content in ({'repository': 'Mukira56/Cerebra', 'profile': 'Godfrey Mukira'},
+                    {'repository': 'C:/Users/ADMIN/private'}):
+        channel.write_text(json.dumps(content, indent=2), encoding='utf-8')
+        with pytest.raises(ValueError, match='Invalid public release channel'):
+            audit(tmp_path)
+    channel.write_text('{"repository":"Godfrey Mukira","repository":"example/app"}', encoding='utf-8')
+    with pytest.raises(ValueError, match='Invalid public release channel'):
         audit(tmp_path)

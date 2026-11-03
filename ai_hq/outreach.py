@@ -7,7 +7,7 @@ Each run (every 15 minutes, by the Chief of Staff scheduler):
 1. Replies first: every thread Cerebra started is read. A reply stops the follow-ups and tells the owner; "no thanks",
    "unsubscribe" and the like put the address and its business on the do-not-contact list for good (US CAN-SPAM: honour
    opt-outs, here immediately); a bounce does the same for the address. Out-of-office answers don't count as replies.
-2. Only on weekdays in business hours, and within the daily number (first emails and follow-ups together):
+2. Any day and time, within the daily number (first emails and follow-ups together):
    - follow-ups that are due go into the same thread (at most two, days apart, each saying one new useful thing);
    - new businesses: the research behind each is what Cerebra saw on its own website (facts with where they were seen,
      ai_hq/prospects.py), plus its public business email from its home or contact page. The owner's AI writes the email
@@ -30,7 +30,7 @@ from .models import Event, Metadata, Prospect, ProspectSearch, now
 
 KEY, DO_NOT_CONTACT = "outreach_settings", "outreach_do_not_contact"
 MAX_PER_DAY, PER_RUN = 40, 3  # a run sends at most a few, so emails are spread through the day
-DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "start_hour": 9, "end_hour": 17}
+DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": []}
 MODES = ("draft", "send")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 NOT_AN_INBOX = re.compile(r"\.(png|jpe?g|gif|svg|webp)$|example\.|sentry|wixpress|godaddy|domain\.com|email\.com|yourname|@2x", re.I)
@@ -51,6 +51,9 @@ Reply with ONLY one JSON object: {"body": "..."}"""
 def settings(session):
     row = session.get(Metadata, KEY)
     value = {**DEFAULTS, **(row.value if row else {})}
+    # Older installations saved a weekday/hour window. Outreach now runs 24/7.
+    value.pop("start_hour", None)
+    value.pop("end_hour", None)
     if not value["places"]:  # the owner's own city, when their profile names one like "Austin, TX"
         from .owner import load as owner_profile
         home = str((owner_profile(session) or {}).get("location") or "")
@@ -85,11 +88,6 @@ def save_settings(session, changes):
         value["places"] = places[:10]
     if "kinds" in changes:
         value["kinds"] = [kind for kind in changes["kinds"] or [] if kind in KINDS]
-    for key in ("start_hour", "end_hour"):
-        if key in changes:
-            value[key] = max(0, min(23, int(changes[key])))
-    if value["start_hour"] >= value["end_hour"]:
-        raise ValueError("Business hours must start before they end")
     row = session.get(Metadata, KEY)
     if row is None:
         session.add(Metadata(key=KEY, value=value))
@@ -323,9 +321,6 @@ class Outreach:
             if problems:
                 return self._note("Waiting for you: " + "; ".join(problems), "waiting")
             replies = self.check_replies() if waiting else 0
-            moment = self.clock()
-            if moment.weekday() >= 5 or not rules["start_hour"] <= moment.hour < rules["end_hour"]:
-                return {**self._note(f"Outside business hours: {replies} new repl(ies). Emails go out on weekdays, {rules['start_hour']}:00–{rules['end_hour']}:00."), "replies": replies}
             with self.db.Session() as session:
                 room = min(PER_RUN, rules["per_day"] - self.sent_today(session))
             if room <= 0:

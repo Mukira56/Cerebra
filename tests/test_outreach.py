@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 from ai_hq import outreach, prospects, vault
 from ai_hq.agents import AgentResult
@@ -140,9 +141,7 @@ def test_automatic_rounds_follow_up_stop_on_reply_and_honour_a_no(client):  # no
     client.put("/api/outreach", json={"enabled": True, "mode": "send", "per_day": 10, "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["dentists"]})
     first = robot.tick()
     assert first["sent"] == 1 and robot.gmail.sent[0]["to"] == "hello@smile-dental.example" and "PO Box 100" in robot.gmail.sent[0]["body"]
-    robot.clock = weekday(20)
-    assert "Outside business hours" in robot.tick()["message"]  # evenings: nothing goes out
-    robot.clock = weekday()
+    robot.clock = lambda: datetime(2026, 11, 8, 23, tzinfo=timezone.utc)  # Sunday-night follow-ups
     with state.db.Session.begin() as session:  # four days later
         row = session.query(outreach.Outbox).filter_by(stage="sent").one()
         row.next_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
@@ -160,6 +159,25 @@ def test_automatic_rounds_follow_up_stop_on_reply_and_honour_a_no(client):  # no
     assert smile["status"] == "lost"
     refused = client.post(f"/api/prospects/{smile['id']}/send", json={"to": "office@smile-dental.example", "text": "Subject: Hi\n\nOne more try about your website."})
     assert refused.status_code == 400 and "won't write to it" in refused.json()["detail"]  # nobody at that business, ever again
+
+
+@pytest.mark.parametrize("day", range(2, 9))  # Monday through Sunday, November 2026
+@pytest.mark.parametrize("hour", [0, 20, 23])
+def test_outreach_sends_every_day_and_hour_with_legacy_hours(client, day, hour):
+    state = setup(client)
+    state.prospector.search("dentists", "Austin", "Texas")
+    client.put("/api/outreach", json={"enabled": True, "mode": "send", "per_day": 1,
+               "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["dentists"]})
+    with state.db.Session.begin() as session:
+        row = session.get(Metadata, outreach.KEY)
+        row.value = {**row.value, "start_hour": 9, "end_hour": 17}
+    state.outreach.clock = lambda: datetime(2026, 11, day, hour, tzinfo=timezone.utc)
+    result = state.outreach.tick()
+    assert result["sent"] == 1, result
+    assert len(state.outreach.gmail.sent) == 1
+    assert "Today's 1 emails are sent" in state.outreach.tick()["message"]
+    settings = client.get("/api/outreach").json()["settings"]
+    assert "start_hour" not in settings and "end_hour" not in settings
 
 
 def test_a_reply_stops_follow_ups_and_tells_the_owner_and_out_of_office_does_not(client):  # noqa: F811

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import importlib.metadata as metadata
 import marshal
 from pathlib import Path
@@ -95,7 +96,17 @@ def audit(stage):
             raise ValueError('Private runtime artifact in customer payload: ' + relative.as_posix())
         raw = path.read_bytes()
         lower = raw.lower()
-        if any(marker.lower().encode(encoding) in lower for marker in PERSONAL_MARKERS for encoding in ('utf-8', 'utf-16le')):
+        # The official distributor's public repository is an update destination, not a user profile.
+        public_channel = False
+        if relative.as_posix() == 'release-channel.json':
+            channel = json.loads(raw)
+            repository = channel.get('repository') if isinstance(channel, dict) else None
+            public_channel = (isinstance(repository, str)
+                              and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository)
+                              and raw.decode('utf-8').replace('\r\n', '\n') == json.dumps({'repository': repository}, indent=2))
+            if not public_channel:
+                raise ValueError('Invalid public release channel')
+        if not public_channel and any(marker.lower().encode(encoding) in lower for marker in PERSONAL_MARKERS for encoding in ('utf-8', 'utf-16le')):
             raise ValueError('Developer identity/path in customer payload: ' + relative.as_posix())
         if SECRET.search(raw):
             raise ValueError('Possible credential in customer payload: ' + relative.as_posix())

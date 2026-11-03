@@ -26,10 +26,21 @@ from .config import ROOT
 from .processes import ProcessRunner
 from .security import redact
 
-# Distributors configure their own public release channel. Customer packages inherit no developer account.
-REPOSITORY = os.environ.get("CEREBRA_UPDATE_REPOSITORY", "").strip()
-if REPOSITORY and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", REPOSITORY):
-    raise ValueError("CEREBRA_UPDATE_REPOSITORY must be a public owner/repository name")
+def release_repository():
+    """Use an explicitly configured distributor channel, never personal runtime data."""
+    repository = os.environ.get("CEREBRA_UPDATE_REPOSITORY")
+    if repository is None:
+        channel = ROOT / "release-channel.json"
+        repository = json.loads(channel.read_text(encoding="utf-8"))["repository"] if channel.is_file() else ""
+    if not isinstance(repository, str):
+        raise ValueError("Update channel must be a public owner/repository name")
+    repository = repository.strip()
+    if repository and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ValueError("Update channel must be a public owner/repository name")
+    return repository
+
+
+REPOSITORY = release_repository()
 TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 INSTALLER = re.compile(r"^Cerebra-Setup-(\d+\.\d+\.\d+)-Windows-x64\.exe$")
 

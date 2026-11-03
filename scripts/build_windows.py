@@ -8,6 +8,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ import tomllib
 from release_privacy import audit, copy_app, copy_dependencies
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.74.8'
+VERSION='0.74.9'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 TRACE_MODULES=['ai_hq.api','ai_hq.manage','ai_hq.doctor','ai_hq.telemetry','ai_hq.gitops','ai_hq.agents','ai_hq.supervisor','ai_hq.processes',
@@ -54,7 +55,7 @@ def included_in_release(path,stage):
         if not (path.suffix.lower()=='.pyc' and path.parent.name=='__pycache__'): return False
     if parts[0] in {'ai_hq','runtime'}: return True
     if parts[0]=='docs': return len(parts)==2 and parts[1] in PUBLIC_DOCS
-    return len(parts)==1 and parts[0] in {'AIHQ.exe','Uninstall.exe','README.txt','THIRD-PARTY-NOTICES.txt','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll','WEBVIEW2-LICENSE.txt','webview2-sdk.json'}
+    return len(parts)==1 and parts[0] in {'AIHQ.exe','Uninstall.exe','README.txt','THIRD-PARTY-NOTICES.txt','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll','WebView2Loader.dll','WEBVIEW2-LICENSE.txt','webview2-sdk.json','release-channel.json'}
 
 def copy_tree(source, target, excluded=()):
     for path in source.rglob('*'):
@@ -83,7 +84,10 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--build-dir',type=Path,default=ROOT/'work/windows-build')
+    parser.add_argument('--update-repository',default='',help='Public GitHub owner/repository for this distributor edition')
     args=parser.parse_args()
+    if args.update_repository and not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',args.update_repository):
+        raise ValueError('Update channel must be a public owner/repository name')
     if os.name!='nt' or sys.version_info[:2]!=(3,13) or sys.maxsize<2**32: raise RuntimeError('Build with Windows x64 Python 3.13 and the tested project environment')
     compiler=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     if not compiler.is_file(): raise RuntimeError('The Windows .NET Framework C# compiler is not available')
@@ -108,6 +112,8 @@ def main():
     (runtime/'python313._pth').write_text('Lib\nDLLs\nLib\\site-packages\n..\nimport site\n',encoding='utf-8')
     (runtime/'Lib/site-packages/sitecustomize.py').write_text("import sys\nfor stream in (sys.stdout,sys.stderr):\n    if stream is not None and hasattr(stream,'reconfigure'): stream.reconfigure(encoding='utf-8')\n",encoding='utf-8')
     copy_app(ROOT,stage)
+    if args.update_repository:
+        (stage/'release-channel.json').write_text(json.dumps({'repository':args.update_repository},indent=2),encoding='utf-8')
     (stage/'docs').mkdir(exist_ok=True)
     for name in PUBLIC_DOCS:shutil.copy2(ROOT/'docs'/name,stage/'docs'/name)
     shutil.copy2(ROOT/'docs/WINDOWS_INSTALLER.md',stage/'README.txt')
@@ -128,7 +134,7 @@ def main():
     print('Auditing every customer payload file...',flush=True)
     files=audit(stage)
     if any(not included_in_release(stage/name,stage) for name in files): raise RuntimeError('Payload contains an uninventoried release file')
-    (args.output/'customer-privacy-report.json').write_text(json.dumps({'version':VERSION,'passed':True,'files_checked':len(files),'checks':['Git-inventoried application files','Declared dependency closure','No databases, secrets, history or local settings','No known developer identity or paths','Relative bytecode source paths'],'files':files},indent=2),encoding='utf-8')
+    (args.output/'customer-privacy-report.json').write_text(json.dumps({'version':VERSION,'passed':True,'files_checked':len(files),'checks':['Git-inventoried application files','Declared dependency closure','No databases, secrets, history or local settings','No known developer identity or paths outside explicit public release channel','Relative bytecode source paths'],'files':files},indent=2),encoding='utf-8')
     (stage/'release-files.json').write_text(json.dumps({'app_id':'AIDevelopmentHQ','version':VERSION,'files':files},indent=2),encoding='utf-8')
     print('Compressing '+str(len(files))+' files...',flush=True)
     payload=build/'payload.zip'
