@@ -175,14 +175,24 @@
 
   // ---------- overview ----------
   function customerWelcome(state) {
-    return panel("Welcome to Cerebra", body(
-      el("p", "", "Set up this workspace with your own details and preferences. Personal details are optional, and you can browse before saving."),
-      el("p", "row-meta", "Job sources and automatic sending stay off unless you enable them. Connect your own provider accounts when you need them."),
-      actionsRow(button("Set up my workspace", () => customerSetupForm(state), "button primary"), link("Models & sign-in", "models"),
-        link("Business connections", "connections"), link("Projects", "projects"))));
+    const intro = append(el("div", "welcome-intro"), el("p", "eyebrow", "YOUR WORKSPACE"),
+      el("h3", "welcome-title", "Make room for your next idea."),
+      el("p", "welcome-description", "Bring your projects, choose your tools and keep your work in one place. Start with the basics; connect accounts when you need them."),
+      button("Set up my workspace", () => customerSetupForm(state), "button primary"),
+      el("p", "welcome-note", "Personal details are optional. Sharing and automation start off."));
+    const routes = el("div", "welcome-routes");
+    [["01", "Projects", "Add a folder when you’re ready to build.", "projects"],
+     ["02", "Models & sign-in", "Connect the AI tools you choose.", "models"],
+     ["03", "Business connections", "Use your own services and accounts.", "connections"]].forEach(([number, title, description, destination]) => {
+      const item = link("", destination, "welcome-route");
+      append(item, el("span", "welcome-number", number), append(el("span"), el("strong", "", title), el("small", "", description)), el("span", "welcome-arrow", "→"));
+      routes.append(item);
+    });
+    const node = panel("Welcome to Cerebra", append(el("div", "welcome-layout"), intro, routes));
+    node.classList.add("customer-welcome"); return node;
   }
   function customerSetupForm(state) {
-    const profile = state.profile || {}, freelance = state.freelance || {}, options = state.options || {}, form = el("form"), save = submitButton("Save workspace setup");
+    const profile = state.profile || {}, freelance = state.freelance || {}, options = state.options || {}, form = el("form", "workspace-setup"), save = submitButton("Save workspace setup");
     const name = input("Your name or business name (optional)", profile.name || ""), headline = input("What you do (optional)", profile.headline || ""),
       location = input("City and country (optional)", profile.location || ""), skills = input("Your skills, separated by commas", array(freelance.skills).join(", "));
     name.maxLength = 120; headline.maxLength = 200; location.maxLength = 120;
@@ -190,12 +200,15 @@
     const currency = select([["", "Choose a currency"], ...array(options.currencies).map(value => [value, value])], state.currency || ""); currency.required = true;
     const services = Object.entries(options.services || {}).map(([key, label]) => { const item = check(label, array(freelance.services).includes(key)); item.key = key; return item; });
     const sources = Object.entries(options.sources || {}).map(([key, label]) => { const item = check(label, false); item.key = key; return item; });
-    append(form, el("p", "", "Use your own information. Leave optional fields blank if you prefer; do not enter passwords or API keys here."),
+    const discovery = append(el("details", "setup-discovery"), el("summary", "", "Optional · Set up job discovery"),
+      el("p", "row-meta", "Choose this if you want Cerebra to find freelance work. You can also configure it later on the Freelance page."));
+    append(discovery, field("Your skills", skills, "Up to 12 skills, separated by commas. Only include work you can offer."),
+      el("p", "row-meta", "Work categories"), append(el("div", "check-list"), ...services.map(item => item.wrap)),
+      el("h3", "", "Public job sources"), el("p", "row-meta", "Selecting a source allows periodic public searches. Bidding, sending and AI execution require separate permission."),
+      append(el("div", "check-list"), ...sources.map(item => item.wrap)));
+    append(form, el("p", "setup-description", "A few preferences to make this workspace yours. You can change them later in Settings. Keep passwords and API keys out of this form."),
       append(el("div", "form-grid"), field("Display name", name), field("What you do", headline), field("Location", location), field("Business currency", currency, "Confirm the currency used for your business records.")),
-      share.wrap, el("h3", "", "Optional job search"), field("Your skills", skills, "Only include skills you can offer. These are used in proposals and matching."),
-      el("p", "row-meta", "Choose the kinds of work you offer. Leave them blank if you are using other parts of Cerebra."), append(el("div", "check-list"), ...services.map(item => item.wrap)),
-      el("h3", "", "Public job sources"), el("p", "row-meta", "All sources start off. Selecting a source allows periodic public job searches; it does not enable bidding, email sending or AI agents."),
-      append(el("div", "check-list"), ...sources.map(item => item.wrap)),
+      append(el("div", "setup-privacy"), share.wrap, el("small", "", "Off by default. Your profile is included in AI requests only if you choose to share it.")), discovery,
       actionsRow(button("Cancel", closeDialog, "button ghost"), save));
     wireForm(form, save, async () => {
       const selectedServices = services.filter(item => item.control.checked).map(item => item.key), selectedSources = sources.filter(item => item.control.checked).map(item => item.key);
@@ -262,7 +275,7 @@
     return list;
   }
   function activityList(events, limit = 8) {
-    if (!events.length) return body(empty("No activity yet", "Supervisor decisions appear here as they happen.", null, "≡"));
+    if (!events.length) return body(empty("Your activity starts here", "Task updates and approvals appear here as you use your workspace.", null, "≡"));
     const list = el("div", "trace"); events.slice(0, limit).forEach(event => list.append(append(el("div"), el("time", "", date(event.created_at)), el("span", "k", event.kind), el("span", "", event.message)))); return list;
   }
   function overview() {
@@ -1998,12 +2011,22 @@
       const shown = array(state.leads).filter(filters[leadFilter]?.[1] || (() => true)).slice(0, 120);
       const list = el("div", "row-list");
       shown.forEach(lead => list.append(leadRow(lead, state)));
+      const sourcesOn = Object.values(state.profile.sources || {}).some(Boolean);
+      const checkNow = button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary");
+      checkNow.disabled = !sourcesOn;
+      if (!sourcesOn) checkNow.title = "Choose work categories and enable a public source first.";
+      const configure = button("Configure job search", () => {
+        const profile = document.querySelector("#freelance-profile");
+        profile?.scrollIntoView({block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth"});
+        profile?.querySelector("input, select, button")?.focus({preventScroll: true});
+      }, "button");
+      const profileForm = freelanceProfileForm(state); profileForm.id = "freelance-profile";
       const left = append(el("div"), panel("Work for you", append(el("div"), body(append(el("div", "actions"), pick,
-        button("Check for new work now", () => act(result => checkWords(result), () => mutate("/api/freelance/check", {}, "POST", 300000)).then(() => render()), "button primary"),
+        checkNow,
         button("+ Paste a job", () => pasteLeadDialog(state), "button"))),
-        shown.length ? list : body(empty(leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? "Press “Check for new work now”: Cerebra reads Freelancer.com, Remote OK, Remotive, Himalayas and Hacker News for work that fits what you sell. Paste jobs from Upwork or Fiverr too." : "Leads you mark appear here.", null, "⌕"))), null, shown.length));
-      const side = append(el("div"), panel("What you sell", body(freelanceProfileForm(state))), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("What works", body(insightsPanel())), panel("Apply automatically", body(autoApplyPanel())), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
-        panel("How it works", body(hint("Cerebra reads public job sources on its own (each on its own polite schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. On Freelancer.com it can bid for you (Apply automatically); everywhere else, open a job and apply in your own name with the proposal Cerebra writes. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
+        shown.length ? list : body(empty(!sourcesOn && leadFilter === "open" ? "Find work on your terms" : leadFilter === "open" ? "No matches yet" : "Nothing here yet", leadFilter === "open" ? (sourcesOn ? "Check your selected sources for new opportunities, or paste a job to review it here." : "Add your skills, choose the work you offer and enable a public source. You can also paste a job without enabling searches.") : "Saved jobs and application updates will appear here.", !sourcesOn && leadFilter === "open" ? configure : null, "⌕"))), null, shown.length));
+      const side = append(el("div"), panel("What you sell", body(profileForm)), panel("Where Cerebra looks", body(sourcesList(state))), panel("Freelancer.com account", body(freelancerAccount(state))), panel("What works", body(insightsPanel())), panel("Apply automatically", body(autoApplyPanel())), panel("Profiles, gigs and portfolio", body(pitchesPanel())),
+        panel("How it works", body(hint("Cerebra reads only the public job sources you enable (each on its own schedule) and scores every job against what you sell: freelance and contract work, real budgets, fresh posts and few competing bids rank first. On Freelancer.com it can bid for you (Apply automatically); everywhere else, open a job and apply in your own name with the proposal Cerebra writes. Upwork and Fiverr don't allow automated bidding, so paste their jobs here to have them scored with the rest."))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
     })();
     return root;
