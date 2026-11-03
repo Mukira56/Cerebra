@@ -1416,8 +1416,25 @@
         searches.length ? panel("Your offer", body(offerPanel(state))) : null,
         panel("How it works", body(hint("Each fact comes from the business's own home page, read once where its robots.txt allows, and shows where it was seen. A site that turns robots away gets no claim at all. Chains (brand-tagged, or 3 or more locations in the city) are left out."),
           el("p", "row-meta", state.attribution))));
-      root.replaceChildren(stats, panel("Sent emails", body(sentPanel())), panel("Automatic outreach", body(outreachPanel(state.kinds)), null), append(el("div", "grid two"), left, side));
+      root.replaceChildren(stats, panel("Writing model", body(prospectWriterPanel())), panel("Sent emails", body(sentPanel())), panel("Automatic outreach", body(outreachPanel(state.kinds)), null), append(el("div", "grid two"), left, side));
     })();
+    return root;
+  }
+  function prospectWriterPanel() {
+    const root = el("div");
+    root.append(hint("Loading writing preference…"));
+    api("/api/outreach").then(state => {
+      const form = el("form"), save = submitButton("Save writing model");
+      const provider = select([["auto", "Use my default writing model"], ["claude", "Claude"], ["codex", "ChatGPT (Codex)"]], state.settings.writing_provider || "auto");
+      append(form, field("Model for prospect drafts", provider),
+        hint("When Claude's usage runs out, choose ChatGPT (Codex), save, and retry the draft. This uses your OpenAI/Codex sign-in from Models & sign-in. It applies to first emails, offers, follow-ups and reply drafts."),
+        actionsRow(save, link("Models & sign-in →", "models")));
+      wireForm(form, save, async () => {
+        await mutate("/api/outreach", {writing_provider: provider.value}, "PUT");
+        toast("Prospect writing model saved. Retry any draft that stopped.");
+      });
+      root.replaceChildren(form);
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
   const OUTREACH_STAGE = {sent: ["emailed", "blue"], followed_up: ["followed up", "amber"], done: ["no answer yet", "muted"], replied: ["replied", "green"], answered: ["you answered", "cyan"],

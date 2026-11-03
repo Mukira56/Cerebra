@@ -394,8 +394,16 @@ class Writer:
         import threading
         from .freelance import Drafter
         self.db, self.settings, self.registry_source = db, settings, registry_source
-        self.profile_for = profile_for or Drafter._planner
+        self._default_profile_for = profile_for or Drafter._planner
         self._busy, self._lock = set(), threading.Lock()
+
+    def profile_for(self, session):
+        from .outreach import settings
+        from .profiles import get_profile
+        provider = settings(session)["writing_provider"]
+        if provider == "auto":
+            return self._default_profile_for(session)
+        return {**get_profile(session, provider), "prospect_override": True}
 
     def _claim(self, key):
         if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
@@ -413,7 +421,10 @@ class Writer:
         workdir = self.settings.data_dir / "chat-workspace"
         workdir.mkdir(parents=True, exist_ok=True)
         from .modelhub import chat_for
-        result = chat_for(getattr(self, "hub", None), "writing", self.registry_source, selected, prompt, workdir)
+        if selected.get("prospect_override"):
+            result = self.registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))
+        else:
+            result = chat_for(getattr(self, "hub", None), "writing", self.registry_source, selected, prompt, workdir)
         if not result.success:
             raise ValueError(result.error or "The model couldn't write it")
         return _json(result.output)

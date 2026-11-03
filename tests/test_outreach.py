@@ -129,6 +129,52 @@ def test_sending_needs_gmail_permission_to_send(client):  # noqa: F811
     assert refused.status_code == 400 and "allow sending" in refused.json()["detail"] and state.outreach.gmail.sent == []
 
 
+def test_prospect_writing_switches_to_codex_after_claude_limit_for_all_drafts(client):
+    state = setup(client)
+    calls = []
+    class LimitedClaude(Model):
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            calls.append(name)
+            if name == 'claude':
+                return AgentResult(False, '', error='Claude usage limit reached')
+            return super().chat(name, prompt, workdir, model, cancel_event)
+    state.supervisor.registry = LimitedClaude()
+    client.put('/api/models/hub', json={'routes': {'writing': 'account:claude'}}).raise_for_status()
+    state.prospector.search('dentists', 'Austin', 'Texas')
+    smile = next(p for p in client.get('/api/prospects').json()['prospects'] if p['name'] == 'Smile Dental')
+    refused = client.post(f"/api/prospects/{smile['id']}/opener")
+    assert refused.status_code == 400 and 'usage limit' in refused.json()['detail']
+    saved = client.put('/api/outreach', json={'writing_provider': 'codex'})
+    assert saved.status_code == 200 and saved.json()['writing_provider'] == 'codex'
+    assert saved.json()['enabled'] is False
+    assert not next(j for j in client.get('/api/chief').json()['jobs'] if j['id'] == 'outreach')['enabled']
+    assert client.get('/api/outreach').json()['settings']['writing_provider'] == 'codex'
+    drafted = client.post(f"/api/prospects/{smile['id']}/opener")
+    assert drafted.status_code == 200 and calls[-1] == 'codex'
+    assert client.post('/api/prospects/offer/dentists').status_code == 200 and calls[-1] == 'codex'
+    sent = client.post(f"/api/prospects/{smile['id']}/send", json={'to': smile['email'], 'text': drafted.json()['opener'], 'follow_up': True})
+    assert sent.status_code == 200
+    with state.db.Session.begin() as session:
+        row = session.query(outreach.Outbox).filter_by(prospect_id=smile['id'], stage='sent').one()
+        row.next_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        outbox_id = row.id
+        rules = outreach.settings(session)
+    assert state.outreach.follow_up(1, rules) == 1 and calls[-1] == 'codex'
+    with state.db.Session.begin() as session:
+        session.get(outreach.Outbox, outbox_id).reply = {'snippet': 'Can you tell us more?'}
+    assert client.post(f'/api/outreach/{outbox_id}/draft-answer').status_code == 200 and calls[-1] == 'codex'
+    assert client.get('/api/models/hub').json()['routes']['writing'] == 'account:claude'
+    client.put('/api/outreach', json={'writing_provider': 'auto'}).raise_for_status()
+    assert client.post(f"/api/prospects/{smile['id']}/opener").status_code == 400 and calls[-1] == 'claude'
+
+
+@pytest.mark.parametrize('provider', ['unknown', True, None, []])
+def test_prospect_writing_choice_rejects_invalid_providers(client, provider):
+    response = client.put('/api/outreach', json={'writing_provider': provider})
+    assert response.status_code == 400
+    assert client.get('/api/outreach').json()['settings']['writing_provider'] == 'auto'
+
+
 def weekday(hour=10):
     return lambda: datetime(2026, 11, 4, hour, 0).astimezone()  # a Wednesday
 
