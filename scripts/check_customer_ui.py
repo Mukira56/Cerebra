@@ -31,8 +31,14 @@ def main():
         with socket.socket() as probe: probe.bind(("127.0.0.1",0)); port=probe.getsockname()[1]
         key=secrets.token_urlsafe(24)
         env={**os.environ,"CEREBRA_UI_DATA":directory,"CEREBRA_UI_PORT":str(port),"CEREBRA_UI_KEY":key,"PYTHONDONTWRITEBYTECODE":"1"}
+        executable, flags = sys.executable, []
+        if os.name == "nt":
+            # The Windows venv launcher starts another Python process. Terminating that wrapper can
+            # orphan the fixture server and leave SQLite locked during temporary-directory cleanup.
+            executable, flags = getattr(sys, "_base_executable", sys.executable), ["-S"]
+            env["PYTHONPATH"] = os.pathsep.join((str(ROOT), str(Path(sys.prefix)/"Lib/site-packages")))
         with (shots/"server.log").open("w",encoding="utf-8") as log:
-            process=subprocess.Popen([sys.executable,"-c",SERVER],cwd=ROOT,env=env,stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
+            process=subprocess.Popen([executable,*flags,"-c",SERVER],cwd=ROOT,env=env,stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
             try:
                 for _ in range(120):
                     if process.poll() is not None: raise RuntimeError("UI server exited; see "+str(shots/"server.log"))

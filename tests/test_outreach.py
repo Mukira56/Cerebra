@@ -109,6 +109,7 @@ def test_one_click_sends_the_edited_draft_keeps_the_legal_footer_and_never_twice
     sent = client.post(f"/api/prospects/{smile['id']}/send", json={"to": smile["email"], "text": edited})
     assert sent.status_code == 200, sent.text
     assert client.get('/api/outreach/sent').json()[0]['next_at'] == ''  # follow-ups require a separate opt-in
+    assert not next(job for job in client.get('/api/chief').json()['jobs'] if job['id'] == 'outreach')['enabled']
     mail = state.outreach.gmail.sent[0]
     assert mail["to"] == "hello@smile-dental.example" and mail["subject"] == "A faster way to book" and mail["body"].startswith("Hi Smile Dental team")
     assert "PO Box 100, Austin, TX 78701" in mail["body"] and "no thanks" in mail["body"]  # the owner removed the footer: it's put back (CAN-SPAM)
@@ -186,6 +187,7 @@ def test_draft_mode_writes_emails_for_the_owner_and_sends_nothing(client):  # no
     state = setup(client)
     state.prospector.search("dentists", "Austin", "Texas")
     client.put("/api/outreach", json={"enabled": True, "mode": "draft", "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["dentists"]})
+    assert next(job for job in client.get('/api/chief').json()['jobs'] if job['id'] == 'outreach')['enabled']
     state.outreach.clock = weekday()
     result = state.outreach.tick()
     assert result["drafted"] == 1 and state.outreach.gmail.sent == []
@@ -208,6 +210,8 @@ def test_emailed_businesses_leave_worth_contacting_and_show_their_progress(clien
     smile = next(item for item in client.get("/api/prospects").json()["prospects"] if item["name"] == "Smile Dental")
     before = client.get("/api/prospects").json()["counts"]["kept"]
     client.post(f"/api/prospects/{smile['id']}/send", json={"follow_up": True, "to": smile["email"], "text": "Subject: Online booking\n\nHello, a short note about booking on your website."})
+    assert next(job for job in client.get('/api/chief').json()['jobs'] if job['id'] == 'outreach')['enabled']
+    assert not client.get('/api/outreach').json()['settings']['enabled']  # no consent to new-business outreach
     with state.db.Session.begin() as session:  # even if its status is set back by hand, an emailed business isn't "worth contacting" again
         session.get(Prospect, smile["id"]).status = "kept"
     data = client.get("/api/prospects").json()

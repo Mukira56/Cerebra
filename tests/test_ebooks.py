@@ -42,6 +42,7 @@ def test_an_ebook_goes_from_brief_to_an_epub_with_facts_to_check(client):  # noq
     assert book["outline"]["checks"] == [] and book["royalty"]["rate"] == 0.70 and "data, not instructions" in model.prompts[0]
     assert client.post(f"/api/ebooks/{book['id']}/write").status_code == 400  # nothing is written before the outline is approved
     assert client.post(f"/api/ebooks/{book['id']}/approve").json()["stage"] == "writing"
+    assert next(job for job in client.get('/api/chief').json()['jobs'] if job['id'] == 'ebook_writer')['enabled']
     assert client.app.state.ebook_writer.tick()["chapter"] == 1  # the background worker writes one chapter per run
     assert "EARLIER CHAPTERS:\nChapter 1 (Light)" in (client.post(f"/api/ebooks/{book['id']}/write").json() and model.prompts[-1])  # it knows what came before
     assert client.app.state.ebook_writer.tick()["finished"] is True

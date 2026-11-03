@@ -97,3 +97,57 @@ def test_customer_updates_have_no_implicit_developer_channel(client, monkeypatch
     response = client.get('/api/updates')
     assert response.status_code == 200
     assert not response.json()['available'] and response.json()['repository'] == ''
+
+
+def test_setup_cannot_reset_a_completed_or_existing_workspace(client):
+    first = client.post('/api/onboarding', json={'name': 'Customer', 'currency': 'EUR',
+        'skills': ['Illustration'], 'services': ['design'], 'sources': ['remotive']})
+    assert first.status_code == 200
+    before = client.get('/api/onboarding').json()
+    assert client.post('/api/onboarding', json={}).status_code == 409
+    assert client.get('/api/onboarding').json() == before
+
+
+def test_stale_first_run_form_cannot_overwrite_settings_saved_elsewhere(client):
+    assert client.get('/api/onboarding').json()['needs_setup']
+    client.put('/api/owner', json={'name': 'Saved elsewhere', 'share': True})
+    assert client.post('/api/onboarding', json={'name': 'Stale form'}).status_code == 409
+    assert client.get('/api/owner').json()['name'] == 'Saved elsewhere'
+
+
+def test_feature_opt_ins_start_only_their_workers_and_preserve_manual_pauses(client):
+    def jobs():
+        return {item['id']: item for item in client.get('/api/chief').json()['jobs']}
+    assert not jobs()['auto_apply']['enabled']
+    assert client.put('/api/freelance/auto', json={'enabled': True, 'ahead': True}).status_code == 200
+    assert jobs()['auto_apply']['enabled'] and jobs()['draft_ahead']['enabled']
+    assert not jobs()['win_watch']['enabled'] and not jobs()['won_work']['enabled']
+    ran = []
+    for key in ('auto_apply', 'draft_ahead'):
+        client.app.state.registry.workers[key].run = lambda key=key: ran.append(key) or {'fixture': True}
+    assert client.app.state.chief.tick(datetime.now(timezone.utc) + timedelta(hours=2)) == 2
+    assert set(ran) == {'auto_apply', 'draft_ahead'}
+    client.patch('/api/chief/jobs/auto_apply', json={'enabled': False})
+    client.put('/api/freelance/auto', json={'per_day': 3})
+    assert not jobs()['auto_apply']['enabled']
+    assert not client.get('/api/freelance/auto').json()['schedules']['auto_apply']
+    client.put('/api/freelance/auto', json={'enabled': False, 'ahead': False})
+    assert not jobs()['draft_ahead']['enabled']
+    client.put('/api/chief/settings', json={'brief': True})
+    assert jobs()['morning_brief']['enabled']
+    client.put('/api/chief/settings', json={'brief': False})
+    assert not jobs()['morning_brief']['enabled']
+
+
+def test_strings_cannot_silently_enable_automation(client):
+    for path, fields in [('/api/freelance/auto', {'enabled': 'false'}),
+                         ('/api/freelance/auto', {'ahead': 'false'}),
+                         ('/api/freelance/auto', {'accept_awards': 'false'}),
+                         ('/api/freelance/auto', {'committee': 'false'}),
+                         ('/api/freelance/auto', {'alert': 'false'}),
+                         ('/api/chief/settings', {'brief': 'false'}),
+                         ('/api/outreach', {'enabled': 'true', 'mode': 'send'})]:
+        assert client.put(path, json=fields).status_code in (400, 422)
+    assert not client.get('/api/freelance/auto').json()['settings']['enabled']
+    assert not client.get('/api/chief').json()['settings']['brief']
+    assert client.patch('/api/chief/jobs/auto_apply', json={'enabled': 'false'}).status_code == 400

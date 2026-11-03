@@ -157,7 +157,7 @@ class EbookWriter:
             row.extra = {**(row.extra or {}), "outline": outline, "stage": "outline_ready", "chapters": [], "error": ""}
             return public(row)
 
-    def approve(self, book_id):
+    def approve(self, book_id, on_approve=None):
         with self.db.Session.begin() as session:
             row = session.get(Book, book_id)
             if row is None or (row.extra or {}).get("kind") != "ebook":
@@ -166,6 +166,8 @@ class EbookWriter:
                 raise ValueError("Approve the outline once it's drafted")
             row.status = "writing"
             row.extra = {**row.extra, "stage": "writing"}
+            if on_approve is not None:
+                on_approve(session)
             return public(row)
 
     def write_next(self, book_id):

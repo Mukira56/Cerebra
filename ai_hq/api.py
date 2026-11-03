@@ -258,6 +258,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def workspace_setup_save(payload: WorkspaceSetup):
         from . import onboarding
         with db.Session.begin() as session:
+            if not onboarding.status(session)["needs_setup"]:
+                raise HTTPException(409, "This workspace is already configured. Update your preferences in Settings or Freelance instead.")
             return onboarding.complete(session, payload.model_dump())
 
     HEAVY_RESULTS = {"diff", "architecture", "handoff_note", "changed_paths", "disputed_findings"}
@@ -1355,7 +1357,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/ebooks/{book_id}/approve")
     def ebooks_approve(book_id: str):
-        return ebook_call(lambda: ebook_writer.approve(book_id))
+        return ebook_call(lambda: ebook_writer.approve(book_id, on_approve=lambda session:
+            chief.sync_feature_schedule(session, registry, "ebook_writer", False, True)))
 
     @app.post("/api/ebooks/{book_id}/write")
     def ebooks_write(book_id: str):
@@ -1499,7 +1502,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.put("/api/chief/settings")
     def chief_settings_save(payload: dict):
         with db.Session.begin() as session:
-            return chief.save_chief_settings(session, {key: payload[key] for key in ("brief", "brief_hour") if key in payload})
+            before = chief.chief_settings(session)
+            saved = chief.save_chief_settings(session, {key: payload[key] for key in ("brief", "brief_hour") if key in payload})
+            chief.sync_feature_schedule(session, registry, "morning_brief", before["brief"], saved["brief"])
+            return saved
 
     @app.post("/api/chief/brief/send")
     def chief_brief_send():
@@ -1617,7 +1623,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.put("/api/outreach")
     def outreach_save(payload: dict):
+        if "enabled" in payload and not isinstance(payload["enabled"], bool):
+            raise ValueError("Enabled must be true or false")
         with db.Session.begin() as session:  # the cities and mode in this same request count
+            before = outreach_module.settings(session)
             saved = outreach_module.save_settings(session, {**payload, "enabled": False} if payload.get("enabled") is True else payload)
             if payload.get("enabled") is True:
                 session.flush()
@@ -1625,6 +1634,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 if problems:
                     raise ValueError("Before switching it on: " + "; ".join(problems))
                 saved = outreach_module.save_settings(session, {"enabled": True})
+            chief.sync_feature_schedule(session, registry, "outreach", before["enabled"], saved["enabled"])
             return saved
 
     @app.post("/api/outreach/{outbox_id}/answer")
@@ -1661,7 +1671,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def prospect_send(prospect_id: str, payload: dict):
         """The owner's one click: send the email exactly as they edited it, from their Gmail."""
         try:
-            return outreach.send_one(prospect_id, payload.get("to"), payload.get("text"), payload.get("follow_up") is True)
+            return outreach.send_one(prospect_id, payload.get("to"), payload.get("text"), payload.get("follow_up") is True,
+                schedule_followups=lambda session: chief.sync_feature_schedule(session, registry, "outreach", False, True))
         except LookupError as exc:
             raise HTTPException(404, str(exc))
 
@@ -1830,13 +1841,20 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.get("/api/freelance/auto")
     def freelance_auto():
         with db.Session() as session:
+            from .models import ChiefJob
+            schedules = {key: bool((row := session.get(ChiefJob, key)) and row.enabled)
+                         for key in ("auto_apply", "draft_ahead", "win_watch", "won_work")}
             return {"settings": freelance.auto_settings(session), "applier": dict(applier.status), "watcher": dict(watcher.status),
-                    "gmail": gmail.public(gmail.load(session)), "freelancer_account": bidder.status()}
+                    "gmail": gmail.public(gmail.load(session)), "freelancer_account": bidder.status(), "schedules": schedules}
 
     @app.put("/api/freelance/auto")
     def freelance_auto_save(payload: dict):
         with db.Session.begin() as session:
-            return freelance.save_auto(session, payload)
+            before = freelance.auto_settings(session)
+            saved = freelance.save_auto(session, payload)
+            for flag, worker in (("enabled", "auto_apply"), ("ahead", "draft_ahead")):
+                chief.sync_feature_schedule(session, registry, worker, before[flag], saved[flag])
+            return saved
 
     @app.post("/api/freelance/auto/run")
     def freelance_auto_run():

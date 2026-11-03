@@ -188,11 +188,26 @@ def jobs(session, registry, running=""):
     return result
 
 
+def sync_feature_schedule(session, registry, job_id, previous, enabled):
+    """An explicit feature transition controls its worker; unrelated edits keep manual pauses intact."""
+    if previous == enabled:
+        return
+    worker = registry.workers[job_id]
+    row = session.get(ChiefJob, job_id)
+    if row is None:
+        row = ChiefJob(id=job_id, worker=job_id, every_minutes=worker.every_minutes,
+                       next_run_at=_stamp(datetime.now(timezone.utc) + timedelta(minutes=worker.every_minutes)))
+        session.add(row)
+    row.enabled = enabled
+
+
 def update_job(session, registry, job_id, fields):
     row = session.get(ChiefJob, job_id)
     if row is None or job_id not in registry.workers:
         raise LookupError("Job not found")
     if "enabled" in fields:
+        if not isinstance(fields["enabled"], bool):
+            raise ValueError("Enabled must be true or false")
         row.enabled = bool(fields["enabled"])
     if "every_minutes" in fields:
         minutes = int(fields["every_minutes"] or 0)
@@ -401,6 +416,8 @@ def chief_settings(session):
 
 
 def save_chief_settings(session, fields):
+    if "brief" in fields and not isinstance(fields["brief"], bool):
+        raise ValueError("Brief must be true or false")
     value = chief_settings(session)
     if "brief" in fields:
         value["brief"] = bool(fields["brief"])

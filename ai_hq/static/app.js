@@ -94,7 +94,7 @@
   function textarea(placeholder = "", value = "") { const node = el("textarea"); node.placeholder = placeholder; node.value = value; return node; }
   function check(label, checked = false) { const wrap = el("label", "check-field"), control = input("", "", "checkbox"); control.checked = !!checked; append(wrap, control, el("span", "", label)); return {wrap, control}; }
   function actionsRow(...nodes) { return append(el("div", "form-actions"), nodes); }
-  function wireForm(form, submit, onSubmit) { const error = el("div", "form-error"); error.setAttribute("role", "alert"); form.append(error); form.addEventListener("submit", async event => { event.preventDefault(); submit.disabled = true; error.textContent = ""; try { await onSubmit(); } catch (issue) { error.textContent = issue.message; } finally { submit.disabled = false; } }); }
+  function wireForm(form, submit, onSubmit) { const error = el("div", "form-error"); error.setAttribute("role", "alert"); error.tabIndex = -1; form.append(error); form.addEventListener("submit", async event => { event.preventDefault(); submit.disabled = true; error.textContent = ""; try { await onSubmit(); } catch (issue) { error.textContent = issue.message; error.focus(); } finally { submit.disabled = false; } }); }
   function submitButton(label) { const node = el("button", "button primary", label); node.type = "submit"; return node; }
   function toast(message, error = false) { const node = $("#toast"); node.textContent = message; node.className = `toast${error ? " error" : ""}`; clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.add("hidden"), 6500); }
   function notice(message, error = false) { const node = $("#global-notice"); node.textContent = message; node.className = message ? `notice${error ? " error" : ""}` : "notice hidden"; }
@@ -196,10 +196,10 @@
     const name = input("Your name or business name (optional)", profile.name || ""), headline = input("What you do (optional)", profile.headline || ""),
       location = input("City and country (optional)", profile.location || ""), skills = input("Your skills, separated by commas", array(freelance.skills).join(", "));
     name.maxLength = 120; headline.maxLength = 200; location.maxLength = 120;
-    const share = check("Share my profile details with AI tools when working on my requests", false);
+    const share = check("Share my profile details with AI tools when working on my requests", profile.share === true);
     const currency = select([["", "Choose a currency"], ...array(options.currencies).map(value => [value, value])], state.currency || ""); currency.required = true;
     const services = Object.entries(options.services || {}).map(([key, label]) => { const item = check(label, array(freelance.services).includes(key)); item.key = key; return item; });
-    const sources = Object.entries(options.sources || {}).map(([key, label]) => { const item = check(label, false); item.key = key; return item; });
+    const sources = Object.entries(options.sources || {}).map(([key, label]) => { const item = check(label, freelance.sources?.[key] === true); item.key = key; return item; });
     const discovery = append(el("details", "setup-discovery"), el("summary", "", "Optional · Set up job discovery"),
       el("p", "row-meta", "Choose this if you want Cerebra to find freelance work. You can also configure it later on the Freelance page."));
     append(discovery, field("Your skills", skills, "Up to 12 skills, separated by commas. Only include work you can offer."),
@@ -1533,7 +1533,7 @@
     const copy = button("Copy", () => navigator.clipboard.writeText(opener.value).then(() => toast("Copied. Paste it into your email.")), "button ghost");
     const sender = el("div");
     api("/api/outreach").then(state => sender.replaceChildren(senderLine(state.sender))).catch(() => {});
-    const to = input("their email address", item.email || ""), followUp = check("Follow up automatically if they don't answer (stops when they reply)", false); to.type = "email";
+    const to = input("their email address", item.email || ""), followUp = check("Send follow-ups automatically (enables the Outreach schedule; stops on reply)", false); to.type = "email";
     if (!item.email && item.website) { to.placeholder = "Looking for their email on their website…";
       api(`/api/prospects/${item.id}/email`).then(found => { if (found.email && !to.value) to.value = found.email; else if (!found.email) to.placeholder = "No email on their site: type one you know, or call them"; to.dispatchEvent(new Event("input")); }).catch(() => {}); }
     const send = button("Send with Gmail", () => act(result => result.message, () => mutate(`/api/prospects/${item.id}/send`, {to: to.value.trim(), text: opener.value, follow_up: followUp.control.checked}, "POST", 120000))
@@ -2219,14 +2219,17 @@
         alert.wrap, append(el("div", "form-grid"), field("Rare: score at least", alertScore), field("Rare: fewer bids than", alertBids), field("Rare: budget at least (USD)", alertUsd)),
         accept.wrap, actionsRow(save));
       wireForm(form, save, async () => { await mutate("/api/freelance/auto", {enabled: on.control.checked, accept_awards: accept.control.checked, committee: committee.control.checked, ahead: ahead.control.checked, ahead_per_day: Number(aheadPerDay.value || 5), alert: alert.control.checked, alert_score: Number(alertScore.value || 50),
-        alert_bids: Number(alertBids.value || 15), alert_usd: Number(alertUsd.value || 250), min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast(on.control.checked ? "Saved. Cerebra bids on new matches every 10 minutes." : "Saved. Automatic bidding is off."); render(); });
+        alert_bids: Number(alertBids.value || 15), alert_usd: Number(alertUsd.value || 250), min_score: Number(score.value || 40), per_day: Number(perDay.value || 15)}, "PUT"); toast("Saved. Check the worker schedule below for automatic runs."); render(); });
       const connected = state.freelancer_account?.connected, gmail = state.gmail || {};
       root.replaceChildren(form,
         !connected ? hint("Connect your Freelancer.com account (panel above) so Cerebra can bid.", true) : null,
+        rules.enabled && !state.schedules?.auto_apply ? hint("Automatic bidding is paused in Chief of Staff. Resume its worker to run scheduled rounds.", true) : null,
+        rules.ahead && !state.schedules?.draft_ahead ? hint("Proposal drafting is paused in Chief of Staff.", true) : null,
+        link("Manage worker schedules →", "chief"),
         hint(`Bidding: ${state.applier?.message || "waiting for the next round"}`),
-        hint(gmail.connected || gmail.authorized ? "Gmail (read-only): Cerebra reads messages from Upwork, Fiverr and Freelancer.com to see what you've won." : "Connect Gmail (read-only) in Business connections, so Cerebra can see hires, offers and orders from Upwork and Fiverr in your email.", !(gmail.connected || gmail.authorized)),
+        hint(gmail.connected || gmail.authorized ? "Gmail: Cerebra reads messages from Upwork, Fiverr and Freelancer.com to see what you've won." : "Connect Gmail in Business connections, so Cerebra can see hires, offers and orders from Upwork and Fiverr in your email.", !(gmail.connected || gmail.authorized)),
         append(el("div", "actions"), button("Run a round now", () => act(result => `Done: ${result.bids?.sent || 0} bid(s) sent, ${Number(result.wins?.freelancer || 0) + Number(result.wins?.email || 0)} win(s) found, ${result.work || 0} work step(s) moved on.`, () => mutate("/api/freelance/auto/run", {}, "POST", 900000)).then(() => render()), "button small"), link("Connect Gmail →", "connections")),
-        hint("Only Freelancer.com is bid on by itself: Upwork and Fiverr ban automated proposals and suspend accounts that use them, so for them Cerebra writes the proposal and you paste it. When a job is won (on Freelancer.com, or in your email), Cerebra creates the work and builds it by itself; you review it before anything is delivered."));
+        hint("Only Freelancer.com is bid on by itself: Upwork and Fiverr ban automated proposals and suspend accounts that use them, so for them Cerebra writes the proposal and you paste it. Win monitoring and won-job processing run only when their workers are enabled in Chief of Staff. You review work before anything is delivered."));
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }

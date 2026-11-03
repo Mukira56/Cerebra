@@ -1027,6 +1027,9 @@ def auto_settings(session):
 
 
 def save_auto(session, changes):
+    for key in ("enabled", "accept_awards", "committee", "ahead", "alert"):
+        if key in changes and not isinstance(changes[key], bool):
+            raise ValueError(f"{key.replace('_', ' ').capitalize()} must be true or false")
     value = auto_settings(session)
     if "enabled" in changes:
         value["enabled"] = bool(changes["enabled"])

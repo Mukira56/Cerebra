@@ -227,7 +227,7 @@ class Outreach:
             problems.append("Add at least one city to search, such as Austin, TX")
         return problems
 
-    def send_one(self, prospect_id, to, text, follow_up=False):
+    def send_one(self, prospect_id, to, text, follow_up=False, schedule_followups=None):
         """The owner's one click: send this email (as they edited it) to this business, and follow up if there's no answer."""
         to = str(to or "").strip().lower()
         if not EMAIL.fullmatch(to):
@@ -270,6 +270,8 @@ class Outreach:
             row, prospect = session.get(Outbox, outbox_id), session.get(Prospect, prospect_id)
             row.stage = "sent"
             row.next_at = (datetime.now(timezone.utc) + timedelta(days=rules["follow_up_days"][0])).isoformat() if follow_up and rules["follow_up_days"] else ""
+            if row.next_at and schedule_followups is not None:
+                schedule_followups(session)
             prospect.status, prospect.opener, prospect.updated_at = "contacted", f"Subject: {subject}\n\n{body}", now()
             session.add(Event(kind="prospects", message=f"Emailed {prospect.name} ({to})", data={"prospect": prospect_id}))
             return {"message": f"Sent to {to} from your Gmail." + (" Cerebra follows up if they don't answer, and stops when they do." if row.next_at else ""),

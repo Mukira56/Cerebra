@@ -2,7 +2,7 @@
 
 Windows 10/11 x64. This installer includes its own Python 3.13 runtime and application dependencies. It does not require a separate Python, npm, or PowerShell setup command. Git is required for project work; Codex and Claude Code must be installed and signed in separately for live agents. No provider credentials or project data are included in the installer.
 
-Run Cerebra-Setup-0.74.7-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\Cerebra. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
+Run Cerebra-Setup-0.74.8-Windows-x64.exe. Setup installs only for your Windows account, without administrator elevation. The normal program location is %LOCALAPPDATA%\Programs\Cerebra. It adds a Start menu entry, an optional desktop shortcut, and a Windows Installed Apps uninstall entry.
 
 Your project data stays outside the program directory, at %LOCALAPPDATA%\Cerebra\data on a fresh installation. Setup never searches development folders for an existing database. Verified upgrades retain the data directory recorded by that installation; an explicit --data path overrides it. For a separate installation use distinct --dir and --data paths.
 
