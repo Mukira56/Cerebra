@@ -2959,10 +2959,31 @@
     const node = el("div"), state = el("div"), notes = el("div"), log = el("div");
     append(node, kv([["This version", data.version], ["Updates from", "Cerebra's releases"]]), state, notes, log);
     const check = button("Check for updates", () => run(), "button primary");
-    state.append(actionsRow(check), hint("Uses your GitHub sign-in (GitHub page). Updating closes Cerebra, installs the new version and reopens it; running tasks are paused and can be resumed."));
+    state.append(actionsRow(check), hint("Checks Cerebra's public releases. Updating closes Cerebra, installs the new version and reopens it; running tasks are paused and can be resumed."));
     async function run() {
       check.disabled = true; check.textContent = "Checking…";
-      let info; try { info = await api("/api/updates", {timeout: 90000}); } catch (issue) { state.replaceChildren(hint(issue.message, true), actionsRow(button("Try again", () => run(), "button"))); return; }
+      const install = button("Install and restart", async () => {
+        install.disabled = true;
+        const result = await act(value => value.message, () => mutate("/api/updates/install", {}, "POST", 60000));
+        if (result) state.replaceChildren(el("div", "notice", `${result.message} A small window shows each step while Cerebra is closed.`)); else install.disabled = false;
+      }, "button primary");
+      const showReady = progress => {
+        if (progress?.phase !== "ready") return false;
+        state.replaceChildren(hint(progress.message || `Cerebra ${String(progress.tag || "").replace(/^v/, "")} is downloaded and verified. It can be installed without another GitHub check.`), actionsRow(install));
+        notes.replaceChildren();
+        return true;
+      };
+      // Installation is a local operation. A failed/rate-limited release lookup must never hide it.
+      let local = data.update_progress;
+      try { local = await api("/api/updates/progress", {timeout: 10000}); } catch { /* keep the last local status */ }
+      if (showReady(local)) return;
+      let info;
+      try { info = await api("/api/updates", {timeout: 90000}); }
+      catch (issue) {
+        try { local = await api("/api/updates/progress", {timeout: 10000}); } catch { /* retain local status */ }
+        if (!showReady(local)) state.replaceChildren(hint(issue.message, true), actionsRow(button("Try again", () => run(), "button")));
+        return;
+      }
       const bar = el("progress", "update-bar"), barText = el("span", "row-meta"), meter = append(el("div", "update-meter hidden"), bar, barText); bar.max = 100; bar.value = 0;
       const megabytes = value => `${(Number(value || 0) / 1048576).toFixed(1)} MB`;
       async function watch() {
@@ -2980,11 +3001,6 @@
         else { download.disabled = false; download.textContent = `Download ${info.latest}`; }
       }, "button primary");
       const actions = el("div", "form-actions");
-      const install = button("Install and restart", async () => {
-        install.disabled = true;
-        const result = await act(value => value.message, () => mutate("/api/updates/install", {}, "POST", 60000));
-        if (result) state.replaceChildren(el("div", "notice", `${result.message} A small window shows each step while Cerebra is closed.`)); else install.disabled = false;
-      }, "button primary");
       if (info.available) actions.append(info.downloaded ? install : download);
       if (info.available && !info.downloaded && ["starting", "downloading", "verifying"].includes(data.update_progress?.phase)) { download.disabled = true; download.textContent = "Downloading in the background…"; watch(); }
       actions.append(button("Check again", () => run(), "button ghost"));
@@ -2993,6 +3009,7 @@
       notes.replaceChildren(info.available && info.notes ? append(el("details", "update-notes"), el("summary", "", `What's new in ${info.latest}`), markdown(info.notes)) : el("span"));
       log.replaceChildren(array(info.last_log).length ? append(el("details"), el("summary", "", "Last update log"), code(info.last_log.join("\n"))) : el("span"));
     }
+    if (data.update_progress?.phase === "ready") run();
     return node;
   }
 

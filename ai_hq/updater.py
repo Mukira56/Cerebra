@@ -168,6 +168,12 @@ class Updater:
     def check(self):
         current = __version__
         base = {"current": current, "repository": REPOSITORY, "installed": installed_root() is not None, "last_log": self.last_log()}
+        pending = self._pending()
+        if desktop.platform() == "windows" and pending and TAG.fullmatch(pending.get("tag", "")) and version_tuple(pending["tag"]) > version_tuple(current):
+            tag = pending["tag"]
+            return {**base, "available": True, "downloaded": True, "latest": tag[1:], "tag": tag,
+                    "installer": Path(pending["installer"]).name, "notes": "",
+                    "message": f"Cerebra {tag[1:]} is downloaded and verified. Install and restart when you're ready."}
         if not REPOSITORY:
             return {**base, "available": False, "message": "No update channel is configured for this edition. Use an installer supplied by your distributor."}
         release = self.github.release()

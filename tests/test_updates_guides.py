@@ -182,6 +182,42 @@ def test_a_finished_download_is_still_ready_after_cerebra_restarts(client, tmp_p
 
 
 @windows_installer
+def test_verified_installer_remains_installable_when_github_is_rate_limited(client, tmp_path, monkeypatch):
+    assert download(client)["phase"] == "ready"
+    calls = []
+    def unavailable(*args):
+        calls.append(args)
+        raise ValueError("GitHub is limiting update checks from this internet connection")
+    client.app.state.updater.github.release = unavailable
+    root = tmp_path / "install"
+    (root / "runtime").mkdir(parents=True)
+    for name in ("desktop-settings.json", "AIHQ.exe", "runtime/python.exe"):
+        (root / name).write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr(updates, "ROOT", root)
+    info = client.get("/api/updates")
+    assert info.status_code == 200, info.text
+    assert info.json()["downloaded"] and info.json()["available"]
+    assert info.json()["installed"] and calls == []
+    assert client.post("/api/updates/install").json()["restarting"]
+    assert len(client.app.state.spawned) == 1 and calls == []  # helper is a fixture, never executed
+
+
+@windows_installer
+def test_tampered_pending_download_is_not_offered_offline(client, tmp_path, monkeypatch):
+    assert download(client)["phase"] == "ready"
+    pending = client.app.state.updater._pending()
+    Path(pending["installer"]).write_bytes(b"tampered fixture")
+    def unavailable(*args):
+        raise ValueError("GitHub is limiting update checks")
+    client.app.state.updater.github.release = unavailable
+    monkeypatch.setattr(updates, 'installed_root', lambda: tmp_path)
+    assert client.get("/api/updates").status_code == 400
+    response = client.post("/api/updates/install")
+    assert response.status_code == 400 and "verify" in response.json()["detail"]
+    assert not client.app.state.spawned
+
+
+@windows_installer
 def test_a_dropped_download_resumes_by_itself(client):
     """A download that drops resumes from where it stopped."""
     updater = client.app.state.updater
