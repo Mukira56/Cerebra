@@ -1,5 +1,11 @@
 # Security boundaries
 
+## Direct model connections (0.74.12)
+
+Prospects can use an explicitly selected OpenAI or Anthropic API model as well as individual Codex/Claude Code models. API keys are supplied by the owner, protected through vault.py, and never returned by connection or catalog endpoints. An optional Anthropic workspace ID is non-secret configuration. HTTP destinations are fixed to api.openai.com and api.anthropic.com; redirects do not forward credentials. Catalog refreshes list models only. Generation sends the selected prospect brief/profile context to the chosen provider and uses that provider's API billing; API keys and CLI subscription sign-ins are separate connections. API-only text drafting does not grant or require CLI filesystem execution permissions. Codex/Claude Code drafting still requires the existing live-agent policy.
+
+Saving a model or key does not enable outreach or send an email. An explicitly selected API model overrides the global writing route only for Prospects. There is no automatic paid retry or provider fallback after a failed generation request. Partial/invalid drafts are not saved over an existing draft. Usage events record token counts when returned, with monetary cost unknown rather than labelled free. Fresh customer installations have no API keys or inherited model catalogs.
+
 ## Business connections (0.9.0)
 
 Optional Etsy/Printify/image/Gmail/notification secrets use the Windows account's DPAPI through vault.py; on macOS the login Keychain and on Linux the Secret Service (`secret-tool`, secret on stdin) hold the secret, and the database keeps only a `keychain:` reference. Without a secret store, saving fails rather than storing plain text. APIs return saved/checked flags, never plaintext secrets. Service destinations are fixed for Etsy, Printify, Google and OpenAI; the user explicitly configures an HTTPS ntfy server. No application server access logging records OAuth callback query strings. Gmail callback bypasses the cross-site navigation check only on its exact GET route and still requires a single-use, expiring OAuth state and PKCE. All other API session/origin/CSRF rules remain.

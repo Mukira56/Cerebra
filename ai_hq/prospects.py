@@ -388,7 +388,7 @@ def save_offer(session, kind, changes):
 
 
 class Writer:
-    """Drafts openers and offers with the owner's planner model. Nothing is sent: the owner sends, in their own name."""
+    """Drafts with the owner's selected API or CLI model, preserving the default writing route."""
 
     def __init__(self, db, settings, registry_source, profile_for=None):
         import threading
@@ -400,14 +400,17 @@ class Writer:
     def profile_for(self, session):
         from .outreach import settings
         from .profiles import get_profile
-        provider = settings(session)["writing_provider"]
-        if provider == "auto":
+        rules = settings(session)
+        choice = rules['writing_model'] if rules['writing_model'] != 'auto' else rules['writing_provider']
+        if choice == "auto":
             return self._default_profile_for(session)
-        return {**get_profile(session, provider), "prospect_override": True}
+        if choice.startswith('api:'):
+            from .modelconnections import parse_choice
+            provider, model = parse_choice(choice)
+            return {'provider': provider, 'model': model, 'api_choice': choice, 'label': f'{provider} API - {model}'}
+        return {**get_profile(session, choice), "prospect_override": True}
 
     def _claim(self, key):
-        if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
-            raise ValueError("Switch AI agents on in Settings first: drafts are written by your own AI model")
         with self._lock:
             if key in self._busy:
                 raise ValueError("Already being written")
@@ -418,6 +421,16 @@ class Writer:
             self._busy.discard(key)
 
     def _ask(self, selected, prompt):
+        if selected.get('api_choice'):
+            connections = getattr(self, 'connections', None)
+            if connections is None:
+                raise ValueError('API model connections are unavailable')
+            result = connections.chat(selected['api_choice'], prompt)
+            if not result.success:
+                raise ValueError(result.error or 'The API model could not write the draft')
+            return _json(result.output)
+        if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
+            raise ValueError("Switch AI agents on in Settings first to use Codex or Claude Code")
         workdir = self.settings.data_dir / "chat-workspace"
         workdir.mkdir(parents=True, exist_ok=True)
         from .modelhub import chat_for

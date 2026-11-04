@@ -1422,19 +1422,66 @@
   }
   function prospectWriterPanel() {
     const root = el("div");
-    root.append(hint("Loading writing preference…"));
-    api("/api/outreach").then(state => {
+    async function loadModels() {
+      const state = await api("/api/prospects/models");
       const form = el("form"), save = submitButton("Save writing model");
-      const provider = select([["auto", "Use my default writing model"], ["claude", "Claude"], ["codex", "ChatGPT (Codex)"]], state.settings.writing_provider || "auto");
-      append(form, field("Model for prospect drafts", provider),
-        hint("When Claude's usage runs out, choose ChatGPT (Codex), save, and retry the draft. This uses your OpenAI/Codex sign-in from Models & sign-in. It applies to first emails, offers, follow-ups and reply drafts."),
-        actionsRow(save, link("Models & sign-in →", "models")));
+      const picker = el("select"), search = input("Search model names…"), custom = check("Use a custom model ID", false);
+      let chosen = state.selected || "auto";
+      function fillModels() {
+        const groups = new Map(), query = search.value.trim().toLowerCase();
+        picker.replaceChildren();
+        const choices = [...array(state.options)];
+        if (!choices.some(item => item.id === chosen)) choices.push({id: chosen, label: `${chosen} (saved model)`, group: "Saved choice"});
+        choices.filter(item => item.id === chosen || !query || `${item.label} ${item.id} ${item.group}`.toLowerCase().includes(query)).forEach(item => {
+          if (!groups.has(item.group)) { const group = el("optgroup"); group.label = item.group; groups.set(item.group, group); picker.append(group); }
+          const entry = option(item.id, item.reason ? `${item.label} — ${item.reason}` : item.label);
+          entry.disabled = !!item.disabled; groups.get(item.group).append(entry);
+        });
+        picker.value = chosen;
+      }
+      fillModels();
+      search.addEventListener("input", fillModels);
+      picker.addEventListener("change", () => { chosen = picker.value; });
+      const customProvider = select([["api:openai", "OpenAI API"], ["api:anthropic", "Anthropic API"], ["catalog:codex", "Codex CLI"], ["catalog:claude", "Claude Code CLI"]], "api:openai");
+      const customId = input("Exact model ID supplied by your provider");
+      const customFields = append(el("div", "form-grid hidden"), field("Connection for custom model", customProvider), field("Custom model ID", customId));
+      custom.control.addEventListener("change", () => { customFields.classList.toggle("hidden", !custom.control.checked); customId.required = custom.control.checked; });
+      append(form, field("Search models", search), field("Model for prospect drafts", picker), custom.wrap, customFields,
+        hint("Choose an individual OpenAI or Anthropic API model, a Codex model, or a Claude Code model. API choices use the keys below and provider API billing; CLI choices use Models & sign-in. Only text-capable models can write emails. Save and retry a stopped draft. This applies to first emails, offers, follow-ups and replies."),
+        actionsRow(save, button("Connect / refresh API models", () => { connections.open = true; connections.scrollIntoView({block: "start"}); }, "button"), link("Models & sign-in →", "models")));
       wireForm(form, save, async () => {
-        await mutate("/api/outreach", {writing_provider: provider.value}, "PUT");
+        const choice = custom.control.checked ? `${customProvider.value}:${customId.value.trim()}` : picker.value;
+        await mutate("/api/outreach", {writing_model: choice}, "PUT");
         toast("Prospect writing model saved. Retry any draft that stopped.");
+        await loadModels();
       });
-      root.replaceChildren(form);
-    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+      const connections = el("details");
+      connections.append(el("summary", "", "OpenAI and Anthropic API connections"),
+        hint("Connect each provider with its own API key, then refresh its model list. API usage is billed by that provider separately from CLI sign-ins. Keys are protected by this computer and never returned to the page. Catalog refresh does not generate content."));
+      Object.entries(state.connections || {}).forEach(([id, connection]) => {
+        const connectForm = el("form"), key = input("Paste an API key", "", "password"), connectSave = submitButton(`Save ${connection.label} key`);
+        key.autocomplete = "new-password";
+        const workspace = input("Only if your Anthropic key requires it", connection.workspace_id || "");
+        append(connectForm, el("h4", "", connection.label), hint(connection.configured ? `Key saved. ${connection.models.length} models cached${connection.refreshed_at ? ` · refreshed ${date(connection.refreshed_at)}` : "; refresh to check access"}.` : "No API key saved."),
+          connection.error ? hint(connection.error, true) : null, field(`${connection.label} key`, key),
+          id === "anthropic" ? field("Anthropic workspace ID (optional)", workspace) : null,
+          actionsRow(connectSave, button(`Refresh ${connection.label} models`, () => act(result => result.message, () => mutate(`/api/prospects/models/connections/${id}/refresh`, {}, "POST", 120000)).then(reloadModels), "button"),
+            connection.configured ? button(`Disconnect ${connection.label}`, () => act("API key disconnected.", () => mutate(`/api/prospects/models/connections/${id}`, {}, "DELETE")).then(reloadModels), "button ghost") : null));
+        wireForm(connectForm, connectSave, async () => {
+          const values = id === "anthropic" ? {workspace_id: workspace.value.trim()} : {};
+          if (key.value.trim()) values.api_key = key.value.trim();
+          await mutate(`/api/prospects/models/connections/${id}`, values, "PUT");
+          key.value = "";
+          await act(result => result.message, () => mutate(`/api/prospects/models/connections/${id}/refresh`, {}, "POST", 120000));
+          await loadModels();
+        });
+        connections.append(connectForm);
+      });
+      root.replaceChildren(form, connections);
+    }
+    const reloadModels = () => loadModels().catch(issue => toast(issue.message, true));
+    root.append(hint("Loading writing models…"));
+    loadModels().catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
   const OUTREACH_STAGE = {sent: ["emailed", "blue"], followed_up: ["followed up", "amber"], done: ["no answer yet", "muted"], replied: ["replied", "green"], answered: ["you answered", "cyan"],

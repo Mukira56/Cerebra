@@ -30,7 +30,7 @@ from .models import Event, Metadata, Prospect, ProspectSearch, now
 
 KEY, DO_NOT_CONTACT = "outreach_settings", "outreach_do_not_contact"
 MAX_PER_DAY, PER_RUN = 40, 3  # a run sends at most a few, so emails are spread through the day
-DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "writing_provider": "auto"}
+DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "writing_provider": "auto", "writing_model": "auto"}
 MODES = ("draft", "send")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 NOT_AN_INBOX = re.compile(r"\.(png|jpe?g|gif|svg|webp)$|example\.|sentry|wixpress|godaddy|domain\.com|email\.com|yourname|@2x", re.I)
@@ -70,6 +70,11 @@ def save_settings(session, changes):
         if changes["writing_provider"] not in ("auto", "claude", "codex"):
             raise ValueError("Choose your default writing model, Claude, or ChatGPT (Codex)")
         value["writing_provider"] = changes["writing_provider"]
+        value["writing_model"] = "auto"
+    if "writing_model" in changes:
+        from .modelconnections import validate_choice
+        value["writing_model"] = validate_choice(session, changes["writing_model"])
+        value["writing_provider"] = "auto"
     if "enabled" in changes:
         value["enabled"] = changes["enabled"] is True
     if "mode" in changes:
@@ -223,7 +228,12 @@ class Outreach:
         """What still stops automatic outreach, in plain words (empty when it can run)."""
         rules = settings(session)
         problems = self.can_send(session) if (mode or rules["mode"]) == "send" else []
-        if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
+        if rules["writing_model"].startswith("api:"):
+            from .modelconnections import parse_choice, load, PROVIDERS
+            provider, _ = parse_choice(rules["writing_model"])
+            if not load(session).get(provider, {}).get('api_key'):
+                problems.append(f"Connect {PROVIDERS[provider][0]} in Prospects > Writing model")
+        elif not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
             problems.append("Switch AI agents on in Settings: your AI writes each email")
         if not rules["places"]:
             problems.append("Add at least one city to search, such as Austin, TX")

@@ -122,6 +122,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         publisher.client.close()
         if hasattr(app.state, "hub"):
             app.state.hub.client.close()
+        if hasattr(app.state, "model_connections"):
+            app.state.model_connections.client.close()
         mailbox.client.close()
         notifier.client.close()
         db.close()
@@ -1570,7 +1572,39 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from . import prospects as prospects_module
     prospector = prospects_module.Finder(db)
     prospect_writer = prospects_module.Writer(db, settings, chat_registry)
+    from . import modelconnections
+    model_connections = modelconnections.Connections(db)
+    app.state.model_connections = model_connections
+    prospect_writer.connections = model_connections
     app.state.prospect_writer = prospect_writer
+
+    @app.get('/api/prospects/models')
+    def prospect_models():
+        from .outreach import settings as outreach_settings
+        with db.Session() as session:
+            rules = outreach_settings(session)
+            selected = rules['writing_model'] if rules['writing_model'] != 'auto' else rules['writing_provider']
+            return {'connections': modelconnections.public(session), 'options': modelconnections.options(session), 'selected': selected}
+
+    @app.put('/api/prospects/models/connections/{provider}')
+    def save_model_connection(provider: str, payload: dict):
+        with db.Session.begin() as session:
+            modelconnections.save(session, provider, payload)
+            return modelconnections.public(session)
+
+    @app.delete('/api/prospects/models/connections/{provider}')
+    def remove_model_connection(provider: str):
+        if provider not in modelconnections.PROVIDERS:
+            raise ValueError('Unknown model connection')
+        with db.Session.begin() as session:
+            value = modelconnections.load(session)
+            value.pop(provider, None)
+            modelconnections.store(session, value)
+            return modelconnections.public(session)
+
+    @app.post('/api/prospects/models/connections/{provider}/refresh')
+    def refresh_model_connection(provider: str):
+        return model_connections.refresh(provider)
     prospect_state = {"running": False, "message": "", "result": None}
     app.state.prospector, app.state.prospect_state = prospector, prospect_state
 
