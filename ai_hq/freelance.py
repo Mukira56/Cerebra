@@ -139,9 +139,9 @@ OTHER_ROLE = re.compile(r"\b(lawyer|attorney|legal (expert|advisor|counsel)|para
                         r"translator|transcri(ber|ption)|voice ?over|voice actor|tutor|nurse|therapist|massage|"
                         r"structural engineer|licensed (engineer|architect)|interior design(er)?|autocad|real estate agent|"
                         r"videographer|filmmaker|video (creator|editor|editing)|photographer|photo editing|ugc|"
-                        r"copywrit(er|ing)|article (writer|reviewer)|ghostwriter|localization|legal review|"
+                        r"copywrit(er|ing)|localization|legal review|"
                         r"(facebook|google|meta|tiktok) ads|ads specialist|media buyer|performance marketing|"
-                        r"social media (marketing|marketer|manager|strategy|growth|content))\b", re.I)
+                        r"social media (marketing|marketer|manager|strategy|growth))\b", re.I)
 # "Build a video editor app" or "Website for my lawyer" is the owner's work even though it names someone else's.
 BUILD_WORK = re.compile(r"\b(build|develop|developer|development|app|plugin|api|dashboard|crm|wordpress|shopify|website for)\b", re.I)
 UNREAL_FIXED, UNREAL_HOURLY = 25_000, 500  # USD: beyond this, a short post's budget is more likely a typo or bait than a real job
@@ -165,7 +165,7 @@ def score(lead, settings, now_ts=None):
         return 0, ["doesn't match what you sell" if not matched else f"only mentions {', '.join(matched[:3])} in passing"]
     points, reasons = min(45, 12 * len(in_title) + 4 * len(set(in_body) - set(in_title))), [f"matches {', '.join(matched[:5])}"]
     role = OTHER_ROLE.search(lead["title"])
-    if role and not BUILD_WORK.search(lead["title"]) and not _hits([word.lower() for word in settings.get("keywords") or []], role.group(0).lower()):
+    if role and not BUILD_WORK.search(lead["title"]) and role.group(0).lower() not in words:  # what the owner chose to sell is never another trade
         points -= 30
         reasons.append(f"asks for {role.group(0).lower()}, not what you sell")
     employment = str(lead.get("employment") or "")
