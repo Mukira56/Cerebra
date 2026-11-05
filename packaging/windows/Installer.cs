@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Cerebra Setup")]
-[assembly: AssemblyVersion("0.74.19.0")]
+[assembly: AssemblyVersion("0.74.20.0")]
 
 internal sealed class InstallOptions {
     internal string Target=Shared.DefaultInstall, Data=Shared.DefaultData;
@@ -125,7 +125,7 @@ internal static class Setup {
             else Application.Run(new SetupForm(options));
             return 0;
         } catch(Exception error) {
-            if(options.Quiet) Console.Error.WriteLine(error.Message);
+            if(options.Quiet) { Console.Error.WriteLine(error.Message); Console.Error.WriteLine(error.StackTrace); }  // updates run quietly: the log must say where
             else MessageBox.Show(error.Message,"Cerebra Setup",MessageBoxButtons.OK,MessageBoxIcon.Error);
             return 1;
         }

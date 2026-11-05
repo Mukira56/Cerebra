@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.74.19";
+    internal const string Version = "0.74.20";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
     // Keep existing install identities for upgrades; fresh installs use product-named folders.
     internal const string Product = "Cerebra";
@@ -78,7 +78,9 @@ internal static class Shared {
                     if(name != "python" && name != "pythonw" && name != "aihq") continue;
                     string image = process.MainModule.FileName;
                     if(Inside(image, root)) throw new InvalidOperationException("Cerebra is running. Use its tray menu to stop and exit before installing or uninstalling.");
-                } catch(System.ComponentModel.Win32Exception) {} catch(InvalidOperationException exception) {
+                } catch(System.ComponentModel.Win32Exception) {} catch(NullReferenceException) {
+                    // MainModule itself throws this when the process exits mid-read: one that's closing isn't Cerebra running.
+                } catch(InvalidOperationException exception) {
                     if(exception.Message.StartsWith("Cerebra is running")) throw;
                 }
             }

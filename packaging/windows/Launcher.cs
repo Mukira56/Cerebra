@@ -7,7 +7,7 @@ using System.Windows.Forms;
 using System.Reflection;
 
 [assembly: AssemblyTitle("Cerebra")]
-[assembly: AssemblyVersion("0.74.19.0")]
+[assembly: AssemblyVersion("0.74.20.0")]
 [assembly: AssemblyDescription("Local AI development headquarters")]
 
 internal static class Launcher {
@@ -30,7 +30,7 @@ internal static class Launcher {
             using(var mutex = new Mutex(true, mutexName, out fresh)) {
                 if(!fresh) {
                     foreach(var process in System.Diagnostics.Process.GetProcessesByName("AIHQ")) using(process) {
-                        try { if(process.Id!=System.Diagnostics.Process.GetCurrentProcess().Id && process.MainModule.FileName==Application.ExecutablePath && process.MainWindowHandle!=IntPtr.Zero) { ShowWindow(process.MainWindowHandle,9);SetForegroundWindow(process.MainWindowHandle);return 0; } } catch(System.ComponentModel.Win32Exception) {}
+                        try { if(process.Id!=System.Diagnostics.Process.GetCurrentProcess().Id && process.MainModule.FileName==Application.ExecutablePath && process.MainWindowHandle!=IntPtr.Zero) { ShowWindow(process.MainWindowHandle,9);SetForegroundWindow(process.MainWindowHandle);return 0; } } catch(System.ComponentModel.Win32Exception) {} catch(NullReferenceException) {} catch(InvalidOperationException) {}  // that copy is closing right now
                     }
                     return 0;
                 }
