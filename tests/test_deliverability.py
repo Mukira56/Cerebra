@@ -217,3 +217,46 @@ def test_resuming_counts_only_what_is_sent_afterwards_and_a_new_pause_is_told_ag
     history(state, 3, 3, at="2099-01-01T10:00:00+00:00")
     assert state.outreach.tick()["paused"] is True
     assert told.count("Automatic emails paused") == 2
+
+
+def days_ago(number):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=number, hours=1)).isoformat()
+
+
+def test_a_new_sender_builds_up_and_then_the_owners_number_applies(client):  # noqa: F811
+    state = setup(client)
+    with state.db.Session() as session:
+        assert deliverability.daily_limit(session, 40) == 10  # nothing sent yet
+        assert deliverability.daily_limit(session, 5) == 5  # never more than the owner asked for
+    for age, limit in [(1, 10), (6, 10), (7, 20), (13, 20), (14, 30), (20, 30), (21, 40)]:
+        with state.db.Session.begin() as session:
+            session.query(Outbox).delete()
+        history(state, 1, 0, at=days_ago(age))
+        with state.db.Session() as session:
+            assert deliverability.daily_limit(session, 40) == limit, age
+
+
+def test_the_oldest_email_sets_the_age_and_a_bad_date_stays_safe(client):  # noqa: F811
+    state = setup(client)
+    history(state, 1, 0, at=days_ago(30))
+    history(state, 1, 0, at=days_ago(1))
+    with state.db.Session() as session:
+        assert deliverability.daily_limit(session, 40) == 40
+    with state.db.Session.begin() as session:
+        session.query(Outbox).delete()
+    history(state, 1, 0, at="not a date")
+    with state.db.Session() as session:
+        assert deliverability.daily_limit(session, 40) == 10
+
+
+def test_automatic_sending_stops_at_the_build_up_limit_but_the_owner_can_still_send(client):  # noqa: F811
+    state = setup(client)
+    history(state, 10, 0, at=days_ago(0))  # ten already went out in the last day
+    business(state, "p1", "hello@smile-dental.example")
+    client.put("/api/outreach", json={"enabled": True, "mode": "send", "per_day": 40, "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["dentists"]})
+    assert "Today's 10 emails are sent" in state.outreach.tick()["message"] and state.outreach.gmail.sent == []
+    overview = client.get("/api/outreach").json()
+    assert overview["limit"] == 10 and overview["settings"]["per_day"] == 40  # the owner's choice is kept for later
+    business(state, "p2")
+    assert client.post("/api/prospects/p2/send", json={"to": "front@hillfamily.example", "text": "Subject: Hi\n\nHello, a short note about booking on your website."}).status_code == 200

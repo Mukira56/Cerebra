@@ -365,7 +365,8 @@ class Outreach:
                 return self._note("Waiting for you: " + "; ".join(problems), "waiting")
             replies = self.check_replies() if waiting else 0
             with self.db.Session() as session:
-                room = min(PER_RUN, rules["per_day"] - self.sent_today(session))
+                limit = deliverability.daily_limit(session, rules["per_day"])
+                room = min(PER_RUN, limit - self.sent_today(session))
             with self.db.Session.begin() as session:
                 health = deliverability.health(session)
                 tell = health["paused"] and deliverability.first_notice(session)
@@ -378,7 +379,7 @@ class Outreach:
                 return {**self._note(f"Paused: {health['reason']} Resume on this page when you've checked the addresses.", "waiting"),
                         "paused": True, "sent": 0, "drafted": drafted, "replies": replies}
             if room <= 0:
-                return {**self._note(f"Today's {rules['per_day']} emails are sent; more tomorrow."), "replies": replies}
+                return {**self._note(f"Today's {limit} emails are sent; more tomorrow."), "replies": replies}
             sent = self.follow_up(room, rules)
             drafted, searched = 0, None
             if rules["enabled"] and rules["mode"] == "send":
@@ -667,6 +668,7 @@ class Outreach:
         return {"settings": settings(session), "ready": self.ready(session), "can_send": self.can_send(session), "status": dict(self.status), "counts": counts,
                 "sender": {"configured": mail["configured"], "connected": mail["connected"], "email": mail["email"], "can_send": mail["can_send"]},
                 "sent_today": self.sent_today(session), "max_per_day": MAX_PER_DAY, "health": deliverability.health(session),
+                "limit": deliverability.daily_limit(session, settings(session)["per_day"]),
                 "recent": [{"id": row.id, "prospect_id": row.prospect_id, "name": names.get(row.prospect_id, ""), "email": row.email, "stage": row.stage,
                             "emails": len(row.emails or []), "next_at": row.next_at, "reply": row.reply or {}, "updated_at": row.updated_at}
                            for row in rows if row.stage not in {"no_email", "skipped", "draft"}][:50],

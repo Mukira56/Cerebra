@@ -1552,7 +1552,7 @@
       const chosen = new Set(array(rules.kinds)), boxes = Object.entries(kinds || {}).map(([key, label]) => { const box = check(label, chosen.has(key)); box.key = key; return box; });
       perDay.min = 1; perDay.max = state.max_per_day;
       const counts = state.counts || {}, summary = el("div", "grid stats");
-      [["Emailed today", `${state.sent_today} of ${rules.per_day}`, "first emails and follow-ups", "blue"], ["Waiting for an answer", (counts.sent || 0) + (counts.followed_up || 0), "follow-ups are automatic", "amber"],
+      [["Emailed today", `${state.sent_today} of ${state.limit}`, state.limit < rules.per_day ? `building up to your ${rules.per_day} a day, to protect your Gmail` : "first emails and follow-ups", "blue"], ["Waiting for an answer", (counts.sent || 0) + (counts.followed_up || 0), "follow-ups are automatic", "amber"],
        ["Replied", counts.replied || 0, "your turn: answer them", "green"], ["Said no", (counts.opted_out || 0) + (counts.bounced || 0), "never written to again", "muted"]]
         .forEach(([label, value, note, style]) => summary.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
       append(root.replaceChildren() || root, senderLine(state.sender), summary,

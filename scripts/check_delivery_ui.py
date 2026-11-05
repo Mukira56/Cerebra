@@ -7,12 +7,12 @@ spec = importlib.util.spec_from_file_location('customer_ui_fixture', root / 'scr
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 setup = '''
-from ai_hq.models import Book, EtsyListing, EtsyNiche, Outbox, Prospect
+from ai_hq.models import Book, EtsyListing, EtsyNiche, Outbox, Prospect, now
 with app.state.db.Session.begin() as session:
     for number in range(3):
         session.add(Prospect(id=f"gone{number}", name=f"Gone {number}", kind="dentists", city="Austin", state="Texas", status="lost"))
         session.add(Outbox(prospect_id=f"gone{number}", email=f"a@gone{number}.example", stage="bounced",
-                           emails=[{"at": "2026-11-01T10:00:00+00:00", "subject": "s", "body": "b", "message_id": f"<{number}>"}]))
+                           emails=[{"at": now(), "subject": "s", "body": "b", "message_id": f"<{number}>"}]))
     listing = {"title": "Daily Gratitude Journal", "subtitle": "", "description": "A simple journal for a calm start to each day.", "price": 7.99, "checks": [],
                "keywords": ["journal", "daily gratitude journals", "self care diary prompts", "morning reflection notebook"]}
     session.add(EtsyNiche(id="fixture-niche", keyword="wedding planner printable", score=70, label="strong", data={"keyword": "wedding planner printable", "count": 900, "demand": 12, "price": 8.5, "spread": [5, 12], "digital_share": 80, "reasons": [], "tags": [], "longer": []}))

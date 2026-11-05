@@ -24,6 +24,14 @@ const path = require('node:path');
     assert.equal(state.health.paused, false);
     assert.equal(state.health.sent, 0);
 
+    const saved = await page.evaluate(async () => {
+      const {csrf_token} = await (await fetch('/api/session')).json();
+      return (await fetch('/api/outreach', {method: 'PUT', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token}, body: JSON.stringify({per_day: 40})})).status;
+    });
+    assert.equal(saved, 200);
+    await page.reload();
+    await page.getByText('building up to your 40 a day', {exact: false}).waitFor();
+    await page.getByText('3 of 10', {exact: true}).waitFor();
     await page.locator('[data-page="books"]').click();
     await page.getByText('Daily Gratitude Journal', {exact: true}).first().click();
     await page.getByRole('heading', {name: 'Keyword check', exact: true}).waitFor();
@@ -47,6 +55,6 @@ const path = require('node:path');
     await page.getByRole('heading', {name: 'Keyword check', exact: true}).scrollIntoViewIfNeeded();
     await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'etsy-check.png')});
     assert.deepEqual(errors, []);
-    console.log('Paused notice -> resume clears it; KDP and Etsy checks name each weak spot: passed');
+    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot: passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

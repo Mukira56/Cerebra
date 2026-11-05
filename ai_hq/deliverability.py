@@ -9,8 +9,14 @@ Automatic sending pauses when PAUSE_BOUNCES of the last WINDOW first emails have
 so one or two bad addresses never stop anything. Replies are still read and drafts still written, and the owner can still send by
 hand. The pause lasts until the owner resumes it, because no new sends means the rate can't fall on its own; only emails
 sent after that count.
+
+A new sender also builds up: automatic emails are capped by RAMP for the first three weeks after its first email, then the
+owner's own daily number applies. The steps follow common deliverability practice, not a published Google limit. Emails the
+owner sends by hand are never held back.
 """
 from __future__ import annotations
+
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
@@ -24,6 +30,7 @@ PAUSE_BOUNCES, WINDOW = 3, 100
 UNSENT = ("draft", "no_email", "skipped", "drafting")
 RESERVED = (".example", ".test", ".invalid", ".localhost")  # never exist on the internet, so there's nothing to ask
 MX, NO_SUCH_DOMAIN = 15, 3
+RAMP = ((7, 10), (14, 20), (21, 30))  # up to this many days after the first email, at most this many a day
 
 
 class MailCheck:
@@ -86,6 +93,17 @@ def health(session):
     paused = bounced >= PAUSE_BOUNCES
     reason = f"{bounced} of your last {len(rows)} emails bounced ({rate:.0%}). Too many bounces can get a Gmail account limited, so automatic sending has stopped." if paused else ""
     return {"sent": len(rows), "bounced": bounced, "rate": round(rate, 4), "paused": paused, "reason": reason}
+
+
+def daily_limit(session, per_day):
+    """How many automatic emails today: the owner's number, or less while a new sender builds up."""
+    sends = [row.emails[0].get("at", "") for row in session.scalars(select(Outbox).where(Outbox.stage.notin_(UNSENT))).all() if row.emails]
+    try:
+        first = datetime.fromisoformat(min(item for item in sends if item))
+        age = (datetime.now(timezone.utc) - (first if first.tzinfo else first.replace(tzinfo=timezone.utc))).days
+    except ValueError:  # nothing sent yet, or a date that can't be read: the first step is the safe answer
+        age = 0
+    return next((min(per_day, cap) for days, cap in RAMP if age < days), per_day)
 
 
 def first_notice(session):
