@@ -1807,6 +1807,7 @@
         : hint("Passes Cerebra's checks: title length, 13 tags, no trademarked names, no AI patterns or recipes. Etsy's own review still applies."),
       el("h4", "", `Title (${listing.title.length}/140)`), el("p", "", listing.title), actionsRow(button("Copy title", () => copy(listing.title, "Title"), "button small")),
       el("h4", "", `Tags (${listing.tags.length}/13)`), append(el("div", "chips"), ...listing.tags.map(tag => el("span", "badge muted", tag))), actionsRow(button("Copy tags", () => copy(listing.tags.join(", "), "Tags"), "button small")),
+      keywordAudit(listing.audit, true),
       el("h4", "", "Description"), el("pre", "lead-description", listing.description), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
       el("h4", "", "Price and product"), el("p", "", `$${Number(listing.price).toFixed(2)} · ${listing.product || "describe the files to make"}`),
       hint("When you list it on Etsy: tick that AI was used if it was, choose “Designed by” rather than “Made by”, and upload the files you made. Nothing goes to Etsy without your confirmation."),
@@ -1932,10 +1933,10 @@
       actionsRow(button("Open the Amazon book search ↗", () => act("Opened in your browser.", () => mutate("/api/books/niche-check/amazon", {theme: found.theme})), "button small")));
     return root;
   }
-  function keywordAudit(audit) {
+  function keywordAudit(audit, fixesShown = false) {
     if (!audit) return null;
-    const style = {strong: "green", good: "blue", weak: "amber", fix: "red"}[audit.label] || "muted", tips = [...array(audit.fix), ...array(audit.improve)];
-    return append(el("div"), el("h4", "", "Keyword check"), append(el("p", "row-meta"), badge(`${audit.score}/100`, style), ` Your boxes add ${audit.reach} search word(s) your title doesn't have.`),
+    const style = {strong: "green", good: "blue", weak: "amber", fix: "red"}[audit.label] || "muted", tips = [...(fixesShown ? [] : array(audit.fix)), ...array(audit.improve)];
+    return append(el("div"), el("h4", "", "Keyword check"), append(el("p", "row-meta"), badge(`${audit.score}/100`, style), ` ${audit.summary}`),
       tips.length ? append(el("ul", "tips"), ...tips.map(item => el("li", "", item))) : null);
   }
   function notebookDialog(book, state) {

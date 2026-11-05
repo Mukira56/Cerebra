@@ -7,7 +7,7 @@ spec = importlib.util.spec_from_file_location('customer_ui_fixture', root / 'scr
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 setup = '''
-from ai_hq.models import Book, Outbox, Prospect
+from ai_hq.models import Book, EtsyListing, EtsyNiche, Outbox, Prospect
 with app.state.db.Session.begin() as session:
     for number in range(3):
         session.add(Prospect(id=f"gone{number}", name=f"Gone {number}", kind="dentists", city="Austin", state="Texas", status="lost"))
@@ -15,6 +15,9 @@ with app.state.db.Session.begin() as session:
                            emails=[{"at": "2026-11-01T10:00:00+00:00", "subject": "s", "body": "b", "message_id": f"<{number}>"}]))
     listing = {"title": "Daily Gratitude Journal", "subtitle": "", "description": "A simple journal for a calm start to each day.", "price": 7.99, "checks": [],
                "keywords": ["journal", "daily gratitude journals", "self care diary prompts", "morning reflection notebook"]}
+    session.add(EtsyNiche(id="fixture-niche", keyword="wedding planner printable", score=70, label="strong", data={"keyword": "wedding planner printable", "count": 900, "demand": 12, "price": 8.5, "spread": [5, 12], "digital_share": 80, "reasons": [], "tags": [], "longer": []}))
+    session.flush()
+    session.add(EtsyListing(id="fixture-listing", niche_id="fixture-niche", title="Modern Bridal Organizer Set", tags=["bridal organizer", "journal", *[f"phrase number {n}" for n in range(11)]], description="A set.", price=8.5, checks=[], status="draft"))
     session.add(Book(id="fixture-book", title="Daily Gratitude Journal", status="files_ready", trim="6x9", pages=120, extra={"kind": "low_content", "listing": listing}))
 '''
 fixture.SERVER = fixture.SERVER.replace('uvicorn.run(app,', setup + '\nuvicorn.run(app,')

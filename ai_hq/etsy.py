@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from sqlalchemy import select
+from sqlalchemy.orm import object_session
 
 from . import vault
 from .models import EtsyListing, EtsyNiche, EtsySaleLine, Metadata, now
@@ -216,7 +217,11 @@ def parse_listing(text, niche):
 
 
 def listing_public(row):
-    return {"id": row.id, "niche_id": row.niche_id, "title": row.title, "tags": row.tags or [], "description": row.description, "price": row.price,
+    from .etsyaudit import audit
+    session = object_session(row)
+    niche = session.get(EtsyNiche, row.niche_id) if session and row.niche_id else None
+    grade = audit({"title": row.title or "", "tags": row.tags or [], "description": row.description or "", "price": row.price}, niche.keyword if niche else "")
+    return {"audit": grade, "id": row.id, "niche_id": row.niche_id, "title": row.title, "tags": row.tags or [], "description": row.description, "price": row.price,
             "product": row.product, "checks": row.checks or [], "status": row.status, "model": row.model, "created_at": row.created_at,
             "job_id": row.job_id or ""}
 

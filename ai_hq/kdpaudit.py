@@ -18,6 +18,12 @@ FILLER = frozenset("a an and at book books by for from in into my of on or our t
 FREE_OF = "gluten sugar dairy stress debt clutter fat grain nut egg pain smoke caffeine alcohol".split()  # "gluten free" is a topic, not a price
 
 
+def grade(fix, improve, extra=0):
+    """The score and its label, with `extra` for advice that counts more than once."""
+    score = max(0, 100 - FIX_COST * len(fix) - IMPROVE_COST * (len(improve) + extra))
+    return score, "fix" if fix else "strong" if score >= 85 else "good" if score >= 60 else "weak"
+
+
 def words(text):
     """The words that count for search, with plurals folded so "planners" and "planner" are the same."""
     found = re.findall(r"[a-z0-9']+", str(text or "").lower())
@@ -42,8 +48,9 @@ def audit(title, subtitle="", keywords=()):
         fix.append("Remove words KDP doesn't allow: " + ", ".join(banned))
     if marks:
         fix.append("Remove trademarked names: " + ", ".join(marks))
-    if len(filled) < KEYWORDS:
-        improve.extend([f"Box {number} is empty: every box is a free chance to be found" for number in range(len(filled) + 1, KEYWORDS + 1)])
+    empty = max(0, KEYWORDS - len(filled))
+    if empty:
+        improve.append(f"{empty} of {KEYWORDS} boxes are empty: every box is a free chance to be found" if empty > 1 else "1 box is empty: every box is a free chance to be found")
     named = words(f"{title} {subtitle}")
     seen, new = [], set()
     for number, box in enumerate(filled, 1):
@@ -59,6 +66,6 @@ def audit(title, subtitle="", keywords=()):
             improve.append(f"Box {number} (“{box}”) adds nothing to box {earlier}: use different words")
         seen.append(terms)
         new |= terms - named
-    score = max(0, 100 - FIX_COST * len(fix) - IMPROVE_COST * len(improve))
-    return {"score": score, "label": "fix" if fix else "strong" if score >= 85 else "good" if score >= 60 else "weak", "reach": len(new),
+    score, label = grade(fix, improve, max(0, empty - 1))
+    return {"score": score, "label": label, "reach": len(new), "summary": f"Your boxes add {len(new)} search word(s) your title doesn't have.",
             "used": sum(len(item) for item in filled), "fix": fix, "improve": improve}

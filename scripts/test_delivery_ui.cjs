@@ -31,10 +31,22 @@ const path = require('node:path');
     assert.match(dialog, /\d+\/100/);
     assert.match(dialog, /Box 1 \(“journal”\) is a single word/);
     assert.match(dialog, /Box 2 \(“daily gratitude journals”\) only repeats your title/);
-    assert.match(dialog, /Box 5 is empty/);
+    assert.match(dialog, /3 of 7 boxes are empty/);
     await page.getByRole('heading', {name: 'Keyword check', exact: true}).scrollIntoViewIfNeeded();
     await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'keyword-check.png')});
+    await page.locator('#dialog-close').click();
+
+    await page.locator('[data-page="etsy"]').click();
+    await page.getByText('wedding planner printable', {exact: true}).first().click();
+    await page.getByText('Modern Bridal Organizer Set', {exact: false}).first().click();
+    await page.getByRole('heading', {name: 'Keyword check', exact: true}).waitFor();
+    const etsy = await page.locator('dialog').innerText();
+    assert.match(etsy, /\d+\/100/);
+    assert.match(etsy, /Your main keyword “wedding planner printable” isn't in the title/);
+    assert.match(etsy, /Tag 2 \(“journal”\) is a single word/);
+    await page.getByRole('heading', {name: 'Keyword check', exact: true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'etsy-check.png')});
     assert.deepEqual(errors, []);
-    console.log('Paused notice -> resume clears it; keyword check names each wasted box: passed');
+    console.log('Paused notice -> resume clears it; KDP and Etsy checks name each weak spot: passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

@@ -31,7 +31,8 @@ def test_each_kind_of_waste_is_named_with_its_box():
 def test_empty_boxes_lower_the_score_but_block_nothing():
     result = audit(TITLE, SUBTITLE, GOOD[:5])
     assert result["fix"] == [] and result["score"] == 84 and result["label"] == "good"
-    assert [item[:9] for item in result["improve"]] == ["Box 6 is ", "Box 7 is "]
+    assert result["improve"] == ["2 of 7 boxes are empty: every box is a free chance to be found"]
+    assert audit(TITLE, SUBTITLE, GOOD[:6])["improve"] == ["1 box is empty: every box is a free chance to be found"]
     assert audit(TITLE, SUBTITLE, [])["label"] == "weak" and audit("", "", None)["reach"] == 0
 
 
