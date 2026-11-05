@@ -357,12 +357,15 @@ FORMATS = ("paperback", "kindle", "hardcover")
 
 
 def book_public(row):
+    from .kdpaudit import audit
     extra = row.extra or {}
+    listing = extra.get("listing") or {}
     fields = {"trim": row.trim, "paper": row.paper, "pages": row.pages or 0, "words": row.words or 0, "prices": row.prices or {}}
     return {"id": row.id, "niche_id": row.niche_id, "title": row.title, "subtitle": row.subtitle, "pen_name": row.pen_name, "status": row.status,
             "formats": row.formats or [], "trim": row.trim, "paper": row.paper, "pages": row.pages, "words": row.words, "prices": row.prices or {},
             "asins": extra.get("asins", {}), "published_at": extra.get("published_at", ""), "earnings": calculate(fields),
-            "kind": extra.get("kind", ""), "listing": extra.get("listing") or {}, "price_tip": extra.get("price_tip", ""), "interior": extra.get("interior", ""), "ai_question": extra.get("ai_question", ""),
+            "kind": extra.get("kind", ""), "listing": listing, "audit": audit(listing.get("title"), listing.get("subtitle"), listing.get("keywords")) if listing else None,
+            "price_tip": extra.get("price_tip", ""), "interior": extra.get("interior", ""), "ai_question": extra.get("ai_question", ""),
             "cover": extra.get("cover", ""), "cover_palette": extra.get("cover_palette", ""), "cover_author": extra.get("cover_author", ""),
             "style": extra.get("style", ""), "etsy_listing": extra.get("etsy_listing", ""), "etsy_printable": extra.get("etsy_printable", ""),
             "created_at": row.created_at, "updated_at": row.updated_at}

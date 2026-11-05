@@ -95,13 +95,15 @@ def check(outline):
 
 
 def public(row):
+    from .kdpaudit import audit
     extra = dict(row.extra or {})
     outline = extra.get("outline") or {}
     chapters = extra.get("chapters") or []
     return {"id": row.id, "title": row.title, "subtitle": row.subtitle, "status": row.status, "stage": extra.get("stage", ""), "brief": extra.get("brief", ""),
             "outline": outline, "written": len(chapters), "total": len(outline.get("chapters") or []), "words": row.words or 0,
             "checks_to_verify": extra.get("check_notes", []), "epub": extra.get("epub", ""), "error": extra.get("error", ""),
-            "royalty": books.ebook_royalty(outline.get("price") or 4.99) if outline else None}
+            "royalty": books.ebook_royalty(outline.get("price") or 4.99) if outline else None,
+            "audit": audit(outline.get("title"), outline.get("subtitle"), outline.get("keywords")) if outline else None}
 
 
 def ebooks(session):

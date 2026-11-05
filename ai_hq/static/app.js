@@ -1882,7 +1882,7 @@
         if (book.stage === "outline_ready") {
           append(card, append(el("ol", "tips"), ...array(outline.chapters).map(item => el("li", "", item.title))),
             el("p", "row-meta", `${outline.keywords?.length || 0} keywords · $${Number(outline.price || 0).toFixed(2)} (you earn about $${Number(book.royalty?.royalty || 0).toFixed(2)} a copy)`),
-            array(outline.checks).length ? hint(outline.checks.join(" · "), true) : null,
+            array(outline.checks).length ? hint(outline.checks.join(" · "), true) : null, keywordAudit(book.audit),
             actionsRow(button("Approve and start writing", () => call(`/api/ebooks/${book.id}/approve`, "Approved: chapters are written in the background."), "button small primary"),
               button("Plan it again", () => call(`/api/ebooks/${book.id}/outline`, "Planned again."), "button small ghost")));
         } else if (book.stage === "writing") {
@@ -1932,6 +1932,12 @@
       actionsRow(button("Open the Amazon book search ↗", () => act("Opened in your browser.", () => mutate("/api/books/niche-check/amazon", {theme: found.theme})), "button small")));
     return root;
   }
+  function keywordAudit(audit) {
+    if (!audit) return null;
+    const style = {strong: "green", good: "blue", weak: "amber", fix: "red"}[audit.label] || "muted", tips = [...array(audit.fix), ...array(audit.improve)];
+    return append(el("div"), el("h4", "", "Keyword check"), append(el("p", "row-meta"), badge(`${audit.score}/100`, style), ` Your boxes add ${audit.reach} search word(s) your title doesn't have.`),
+      tips.length ? append(el("ul", "tips"), ...tips.map(item => el("li", "", item))) : null);
+  }
   function notebookDialog(book, state) {
     const listing = book.listing || {}, root = el("div"), copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied.`), () => toast("Couldn't copy it.", true));
     append(root, array(listing.checks).length ? append(el("div"), el("h4", "", "Fix before uploading"), append(el("ul", "tips"), ...listing.checks.map(item => el("li", "", item))))
@@ -1940,6 +1946,7 @@
       listing.subtitle ? append(el("div"), el("h4", "", "Subtitle"), el("p", "", listing.subtitle), actionsRow(button("Copy subtitle", () => copy(listing.subtitle, "Subtitle"), "button small"))) : null,
       el("h4", "", "Description"), el("pre", "lead-description", listing.description || ""), actionsRow(button("Copy description", () => copy(listing.description, "Description"), "button small")),
       el("h4", "", "7 keywords (one per box)"), list(array(listing.keywords)), actionsRow(button("Copy keywords", () => copy(array(listing.keywords).join("\n"), "Keywords"), "button small")),
+      keywordAudit(book.audit),
       kv([["Interior", book.interior || "—"], ["Cover", book.cover || "—"], ["Trim and pages", `${String(book.trim).replace("x", " × ")} in · ${book.pages} pages · ${book.paper} paper`],
           ["Price", `$${Number(listing.price || book.prices?.paperback || 0).toFixed(2)}`], ["You earn per copy", book.royalty ? `$${Number(book.royalty.royalty).toFixed(2)}` : `$${Number(book.earnings?.paperback?.royalty ?? 0).toFixed(2)}`]]),
       book.price_tip ? hint(book.price_tip) : null, hint(book.ai_question || ""), hint("Upload the interior PDF as the manuscript and the cover PDF as a print-ready cover (KDP adds the barcode on the back), then publish. KDP allows about 3 new titles a day."),
