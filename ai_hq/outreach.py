@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import threading
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from sqlalchemy import select
 
@@ -186,7 +186,36 @@ def sent(session):
     return result
 
 
-def find_email(reader, website, home=None):
+FREE_MAIL = frozenset("gmail.com yahoo.com hotmail.com outlook.com live.com msn.com icloud.com me.com aol.com protonmail.com att.net sbcglobal.net comcast.net".split())
+PLACEHOLDER = re.compile(r"^(j\.?doe|john\.?doe|jane\.?doe|your?|yourname|name|email|user|username|test|sample|someone|first\.?last|firstname)@", re.I)
+TRADE_WORDS = frozenset("""auto automotive body shop repair garage tire tires fitness gym gyms hotel hotels inn cafe coffee bakery restaurant grill kitchen
+    dental dentist dentistry orthodontics doctor doctors medical clinic care health wellness center centre vet veterinary animal hospital pet hair salon beauty
+    nails spa barber barbershop firm attorney attorneys legal lawyers office offices group services service solutions specialist specialists company
+    realty realtor homes home properties property electric electrical plumbing plumber heating cooling roofing construction contractors studio shop store
+    north south east west central texas""".split())
+
+
+def tidy_email(found):
+    """An address as a person would type it, or "" if it's a template's sample or isn't one."""
+    found = unquote(str(found or "")).strip(" .\t\r\n").lower()
+    return found if EMAIL.fullmatch(found) and "%" not in found and not NOT_AN_INBOX.search(found) and not PLACEHOLDER.match(found) else ""
+
+
+def belongs(email, website, name="", city=""):
+    """Is this the business's own address? A page also carries the address of whoever built the site or sold it software, and
+    writing to them about the site would be worse than not writing. Off-site addresses count only with a word of the business's
+    own name in them, and trade words like "auto" or "law" don't count."""
+    local, domain = email.rsplit("@", 1)
+    site = (urlparse(website or "").hostname or "").lower().removeprefix("www.")
+    if domain in FREE_MAIL or (site and (domain == site or domain.endswith("." + site) or site.endswith("." + domain))):
+        return True
+    skip = TRADE_WORDS | set(re.findall(r"[a-z]+", str(city).lower()))
+    words = [word for word in re.findall(r"[a-z]+", str(name).lower().replace("'", "")) if len(word) >= 4 and word not in skip]
+    text = re.sub(r"[^a-z]", "", local) + " " + re.sub(r"[^a-z]", "", domain.rsplit(".", 1)[0])
+    return any(word in text for word in words)
+
+
+def find_email(reader, website, home=None, name="", city=""):
     """The business's public email: from its home page (already read by the search, when given), then its contact page.
     Prefers an address at its own domain. Never guessed: a business that publishes none gets none."""
     site = (urlparse(website).hostname or "").removeprefix("www.")
@@ -204,11 +233,11 @@ def find_email(reader, website, home=None):
         except Exception:
             continue
         for found in EMAIL.findall(page["html"].replace("%40", "@")):
-            found = found.strip(".").lower()
-            if not NOT_AN_INBOX.search(found) and found not in seen:
+            found = tidy_email(found)
+            if found and found not in seen:
                 seen.append(found)
     own = [email for email in seen if site and email.endswith("@" + site)]
-    return (own or seen or [""])[0]
+    return (own or [email for email in seen if belongs(email, website, name, city)] or [""])[0]
 
 
 class Outreach:
@@ -310,15 +339,32 @@ class Outreach:
             known = session.scalars(select(Outbox).where(Outbox.prospect_id == prospect_id)).first()
             if known and (known.email or known.stage == "no_email"):
                 return {"email": known.email}
-            website = prospect.website
-        email = find_email(getattr(self.finder, "reader", None) or Reader(), website) if website else ""
+            website, name, city = prospect.website, prospect.name, prospect.city
+        email = find_email(getattr(self.finder, "reader", None) or Reader(), website, name=name, city=city) if website else ""
         with self.db.Session.begin() as session:
             remember_email(session, prospect_id, email)
         return {"email": email}
 
+    def review_addresses(self):
+        """Drafts waiting to be sent, checked again: an address that isn't the business's own is taken off, and the owner told."""
+        removed = 0
+        with self.db.Session.begin() as session:
+            for row in session.scalars(select(Outbox).where(Outbox.stage == "draft", Outbox.email != "")).all():
+                prospect = session.get(Prospect, row.prospect_id)
+                email = tidy_email(row.email)
+                if email and prospect is not None and belongs(email, prospect.website, prospect.name, prospect.city):
+                    row.email = email
+                    continue
+                session.add(Event(kind="prospects", message=f"Took {row.email} off {prospect.name if prospect else 'a draft'}: it doesn't look like the business's own address. "
+                                                            "Type the right one if you know it.", data={"prospect": row.prospect_id}))
+                row.email, row.stage = "", "no_email"
+                removed += 1
+        return removed
+
     def find_missing_emails(self, limit=15):
         """Businesses found before emails were looked up: read their sites for one, a few each run, politely spaced."""
         import time
+        self.review_addresses()
         with self.db.Session() as session:
             known = set(session.scalars(select(Outbox.prospect_id)).all())
             missing = [row.id for row in session.scalars(select(Prospect).where(Prospect.status.in_(["kept", "new"])).order_by(Prospect.created_at.desc())).all()
@@ -364,6 +410,7 @@ class Outreach:
             if problems:
                 return self._note("Waiting for you: " + "; ".join(problems), "waiting")
             replies = self.check_replies() if waiting else 0
+            self.review_addresses()
             with self.db.Session() as session:
                 limit = deliverability.daily_limit(session, rules["per_day"])
                 room = min(PER_RUN, limit - self.sent_today(session))
@@ -553,7 +600,10 @@ class Outreach:
                                        self.writer.opener(prospect_id)["opener"], follow_up=True)  # enabled automatic outreach has its own follow-up policy
                 sent += bool(result)
                 continue
-            email = find_email(reader, website)
+            with self.db.Session() as session:
+                business = session.get(Prospect, prospect_id)
+                name, city = business.name, business.city
+            email = find_email(reader, website, name=name, city=city)
             if email and email not in stop["emails"] and self._set_aside(prospect_id, email):
                 continue
             with self.db.Session.begin() as session:

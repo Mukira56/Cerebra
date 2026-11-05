@@ -68,9 +68,10 @@ def test_only_the_domain_is_sent_to_the_resolver():
 
 
 def business(state, key, email=""):
+    site = f"http://{email.rsplit('@', 1)[1]}" if email else f"http://{key}.example"  # a business's address is at its own site
     with state.db.Session.begin() as session:
-        session.add(Prospect(id=key, name=f"Business {key}", kind="dentists", city="Austin", state="Texas", website=f"http://{key}.example", status="kept",
-                             facts=[{"key": "no_booking", "text": "No online booking", "seen": f"http://{key}.example"}],
+        session.add(Prospect(id=key, name=f"Business {key}", kind="dentists", city="Austin", state="Texas", website=site, status="kept",
+                             facts=[{"key": "no_booking", "text": "No online booking", "seen": site}],
                              opener="Subject: Online booking\n\nHello, a short note about booking on your website." if email else ""))
         if email:
             session.add(Outbox(prospect_id=key, email=email, stage="draft"))

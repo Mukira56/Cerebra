@@ -245,7 +245,7 @@ class WebsiteFinder:
             facts = facts_from(page)
         except Blocked:
             facts = []
-        email = find_email(self.prospector.reader, page["url"], home=page) if facts else ""
+        email = find_email(self.prospector.reader, page["url"], home=page, name=name) if facts else ""
         with self.db.Session.begin() as session:
             row = session.get(Prospect, prospect_id)
             row.website, row.facts, row.status, row.notes, row.updated_at = page["url"], facts, "kept" if facts else "dropped", "", now()
@@ -324,7 +324,7 @@ class Finder:
                     facts = facts_from(page)
                     status = "kept" if facts else "dropped"
                     if status == "kept" and not email:  # the email to write to, from the page just read and its contact page
-                        email = find_email(self.reader, item["website"], home=page)
+                        email = find_email(self.reader, item["website"], home=page, name=item["name"], city=city)
                 except (Blocked, httpx.HTTPError) as exc:
                     note, unreadable = str(exc)[:200], unreadable + 1
                 time.sleep(self.pause)
