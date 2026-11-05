@@ -32,6 +32,7 @@ from .models import Event, Metadata, Prospect, ProspectSearch, now
 
 KEY, DO_NOT_CONTACT = "outreach_settings", "outreach_do_not_contact"
 MAX_PER_DAY, PER_RUN = 40, 3  # a run sends at most a few, so emails are spread through the day
+RESEARCH_PER_RUN = 3  # businesses looked up per run: about 300 a day, and a run stays quick
 DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "writing_provider": "auto", "writing_model": "auto", "subscription_only": False}
 MODES = ("draft", "send")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -246,6 +247,7 @@ class Outreach:
         self.clock = clock or (lambda: datetime.now().astimezone())
         self.status = {"state": "idle", "message": "", "at": ""}
         self.mail_check = deliverability.MailCheck()
+        self.website_finder = None
         self._lock = threading.Lock()
 
     def _note(self, message, state="idle"):
@@ -393,6 +395,15 @@ class Outreach:
             session.add(Event(kind="prospects", message="Automatic sending resumed", data={}))
         return self._note("Automatic sending resumed.")
 
+    def research(self):
+        """A little background reading on every run: new installs keep helper jobs off, and this work belongs to outreach being on."""
+        try:
+            self.find_missing_emails(limit=RESEARCH_PER_RUN)
+            if self.website_finder is not None:
+                self.website_finder.tick(limit=RESEARCH_PER_RUN)
+        except (ValueError, OSError):
+            pass  # reading the web can wait for the next run: it must never stop the emails
+
     def sent_today(self, session):
         since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         return sum(1 for row in session.scalars(select(Outbox)).all() for item in row.emails or [] if item.get("at", "") >= since)
@@ -411,6 +422,8 @@ class Outreach:
                 return self._note("Waiting for you: " + "; ".join(problems), "waiting")
             replies = self.check_replies() if waiting else 0
             self.review_addresses()
+            if rules["enabled"]:
+                self.research()
             with self.db.Session() as session:
                 limit = deliverability.daily_limit(session, rules["per_day"])
                 room = min(PER_RUN, limit - self.sent_today(session))

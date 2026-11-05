@@ -178,3 +178,58 @@ def test_only_the_limit_is_read_each_run_and_kept_businesses_are_left_alone(clie
 def test_the_job_never_sends_anything(client):  # noqa: F811
     job = next(item for item in client.get("/api/chief").json()["jobs"] if item["id"] == "prospect_websites")
     assert job["outward"] is False
+
+
+def outreach_on(client):  # noqa: F811
+    from test_outreach import setup
+    state = setup(client)
+    client.put("/api/outreach", json={"enabled": True, "mode": "draft", "per_day": 1, "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["restaurants"]}).raise_for_status()
+    return state
+
+
+def test_outreach_being_on_is_enough_with_the_job_left_off(client):  # noqa: F811
+    state = outreach_on(client)
+    assert not next(item for item in client.get("/api/chief").json()["jobs"] if item["id"] == "prospect_websites")["enabled"]
+    finder(client, {"mizunoodle.com": OLD_SITE})
+    add(client, "p1", name="Mizu Noodle")
+    state.outreach.tick()
+    assert get(client, "p1").website.startswith("https://mizunoodle.com")
+
+
+def test_each_run_reads_only_a_few(client):  # noqa: F811
+    state = outreach_on(client)
+    finder(client, {})
+    for number in range(5):
+        add(client, f"p{number}", name=f"Some Place {number}")
+    state.outreach.research()
+    assert sum(NOT_FOUND in get(client, f"p{number}").notes for number in range(5)) == 3
+
+
+def test_with_outreach_off_nothing_is_read(client):  # noqa: F811
+    from test_outreach import setup
+    state = setup(client)
+    _, sites = finder(client, {})
+    add(client, "p1", name="Mizu Noodle")
+    state.outreach.tick()
+    assert sites.asked == [] and NOT_FOUND not in get(client, "p1").notes
+
+
+def test_a_problem_reading_the_web_never_stops_the_run(client):  # noqa: F811
+    state = outreach_on(client)
+
+    class Broken:
+        def tick(self, limit):
+            raise OSError("no network")
+
+    state.outreach.website_finder = Broken()
+    assert state.outreach.tick().get("state") != "error"
+
+
+def test_a_fresh_customers_emails_are_found_with_the_job_left_off(client):  # noqa: F811
+    state = outreach_on(client)
+    assert not next(item for item in client.get("/api/chief").json()["jobs"] if item["id"] == "prospect_emails")["enabled"]
+    with state.db.Session.begin() as session:
+        session.add(Prospect(id="p1", name="Smile Dental", kind="dentists", city="Austin", state="Texas", website="http://smile-dental.example", status="kept",
+                             facts=[{"key": "no_booking", "text": "No online booking", "seen": "http://smile-dental.example"}]))
+    state.outreach.research()
+    assert next(item for item in client.get("/api/prospects").json()["prospects"] if item["id"] == "p1")["email"] == "hello@smile-dental.example"

@@ -1659,6 +1659,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     website_finder = prospects_module.WebsiteFinder(db, prospector)
     app.state.website_finder = website_finder
+    outreach.website_finder = website_finder
     registry.add("prospect_websites", "Find business websites", "Businesses the map lists with no website usually have one: tries the likely addresses and keeps a site only "
                  "when it shows the business's name and its phone, street or city. Nothing is sent.", website_finder.tick, 20)
 
