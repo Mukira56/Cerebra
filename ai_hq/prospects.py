@@ -12,6 +12,7 @@ Nothing here contacts a business. Openers are drafted for the owner, who decides
 """
 from __future__ import annotations
 
+import html as html_text
 import ipaddress
 import re
 import socket
@@ -84,6 +85,55 @@ def normal_site(url):
     return url
 
 
+NOT_FOUND = "No website found at the usual addresses. They may not have one, which makes them a good one to call."
+NAME_FILLER = frozenset("the llc inc pllc pc pa md dds dmd co corp ltd".split())
+STREET_WORDS = frozenset("n s e w north south east west ne nw se sw".split())
+STATE_CODES = dict(zip("Alabama Alaska Arizona Arkansas California Colorado Connecticut Delaware Florida Georgia Hawaii Idaho Illinois Indiana Iowa Kansas Kentucky Louisiana Maine "
+                       "Maryland Massachusetts Michigan Minnesota Mississippi Missouri Montana Nebraska Nevada New_Hampshire New_Jersey New_Mexico New_York North_Carolina North_Dakota "
+                       "Ohio Oklahoma Oregon Pennsylvania Rhode_Island South_Carolina South_Dakota Tennessee Texas Utah Vermont Virginia Washington West_Virginia Wisconsin Wyoming".split(),
+                       "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY".split()))
+
+
+def fold(text):
+    """Lower case words with punctuation gone, so names and pages can be compared."""
+    text = str(text or "").lower().replace("&", " and ").replace("'", "").replace("\u2019", "")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+
+
+def page_words(markup):
+    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", str(markup or ""))
+    return fold(html_text.unescape(re.sub(r"<[^>]+>", " ", text)))
+
+
+def guesses(name, city=""):
+    """The addresses a small business most likely uses. A one-word name could be anyone's, so it isn't guessed at."""
+    words = [word for word in fold(name).split() if word not in NAME_FILLER]
+    if len([word for word in words if word != "and"]) < 2:
+        return []
+    bare = [word for word in words if word != "and"]
+    place = fold(city).replace(" ", "")
+    slugs = ["".join(words), "".join(bare), "-".join(bare)] + (["".join(bare) + place] if place and place not in bare else [])
+    return [f"https://{slug}.com" for slug in dict.fromkeys(slugs) if len(slug) <= 50]
+
+
+def same_business(row, page):
+    """True only if the page shows the business's full name and something that is theirs alone: wrong here means emailing a stranger."""
+    if page["status"] >= 400:
+        return False
+    text = f" {page_words(page['html'])} "
+    if f" {fold(row.name)} " not in text:
+        return False
+    digits = re.sub(r"\D", "", row.phone or "")[-10:]
+    if len(digits) == 10 and digits in re.sub(r"\D", "", text):
+        return True
+    street = [word for word in fold(row.address).split() if word not in STREET_WORDS]
+    if len(street) >= 2 and street[0].isdigit() and re.search(rf" {street[0]} (?:\w+ ){{0,2}}{street[1]} ", text):
+        return True
+    city, state = fold(row.city), fold(row.state)
+    code = STATE_CODES.get(str(row.state).strip().replace(" ", "_"), "").lower()
+    return bool(city and state) and any(f" {city} {item} " in text for item in (state, code) if item)
+
+
 class Reader:
     """Reads one public page per business, politely."""
 
@@ -149,6 +199,62 @@ def facts_from(page, year=None):
 
 
 # ---- finding businesses in OpenStreetMap ----
+class WebsiteFinder:
+    """Businesses the map lists with no website: most have one. Likely addresses are tried once each, and a site only counts
+    when it proves it's the same business. Then it's treated like any other: its page read, facts and public email taken."""
+
+    def __init__(self, db, prospector):
+        self.db, self.prospector = db, prospector
+
+    def tick(self, limit=10):
+        reader, pause = self.prospector.reader, self.prospector.pause
+        if not reader.resolve("cloudflare.com"):
+            return {"skipped": "no internet right now"}  # or every business here would be marked as having no website
+        with self.db.Session() as session:
+            waiting = [row.id for row in session.scalars(select(Prospect).where(Prospect.status == "new", Prospect.website == "").order_by(Prospect.created_at)).all()
+                       if NOT_FOUND not in (row.notes or "")][:limit]
+        if not waiting:
+            return {"skipped": "every business has been looked up"}
+        found = kept = 0
+        for prospect_id in waiting:
+            with self.db.Session() as session:
+                row = session.get(Prospect, prospect_id)
+                session.expunge(row)
+            page = None
+            for url in guesses(row.name, row.city):
+                try:
+                    candidate = reader.page(url)
+                except (Blocked, httpx.HTTPError):
+                    continue
+                finally:
+                    time.sleep(pause)
+                if same_business(row, candidate):
+                    page = candidate
+                    break
+            if page is None:
+                with self.db.Session.begin() as session:
+                    session.get(Prospect, prospect_id).notes = NOT_FOUND
+                continue
+            found += 1
+            kept += self._found(prospect_id, row.name, page)
+        return {"checked": len(waiting), "found": found, "worth_contacting": kept}
+
+    def _found(self, prospect_id, name, page):
+        from .outreach import find_email, remember_email
+        try:
+            facts = facts_from(page)
+        except Blocked:
+            facts = []
+        email = find_email(self.prospector.reader, page["url"], home=page) if facts else ""
+        with self.db.Session.begin() as session:
+            row = session.get(Prospect, prospect_id)
+            row.website, row.facts, row.status, row.notes, row.updated_at = page["url"], facts, "kept" if facts else "dropped", "", now()
+            if facts:
+                remember_email(session, prospect_id, email)
+            session.add(Event(kind="prospects", message=f"Found {name}'s website: {page['url']}", data={"prospect": prospect_id}))
+        return bool(facts)
+
+
 class Finder:
     def __init__(self, db, client=None, reader=None, pause=PAUSE):
         self.db = db

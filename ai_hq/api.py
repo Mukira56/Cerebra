@@ -1657,6 +1657,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     registry.add("prospect_emails", "Find business emails", "Reads the websites of businesses found before emails were looked up, a few each run, for the public email "
                  "to put in their drafts. Nothing is sent.", outreach.find_missing_emails, 20)
 
+    website_finder = prospects_module.WebsiteFinder(db, prospector)
+    app.state.website_finder = website_finder
+    registry.add("prospect_websites", "Find business websites", "Businesses the map lists with no website usually have one: tries the likely addresses and keeps a site only "
+                 "when it shows the business's name and its phone, street or city. Nothing is sent.", website_finder.tick, 20)
+
     # ---- daily verified backups of everything Cerebra records ----
     backup_robot = backups_module.Backups(db, settings.data_dir, notifier)
     if restored and restored.get("error"):
