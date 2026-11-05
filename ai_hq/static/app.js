@@ -1102,12 +1102,22 @@
   function githubView() {
     const root = el("div"), account = el("div"), repos = el("div"), token = renderToken;
     root.append(panel("Account", account), panel("Your repositories", repos, button("↻", () => { cache.repos = null; loadRepos(); }, "button small ghost")));
+    async function connectGithub() {
+      if (!await act(result => result.message, () => mutate("/api/github/sign-in"))) return;
+      let tries = 0;
+      const look = async () => {  // about five minutes, for as long as this page is open
+        if (page !== "github" || ++tries > 100) return;
+        try { if ((await api("/api/github", {timeout: 60000})).signed_in) { toast("GitHub connected."); cache.repos = null; return loadAccount(); } } catch (issue) { /* try again */ }
+        setTimeout(look, 3000);
+      };
+      setTimeout(look, 3000);
+    }
     async function loadAccount() {
       account.replaceChildren(el("div", "loading", "checking GitHub…"));
       try { cache.github = await api("/api/github", {timeout: 60000}); } catch (issue) { account.replaceChildren(body(hint(issue.message, true))); return; }
       if (token !== renderToken) return; const status = cache.github;
       if (!status.installed) { account.replaceChildren(body(empty("GitHub CLI is not installed", "Cerebra talks to GitHub through the official GitHub CLI.", link("Install it from Toolchain →", "toolchain", "button primary"), "⑂"))); return; }
-      if (!status.signed_in) { account.replaceChildren(body(empty("Not connected", "Sign in once; GitHub's own window handles your password and two-factor code.", button("Connect GitHub", () => act(result => result.message, () => mutate("/api/github/sign-in")), "button primary"), "⑂"), append(el("div", "actions"), button("Check again", loadAccount, "button small")))); return; }
+      if (!status.signed_in) { account.replaceChildren(body(empty("Not connected", "Sign in once; GitHub's own window handles your password and two-factor code.", button("Connect GitHub", connectGithub, "button primary"), "⑂"), append(el("div", "actions"), button("Check again", loadAccount, "button small")))); return; }
       account.replaceChildren(body(kv([["Signed in as", status.account], ["Name", status.name], ["Profile", status.url], ["Public repositories", status.public_repos]]), append(el("div", "actions"), button("Check again", loadAccount, "button small ghost"), button("Sign out", async () => { if (await act("Signed out of GitHub.", () => mutate("/api/github/sign-out", {}, "POST", 60000))) { cache.repos = null; loadAccount(); loadRepos(); } }, "button small danger"), button("+ Clone a repository", () => projectForm("github"), "button small primary"))));
       loadRepos();
     }
@@ -3137,7 +3147,13 @@
     const fromGitHub = button("Use my GitHub login", async () => { const found = await act(null, () => api("/api/owner/github")); if (found?.github) { inputs.github.value = found.github; toast(`GitHub username: ${found.github}`); } }, "button small ghost");
     append(form, hint("ChatGPT's and Claude's own memories aren't shared with Cerebra. Fill this in once so portfolios, READMEs and replies use your real details instead of placeholders. Only put here what you'd put on a public profile; never passwords or keys."),
       grid, append(el("div", "row-meta"), fromGitHub), field("About you", inputs.bio), field("How you like things done", inputs.preferences), share.wrap);
-    const save = submitButton("Save"); form.append(actionsRow(save));
+    const save = submitButton("Save");
+    const clear = button("Clear my details", async () => {
+      if (!window.confirm("Clear everything in this section? Your name and links leave Cerebra, and the AI team stops using them.")) return;
+      const blank = Object.fromEntries(Object.keys(inputs).map(key => [key, ""]));
+      if (await act("Cleared.", () => mutate("/api/owner", {...blank, share: false}, "PUT"))) { Object.values(inputs).forEach(control => { control.value = ""; }); share.control.checked = false; }
+    }, "button ghost");
+    form.append(actionsRow(save, clear));
     api("/api/owner").then(profile => { Object.entries(inputs).forEach(([key, control]) => { control.value = profile[key] || ""; }); share.control.checked = profile.share !== false; }).catch(() => {});
     wireForm(form, save, async () => {
       const values = Object.fromEntries(Object.entries(inputs).map(([key, control]) => [key, control.value])); values.share = share.control.checked;

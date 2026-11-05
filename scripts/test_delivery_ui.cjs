@@ -69,7 +69,33 @@ const path = require('node:path');
     await page.getByRole('button', {name: "Don't go back", exact: true}).click();
     await page.getByRole('button', {name: "Don't go back", exact: true}).waitFor({state: 'detached'});
     assert.equal((await page.evaluate(async () => (await fetch('/api/backups')).json())).restore_pending, '');
+    await page.evaluate(async () => {
+      const {csrf_token} = await (await fetch('/api/session')).json();
+      await fetch('/api/owner', {method: 'PUT', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token}, body: JSON.stringify({name: 'Sample Person', github: 'sample-person', share: true})});
+    });
+    await page.reload();
+    const nameField = page.getByPlaceholder('e.g. Alex Rivera');
+    await nameField.waitFor();
+    await page.waitForFunction(() => document.querySelector('input[placeholder="e.g. Alex Rivera"]').value === 'Sample Person');
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', {name: 'Clear my details', exact: true}).click();
+    await page.locator('#toast').filter({hasText: 'Cleared.'}).waitFor();
+    assert.equal(await nameField.inputValue(), '');
+    const cleared = await page.evaluate(async () => (await fetch('/api/owner')).json());
+    assert.equal(cleared.name, ''); assert.equal(cleared.github, ''); assert.equal(cleared.share, false);
+
+    let connected = false, opened = 0;
+    await page.route('**/api/github', route => route.fulfill({json: connected ? {installed: true, signed_in: true, account: 'sample-user', name: 'Sample', url: 'https://github.test/sample-user', public_repos: 3} : {installed: true, signed_in: false}}));
+    await page.route('**/api/github/repositories', route => route.fulfill({json: []}));
+    await page.route('**/api/github/sign-in', route => { opened += 1; route.fulfill({json: {opened: true, message: 'A GitHub window opened. Copy the one-time code it shows and press Enter, then finish in your browser. This page updates by itself.'}}); });
+    await page.locator('[data-page="github"]').click();
+    await page.getByRole('button', {name: 'Connect GitHub', exact: true}).click();
+    await page.locator('#toast').filter({hasText: 'This page updates by itself'}).waitFor();
+    assert.equal(opened, 1);
+    connected = true;  // the person finishes in their browser and touches nothing here
+    await page.locator('#toast').filter({hasText: 'GitHub connected.'}).waitFor({timeout: 15000});
+    await page.getByText('sample-user', {exact: true}).first().waitFor();
     assert.deepEqual(errors, []);
-    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot; back up, choose, cancel: passed');
+    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot; back up, choose, cancel; About you clears; GitHub page updates by itself: passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

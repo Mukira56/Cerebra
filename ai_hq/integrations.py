@@ -62,9 +62,16 @@ REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 REPOSITORY_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
+def installed_places(name):
+    """Where a tool lands on Windows. A running app keeps the PATH it started with, so one installed since then isn't on it."""
+    if name != "gh":
+        return []
+    return [Path(root) / "GitHub CLI" / "gh.exe" for root in (os.environ.get("ProgramFiles"), Path(os.environ.get("LOCALAPPDATA") or ".") / "Programs") if root]
+
+
 def which(names):
     for name in names:
-        found = shutil.which(name)
+        found = shutil.which(name) or next((str(path) for path in installed_places(name) if path.is_file()), None)
         if found:
             return found
     return None
@@ -81,8 +88,10 @@ def open_terminal(args, title, cwd=None, keep_open=True):
     if keep_open:
         script += "; Write-Host ''; Write-Host 'Finished. You can close this window and return to Cerebra.' -ForegroundColor Green; Read-Host 'Press Enter to close'"
     powershell = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    # No redirection at all: the desktop app has no console of its own, so redirecting any one stream sends the window's output
+    # to a dead pipe and cuts off its keyboard. The person would see a blank window and could do nothing in it.
     subprocess.Popen([str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], cwd=cwd,
-                     creationflags=subprocess.CREATE_NEW_CONSOLE, stdin=subprocess.DEVNULL)
+                     creationflags=subprocess.CREATE_NEW_CONSOLE)
 
 
 class Integrations:
@@ -236,7 +245,7 @@ class Integrations:
 
     def github_sign_in(self):
         self.terminal([self._gh(), "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"], "Sign in to GitHub", cwd=str(self.settings.data_dir))
-        return {"opened": True, "message": "A GitHub sign-in window opened. Copy the one-time code it shows, finish in your browser, then press Check again."}
+        return {"opened": True, "message": "A GitHub window opened. Copy the one-time code it shows and press Enter, then finish in your browser. This page updates by itself."}
 
     def github_sign_out(self):
         account = self.github_status().get("account")
