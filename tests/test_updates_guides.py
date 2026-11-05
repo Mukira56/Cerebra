@@ -260,3 +260,14 @@ def test_on_macos_and_linux_an_update_is_a_pull_not_a_windows_installer(client, 
     info = client.get("/api/updates").json()
     assert not info["available"] and info["newer"] and info["latest"] == "99.0.0" and "git pull && ./scripts/setup.sh" in info["message"]
     assert "git pull" in client.post("/api/updates/download", json={"tag": "v99.0.0"}).json()["detail"]
+
+
+def test_a_build_must_say_where_its_updates_come_from(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+    script = Path(__file__).resolve().parent.parent / "scripts" / "build_windows.py"
+    for extra in ([], ["--update-repository", "a/b", "--no-update-channel"]):
+        result = subprocess.run([sys.executable, str(script), "--output", str(tmp_path), *extra], capture_output=True, text=True, timeout=60)
+        assert result.returncode == 2 and "can never update itself" in result.stderr
+    assert list(tmp_path.iterdir()) == []

@@ -18,7 +18,7 @@ import tomllib
 from release_privacy import audit, copy_app, copy_dependencies
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.74.13'
+VERSION='0.74.14'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 TRACE_MODULES=['ai_hq.api','ai_hq.manage','ai_hq.doctor','ai_hq.telemetry','ai_hq.gitops','ai_hq.agents','ai_hq.supervisor','ai_hq.processes',
@@ -85,7 +85,10 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--build-dir',type=Path,default=ROOT/'work/windows-build')
     parser.add_argument('--update-repository',default='',help='Public GitHub owner/repository for this distributor edition')
+    parser.add_argument('--no-update-channel',action='store_true',help='Build an edition that never looks for updates')
     args=parser.parse_args()
+    if bool(args.update_repository)==args.no_update_channel:
+        parser.error('Choose --update-repository owner/repository, or --no-update-channel: an installer without a channel can never update itself')
     if args.update_repository and not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',args.update_repository):
         raise ValueError('Update channel must be a public owner/repository name')
     if os.name!='nt' or sys.version_info[:2]!=(3,13) or sys.maxsize<2**32: raise RuntimeError('Build with Windows x64 Python 3.13 and the tested project environment')

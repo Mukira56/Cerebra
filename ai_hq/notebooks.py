@@ -47,10 +47,10 @@ def check(listing):
     if len(listing.get("keywords") or []) < KEYWORDS:
         problems.append(f"Only {len(listing.get('keywords') or [])} of {KEYWORDS} keywords: fill every box")
     text = " ".join([title, listing.get("description", ""), " ".join(listing.get("keywords") or [])]).lower()
-    banned = sorted({word for word in BANNED if re.search(r"(?<![\w#])" + re.escape(word) + r"(?!\w)", text)})
+    from .kdpaudit import claims
+    banned, marks = claims(text)
     if banned:
         problems.append("KDP rejects these words in listings: " + ", ".join(banned))
-    marks = sorted({mark for mark in TRADEMARKS if re.search(r"\b" + re.escape(mark) + r"\b", text)})
     if marks:
         problems.append("Remove trademarked names: " + ", ".join(marks))
     return problems

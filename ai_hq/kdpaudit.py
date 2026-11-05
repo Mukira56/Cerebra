@@ -24,7 +24,7 @@ def words(text):
     return {word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word for word in found if word not in FILLER}
 
 
-def _claims(text):
+def claims(text):
     text = re.sub(r"\b(" + "|".join(FREE_OF) + r")[ -]free\b", " ", str(text or "").lower())
     found = {word for word in BANNED if re.search(r"(?<![\w#])" + re.escape(word) + r"(?!\w)", text)}
     return sorted(found), sorted({mark for mark in TRADEMARKS if re.search(r"\b" + re.escape(mark) + r"\b", text)})
@@ -37,9 +37,9 @@ def audit(title, subtitle="", keywords=()):
     fix, improve = [], []
     if len(filled) > KEYWORDS:
         fix.append(f"{len(filled)} keywords, but KDP has {KEYWORDS} boxes")
-    claims, marks = _claims(" ".join([str(title or ""), str(subtitle or ""), *filled]))
-    if claims:
-        fix.append("Remove words KDP doesn't allow: " + ", ".join(claims))
+    banned, marks = claims(" ".join([str(title or ""), str(subtitle or ""), *filled]))
+    if banned:
+        fix.append("Remove words KDP doesn't allow: " + ", ".join(banned))
     if marks:
         fix.append("Remove trademarked names: " + ", ".join(marks))
     if len(filled) < KEYWORDS:

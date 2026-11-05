@@ -15,6 +15,7 @@ from __future__ import annotations
 import httpx
 from sqlalchemy import select
 
+from .network import LazyClient
 from .models import Metadata, Outbox, now
 
 KEY = "outreach_health"
@@ -27,7 +28,7 @@ MX, NO_SUCH_DOMAIN = 15, 3
 
 class MailCheck:
     def __init__(self, client=None):
-        self.client = client or httpx.Client(timeout=5)
+        self.client = client or LazyClient(timeout=5)
 
     def _ask(self, domain, kind):
         reply = self.client.get(RESOLVER, params={"name": domain, "type": kind}, headers={"accept": "application/dns-json"})

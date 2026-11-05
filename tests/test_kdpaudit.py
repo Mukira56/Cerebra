@@ -65,3 +65,10 @@ def test_an_ebook_outline_shows_its_audit():
     row = Row(id="e1", title=TITLE, extra={"outline": {"title": TITLE, "subtitle": SUBTITLE, "keywords": GOOD, "chapters": [], "price": 4.99}})
     assert ebooks.public(row)["audit"]["score"] == 100
     assert ebooks.public(Row(id="e2", title="x", extra={}))["audit"] is None
+
+
+def test_the_notebook_check_agrees_about_free_as_a_topic():
+    from ai_hq import notebooks
+    listing = {"title": "Gluten Free Meal Planner", "subtitle": "", "description": "A planner for gluten free weekly meals and simple shopping lists.", "keywords": GOOD}
+    assert notebooks.check(listing) == []
+    assert "free" in " ".join(notebooks.check({**listing, "title": "Free Meal Planner"}))
