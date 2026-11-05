@@ -54,7 +54,22 @@ const path = require('node:path');
     assert.match(etsy, /Tag 2 \(“journal”\) is a single word/);
     await page.getByRole('heading', {name: 'Keyword check', exact: true}).scrollIntoViewIfNeeded();
     await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'etsy-check.png')});
+    await page.locator('#dialog-close').click();
+
+    await page.locator('[data-page="settings"]').click();
+    await page.getByRole('button', {name: 'Back up now', exact: true}).click();
+    await page.locator('#toast').filter({hasText: 'Backed up and checked.'}).waitFor();
+    const goBack = page.getByRole('button', {name: 'Go back to this', exact: true}).first();
+    await goBack.waitFor();
+    page.once('dialog', dialog => dialog.accept());
+    await goBack.click();
+    await page.getByText('close Cerebra completely and open it again to finish', {exact: false}).first().waitFor();
+    await page.getByRole('button', {name: "Don't go back", exact: true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'backups.png')});
+    await page.getByRole('button', {name: "Don't go back", exact: true}).click();
+    await page.getByRole('button', {name: "Don't go back", exact: true}).waitFor({state: 'detached'});
+    assert.equal((await page.evaluate(async () => (await fetch('/api/backups')).json())).restore_pending, '');
     assert.deepEqual(errors, []);
-    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot: passed');
+    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot; back up, choose, cancel: passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

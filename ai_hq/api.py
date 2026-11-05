@@ -30,6 +30,8 @@ STATIC = Path(__file__).parent / "static"
 
 def create_app(settings=None, bootstrap_key=None, start_worker=True):
     settings = settings or Settings()
+    from . import backups as backups_module
+    restored = backups_module.apply_pending(settings.data_dir)
     db = Database(settings.db_path)
     db.init()
     with db.Session() as session:
@@ -96,6 +98,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @asynccontextmanager
     async def lifespan(app):
         if start_worker:
+            app.state.backups.start()
             supervisor.startup()
             autofix.start()
             notifier.start()
@@ -105,6 +108,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             scheduler.start()
             app.state.remote.start()  # Cerebra from the owner's phone (Telegram), when their bot is set up
         yield
+        app.state.backups.stop()
         app.state.remote.stop()
         publisher.stop()
         scheduler.stop()
@@ -1652,6 +1656,37 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                  outreach.tick, 15, outward=True)
     registry.add("prospect_emails", "Find business emails", "Reads the websites of businesses found before emails were looked up, a few each run, for the public email "
                  "to put in their drafts. Nothing is sent.", outreach.find_missing_emails, 20)
+
+    # ---- daily verified backups of everything Cerebra records ----
+    backup_robot = backups_module.Backups(db, settings.data_dir, notifier)
+    if restored and restored.get("error"):
+        backup_robot.problem = restored["error"]
+    app.state.backups = backup_robot
+
+    @app.get("/api/backups")
+    def backups_overview():
+        with db.Session() as session:
+            return backup_robot.overview(session)
+
+    @app.post("/api/backups/run")
+    def backups_run():
+        return backup_robot.make(force=True)
+
+    @app.put("/api/backups/settings")
+    def backups_settings(payload: dict):
+        with db.Session.begin() as session:
+            return backups_module.save_settings(session, payload.get("folder"))
+
+    @app.post("/api/backups/restore")
+    def backups_restore(payload: dict):
+        try:
+            return backup_robot.restore(payload.get("name"))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.delete("/api/backups/restore")
+    def backups_cancel_restore():
+        return backup_robot.cancel()
 
     @app.get("/api/outreach")
     def outreach_overview():

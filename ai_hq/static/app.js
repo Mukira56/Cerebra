@@ -3237,6 +3237,27 @@
   }
 
   // ---------- settings ----------
+  function backupsPanel() {
+    const root = el("div");
+    root.append(el("p", "row-meta", "Loading…"));
+    api("/api/backups").then(state => {
+      const form = el("form"), folder = input("D:\\Backups", state.extra_folder || ""), save = submitButton("Save folder"), pending = array(state.backups).find(item => item.name === state.restore_pending);
+      append(form, field("Second folder (optional)", folder, "A copy on the same disk won't survive that disk failing. Use an external drive or a folder that syncs. It holds your business records, so choose somewhere you trust."), actionsRow(save));
+      wireForm(form, save, async () => { await mutate("/api/backups/settings", {folder: folder.value}, "PUT"); toast("Saved."); render(); });
+      const latest = array(state.backups)[0];
+      append(root.replaceChildren() || root,
+        state.problem ? hint(state.problem, true) : null,
+        pending ? append(el("div"), hint(`Going back to ${pending.label}: close Cerebra completely and open it again to finish.`, true),
+          actionsRow(button("Don't go back", () => act("Cancelled.", () => api("/api/backups/restore", {method: "DELETE"})).then(() => render()), "button small ghost"))) : null,
+        hint(latest ? `Last backup: ${latest.label}. Each one is checked before it counts. The last 7 days and 4 weeks are kept in ${state.folder}.` : "The first backup is made within the hour."),
+        hint("This covers everything in Cerebra's records. Book files and covers aren't included, and on another computer you'd connect your accounts again."),
+        actionsRow(button("Back up now", () => act(result => result.error || result.warning || "Backed up and checked.", () => mutate("/api/backups/run", {}, "POST", 120000)).then(() => render()), "button small")),
+        array(state.backups).length ? table(["Backup", "Size", ""], state.backups.map(item => [item.label, `${(item.bytes / 1048576).toFixed(1)} MB`,
+          button("Go back to this", () => { if (window.confirm(`Go back to ${item.label}? Everything recorded since then leaves Cerebra. Your current data is kept in the backups folder.`)) act(result => result.message, () => mutate("/api/backups/restore", {name: item.name})).then(() => render()); }, "button small ghost")])) : null,
+        form);
+    }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
   function settingsView() {
     const values = data.settings || {}, root = el("div");
     const permissions = el("form"), usage = check("I understand the AI agents run on my own accounts and can use my plan's usage or credits."), reads = check("I understand the agents can read files outside the project folder with my Windows permissions (they can only write inside it).");
@@ -3272,6 +3293,7 @@
     wireForm(limits, save, async () => { const payload = {}; Object.entries(controls).forEach(([name, control]) => { payload[name] = unlimited[name]?.[0].checked ? unlimited[name][1] : control.type === "number" ? Number(control.value) : control.value.trim(); }); await mutate("/api/settings", payload, "PATCH"); await refresh(true); toast("Settings saved."); });
     root.append(panel("Limits & programs", body(limits)));
     root.append(panel("Updates", body(updatesPanel())));
+    root.append(panel("Backups", body(backupsPanel())));
 
     root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));
 

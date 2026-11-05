@@ -10,6 +10,10 @@ Prospects can use an explicitly selected OpenAI or Anthropic API model as well a
 
 Saving a model or key does not enable outreach or send an email. An explicitly selected API model overrides the global writing route only for Prospects. There is no automatic paid retry or provider fallback after a failed generation request. Partial/invalid drafts are not saved over an existing draft. Usage events record token counts when returned, with monetary cost unknown rather than labelled free. Fresh customer installations have no API keys or inherited model catalogs.
 
+## Backups (0.74.16)
+
+Cerebra keeps a daily checked copy of its database in the data folder's `backups` folder. Copies hold the same business records as the live database, and saved sign-ins stay protected for the Windows account that made them. A second folder is only used if the owner chooses one, and it should be somewhere they trust: anyone who can read that folder can read those records.
+
 ## Outreach delivery checks (0.74.14)
 
 Before an outreach email is written or sent, the recipient's domain name is looked up over DNS-over-HTTPS at cloudflare-dns.com to see whether it can receive mail. Only the business's domain is sent: never the full address, the email or anything about the owner. If the lookup fails, sending goes on as normal.
