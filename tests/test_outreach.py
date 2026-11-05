@@ -139,6 +139,10 @@ def test_prospect_writing_switches_to_codex_after_claude_limit_for_all_drafts(cl
                 return AgentResult(False, '', error='Claude usage limit reached')
             return super().chat(name, prompt, workdir, model, cancel_event)
     state.supervisor.registry = LimitedClaude()
+
+    def no_plan(name):  # the other client isn't proven to be on a plan, so nothing switches by itself
+        raise ValueError('No API request or paid fallback was made.')
+    state.prospect_writer.subscription_status = no_plan
     client.put('/api/models/hub', json={'routes': {'writing': 'account:claude'}}).raise_for_status()
     state.prospector.search('dentists', 'Austin', 'Texas')
     smile = next(p for p in client.get('/api/prospects').json()['prospects'] if p['name'] == 'Smile Dental')
@@ -330,8 +334,8 @@ def subscription_setup(client, signed_in=('codex', 'claude')):  # noqa: F811
 def test_when_claude_runs_out_a_named_gpt_model_writes_on_the_subscription_with_no_api_key(client):  # noqa: F811
     state, calls, smile = subscription_setup(client)
     client.put('/api/models/hub', json={'routes': {'writing': 'account:claude'}}).raise_for_status()
-    refused = client.post(f"/api/prospects/{smile['id']}/opener")
-    assert refused.status_code == 400 and 'usage limit' in refused.json()['detail'] and 'Writing model' in refused.json()['detail']  # says where to switch
+    assert client.post(f"/api/prospects/{smile['id']}/opener").status_code == 200  # the other subscription took over by itself
+    assert [name for name, _ in calls] == ['claude', 'codex']
     choice = 'catalog:codex:gpt-6.1-sol'
     saved = client.put('/api/outreach', json={'writing_model': choice, 'subscription_only': True})
     assert saved.status_code == 200 and saved.json()['subscription_only'] is True and saved.json()['enabled'] is False  # saving never starts outreach

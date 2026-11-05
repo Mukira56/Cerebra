@@ -493,6 +493,32 @@ def save_offer(session, kind, changes):
     return current
 
 
+MODEL_NAMES = {"codex": "ChatGPT", "claude": "Claude"}
+OTHER_MODEL = {"codex": "claude", "claude": "codex"}
+LOG_LINE = re.compile(r"^\s*\d{4}-\d{2}-\d{2}T\S+\s+(ERROR|WARN|INFO|DEBUG)\b")
+
+
+def failure_kind(error):
+    """Why a model couldn't write: "limit", "network", or "" when it's something another model wouldn't fix."""
+    from .agents import OFFLINE_MARKERS
+    from .supervisor import OUT_OF_USAGE
+    text = str(error or "").lower()
+    if any(marker in text for marker in OUT_OF_USAGE):
+        return "limit"
+    return "network" if any(marker in text for marker in (*OFFLINE_MARKERS, "offline:", "timed out", "timeout")) else ""
+
+
+def plain_failure(provider, error):
+    """One sentence for the owner, in place of a model client's log lines."""
+    name, kind = MODEL_NAMES.get(provider, "Your model"), failure_kind(error)
+    if kind == "limit":
+        return f"{name} has reached its usage limit or needs signing in again."
+    if kind == "network":
+        return f"{name} couldn't be reached: the connection timed out."
+    lines = [line.strip() for line in str(error or "").splitlines() if line.strip() and not LOG_LINE.match(line)]
+    return (lines[0] if lines else "The model couldn't write it")[:300].rstrip()
+
+
 class Writer:
     """Drafts with the owner's selected API or CLI model, preserving the default writing route."""
 
@@ -553,9 +579,29 @@ class Writer:
         else:
             result = chat_for(getattr(self, "hub", None), "writing", self.registry_source, selected, prompt, workdir)
         if not result.success:
-            reason = str(result.error or "The model couldn't write it").rstrip()
-            raise ValueError(f"{reason} Choose another model under Prospects > Writing model, save, and try again.")
+            written = self._other_subscription(selected.get("provider"), result.error, prompt, workdir)
+            if written is not None:
+                return _json(written)
+            raise ValueError(f"{plain_failure(selected.get('provider'), result.error)} Choose another model under Prospects > Writing model, save, and try again.")
         return _json(result.output)
+
+    def _other_subscription(self, provider, error, prompt, workdir):
+        """When a limit or a timeout stops one subscription, the owner's other one writes instead. It must be proven to be a
+        real plan first: a client signed in with an API key would be paid usage, so it's never used. No proof, no switch."""
+        other = OTHER_MODEL.get(provider)
+        check = getattr(self, "subscription_status", None)
+        if other is None or check is None or not failure_kind(error):
+            return None
+        try:
+            check(other)
+        except (ValueError, OSError):
+            return None
+        result = self.registry_source().chat(other, prompt, str(workdir), "")
+        if not result.success:
+            return None
+        with self.db.Session.begin() as session:
+            session.add(Event(kind="prospects", message=f"{plain_failure(provider, error)} {MODEL_NAMES[other]} wrote this draft instead, on your subscription.", data={}))
+        return result.output
 
     def opener(self, prospect_id):
         self._claim(prospect_id)

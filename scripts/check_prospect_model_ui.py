@@ -19,6 +19,7 @@ class ProspectModel(FixtureRegistry):
     def chat(self,name,prompt,workdir,model="",cancel_event=None):
         calls.append(name)
         if name=="claude": return AgentResult(False,"",error="Claude usage limit reached")
+        if calls.count("codex")==1: return AgentResult(False,"",error="Codex usage limit reached")
         return AgentResult(True,json.dumps({"subject":"Fixture proposal","body":"Codex fixture draft about online booking."}))
 app.state.supervisor.registry=ProspectModel()
 app.state.prospect_writer.settings.live_enabled=True
