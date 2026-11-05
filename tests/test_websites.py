@@ -1,6 +1,7 @@
 """Finding the website of a business the map lists without one. A wrong match means emailing a stranger, so most tests here are refusals.
 Every website is simulated."""
 import httpx
+import pytest
 
 from ai_hq import prospects
 from ai_hq.models import Event, Prospect
@@ -233,3 +234,58 @@ def test_a_fresh_customers_emails_are_found_with_the_job_left_off(client):  # no
                              facts=[{"key": "no_booking", "text": "No online booking", "seen": "http://smile-dental.example"}]))
     state.outreach.research()
     assert next(item for item in client.get("/api/prospects").json()["prospects"] if item["id"] == "p1")["email"] == "hello@smile-dental.example"
+
+
+def looping(request):
+    """A parked domain: robots.txt, and everything else, redirects to itself."""
+    return httpx.Response(302, headers={"location": str(request.url)})
+
+
+def test_a_robots_file_that_redirects_forever_is_survived():
+    reader = prospects.Reader(httpx.Client(transport=httpx.MockTransport(looping)), resolve=lambda host: True)
+    with pytest.raises(prospects.Blocked, match="Too many redirects"):
+        reader.page("https://parked.test")
+
+
+def test_a_redirecting_robots_file_is_still_read():
+    def site(request):
+        if request.url.path == "/robots.txt" and request.url.host == "old.test":
+            return httpx.Response(301, headers={"location": "https://new.test/robots.txt"})
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow: /\n")
+        raise AssertionError("read a page robots.txt closed")
+
+    reader = prospects.Reader(httpx.Client(transport=httpx.MockTransport(site)), resolve=lambda host: True)
+    with pytest.raises(prospects.Blocked, match="robots.txt"):
+        reader.page("https://old.test/")
+
+
+def test_a_redirect_to_another_site_still_checks_that_sites_robots():
+    def site(request):
+        if request.url.host == "first.test":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n") if request.url.path == "/robots.txt" else httpx.Response(302, headers={"location": "https://second.test/"})
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nDisallow: /\n")
+        raise AssertionError("read a page robots.txt closed")
+
+    reader = prospects.Reader(httpx.Client(transport=httpx.MockTransport(site)), resolve=lambda host: True)
+    with pytest.raises(prospects.Blocked, match="robots.txt"):
+        reader.page("https://first.test/")
+
+
+def test_a_parked_domain_is_marked_as_tried_and_the_queue_moves_on(client):  # noqa: F811
+    robot, _ = finder(client, {})
+    client.app.state.prospector.reader = prospects.Reader(httpx.Client(transport=httpx.MockTransport(looping)), resolve=lambda host: True)
+    add(client, "p1", name="Mizu Noodle")
+    assert robot.tick()["checked"] == 1 and get(client, "p1").notes == NOT_FOUND
+
+
+def test_any_crash_in_research_leaves_the_run_and_the_replies_going(client):  # noqa: F811
+    state = outreach_on(client)
+
+    class Broken:
+        def tick(self, limit):
+            raise RecursionError("maximum recursion depth exceeded")
+
+    state.outreach.website_finder = Broken()
+    assert "state" in state.outreach.tick() and state.outreach.status["state"] != "error"

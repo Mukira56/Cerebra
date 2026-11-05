@@ -164,7 +164,7 @@ class Reader:
                 raise Blocked("The site's robots.txt asks robots not to read this page")
             response = self.client.get(url, headers={"User-Agent": USER_AGENT})
             if response.status_code in {301, 302, 303, 307, 308} and response.headers.get("location"):
-                url, check_robots = urljoin(url, response.headers["location"]), True
+                url = urljoin(url, response.headers["location"])  # robots.txt itself is fetched unchecked, even if it redirects
                 continue
             return response
         raise Blocked("Too many redirects")
@@ -224,7 +224,7 @@ class WebsiteFinder:
             for url in guesses(row.name, row.city):
                 try:
                     candidate = reader.page(url)
-                except (Blocked, httpx.HTTPError):
+                except Exception:  # noqa: BLE001 - these are guessed addresses: whatever one does, it's simply not their site
                     continue
                 finally:
                     time.sleep(pause)

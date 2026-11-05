@@ -407,8 +407,8 @@ class Outreach:
             self.find_missing_emails(limit=RESEARCH_PER_RUN)
             if self.website_finder is not None:
                 self.website_finder.tick(limit=RESEARCH_PER_RUN)
-        except (ValueError, OSError):
-            pass  # reading the web can wait for the next run: it must never stop the emails
+        except Exception as exc:  # noqa: BLE001 - reading the web can wait for the next run: it must never stop the emails or the replies
+            self._note(f"Business research paused until the next run: {type(exc).__name__}")
 
     def sent_today(self, session):
         since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
