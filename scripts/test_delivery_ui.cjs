@@ -43,6 +43,14 @@ const path = require('node:path');
     await page.getByRole('heading', {name: 'Keyword check', exact: true}).scrollIntoViewIfNeeded();
     await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'keyword-check.png')});
     await page.locator('#dialog-close').click();
+    await page.getByPlaceholder('mileage log book', {exact: true}).fill('mileage log book');
+    await page.getByPlaceholder('Mileage Log Book for Taxes | 12500 | 840 | 7.99 | 120').fill('Road Miles Tracker | 12500 | 840 | 7.99 | 120\nVehicle Mileage Record | 45000 | 60 | 8.99 | 110\nDriver Mileage Book | 80000 | 35 | 6.99 | 130');
+    await page.getByRole('button', {name: "Read what's selling", exact: true}).click();
+    await page.getByText('What the top books have in common', {exact: true}).waitFor();
+    await page.getByText('3 of 3 rank under 100,000', {exact: false}).waitFor();
+    await page.getByRole('button', {name: 'Make my own version', exact: true}).waitFor();
+    await page.getByText('What the top books have in common', {exact: true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path: path.join(process.env.AIHQ_SHOTS, 'market-panel.png')});
 
     await page.locator('[data-page="etsy"]').click();
     await page.getByText('wedding planner printable', {exact: true}).first().click();
@@ -96,6 +104,6 @@ const path = require('node:path');
     await page.locator('#toast').filter({hasText: 'GitHub connected.'}).waitFor({timeout: 15000});
     await page.getByText('sample-user', {exact: true}).first().waitFor();
     assert.deepEqual(errors, []);
-    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot; back up, choose, cancel; About you clears; GitHub page updates by itself: passed');
+    console.log('Paused notice -> resume clears it; build-up limit shows; KDP and Etsy checks name each weak spot; market reader plans a book; back up, choose, cancel; About you clears; GitHub page updates by itself: passed');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

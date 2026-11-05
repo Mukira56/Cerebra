@@ -1309,6 +1309,24 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         return notebook_maker.make(payload.get("theme"), str(payload.get("style") or "college"), str(payload.get("trim") or "6x9"), pages,
                                    str(payload.get("paper") or "white"))
 
+    @app.post("/api/books/blueprint")
+    def books_blueprint(payload: dict):
+        """What the top books in a niche have in common, from the facts the owner read on Amazon, and a plan for their own."""
+        from . import blueprint
+        return blueprint.analyze(payload.get("theme"), payload.get("books"))
+
+    @app.post("/api/books/blueprint/make")
+    def books_blueprint_make(payload: dict):
+        """The owner's own book on that plan: new pages, cover and listing, kept clear of the titles they listed."""
+        from . import blueprint
+        found = blueprint.analyze(payload.get("theme"), payload.get("books"))
+        plan = {**found["plan"], **{key: payload[key] for key in ("style", "trim", "pages", "paper") if payload.get(key)}}
+        try:
+            pages = int(plan["pages"])
+        except (TypeError, ValueError):
+            raise ValueError("Enter the number of pages")
+        return notebook_maker.make(found["theme"], str(plan["style"]), str(plan["trim"]), pages, str(plan["paper"]), avoid=found["titles"], market_price=found["price"])
+
     @app.post("/api/books/{book_id}/cover")
     def books_make_cover(book_id: str, payload: dict):
         """Draw the book's full-wrap cover again, in another palette or with the pen name on it."""

@@ -1879,6 +1879,25 @@
     wireForm(form, make, async () => { const made = await mutate(`/api/books/${encodeURIComponent(book.id)}/cover`, {palette: palette.value, author: author.value}); toast(`Cover saved: ${made.file}`); });
     return form;
   }
+  function marketPanel() {
+    const root = el("div"), form = el("form"), theme = input("mileage log book", ""), list = textarea("Mileage Log Book for Taxes | 12500 | 840 | 7.99 | 120", ""), read = submitButton("Read what's selling"), out = el("div");
+    list.rows = 5;
+    const show = found => {
+      const plan = found.plan, style = input("", plan.style), pages = input("120", plan.pages, "number");
+      style.hidden = true; pages.min = 24; pages.max = 828;
+      out.replaceChildren(el("h4", "", "What the top books have in common"), append(el("ul", "tips"), ...array(found.notes).map(item => el("li", "", item))),
+        array(found.common_words).length ? hint(`Words buyers keep seeing in titles: ${found.common_words.join(", ")}. Use them in your keywords, in your own phrasing.`) : null,
+        field("Pages in your book", pages),
+        actionsRow(button("Make my own version", () => act("Making your pages, cover and listing (about a minute)…", () => mutate("/api/books/blueprint/make", {theme: theme.value, books: list.value, pages: Number(pages.value || plan.pages)}, "POST", 300000))
+          .then(book => { if (book) { toast(array(book.listing?.checks).length ? "Made. Fix what the checks found before uploading." : "Your book is ready to check."); render(); notebookDialog(book); } }), "button primary")));
+    };
+    append(form, hint("Follow what buyers already want: the kind of book, its size, length and price. Your cover, words and pages stay your own, which is what keeps your KDP account safe."),
+      field("What the book is", theme),
+      actionsRow(button("Open the Amazon search", () => act("Opened Amazon in your browser.", () => mutate("/api/books/niche-check/amazon", {theme: theme.value})), "button small")),
+      field("The top books, one per line", list, "Title | Best Sellers Rank | reviews | price | pages. Read these from each book's Amazon page."), actionsRow(read));
+    wireForm(form, read, async () => show(await mutate("/api/books/blueprint", {theme: theme.value, books: list.value}, "POST")));
+    return append(root, form, out);
+  }
   function ebookPanel() {
     const root = el("div"), form = el("form"), brief = textarea("e.g. easy indoor gardening for beginners in small apartments", ""), go = submitButton("Plan the book"), list = el("div");
     brief.rows = 2;
@@ -1994,7 +2013,7 @@
           niches.length ? nicheList : body(empty("No niches yet", "Add a problem people already pay to fix. Check its trend on Google Trends and its competing books on Amazon.", null, "◎"))), null, niches.length),
         panel("Books", append(el("div"), body(append(el("div", "actions"), button("+ New book", () => bookDialog(null, state), "button primary"))),
           books.length ? bookList : body(empty("No books yet", "Start one from a niche you chose. Cerebra shows what each format earns before you write a word.", null, "▤"))), null, books.length));
-      const side = append(el("div"), panel("Write a Kindle eBook", body(ebookPanel())), panel("Books for every age group", body(collectionPanel())), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
+      const side = append(el("div"), panel("Learn from what's selling", body(marketPanel())), panel("Write a Kindle eBook", body(ebookPanel())), panel("Books for every age group", body(collectionPanel())), panel("Low-content interiors", body(interiorMaker())), panel("Start publishing", body(publishingChecklist(state))), panel("What a book earns", body(royaltyCalculator(state))),
         panel("How it works", body(hint("You pick a niche, Cerebra helps plan, write and check the book, and prepares the files and listing. KDP has no publishing API, so you upload and click Publish yourself, including Amazon's AI-content question. KDP allows 3 new titles a day."),
           el("p", "row-meta", `KDP's numbers were checked on ${state.checked} against its help pages: ${Object.values(state.sources).join(" · ")}`))));
       root.replaceChildren(stats, append(el("div", "grid two"), left, side));
