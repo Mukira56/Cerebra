@@ -420,12 +420,22 @@ def _json(text):
         raise ValueError("The model didn't return the expected format; try again") from None
 
 
+APP_NAME = "cerebra"
+
+
+def sender_name(session, settings):
+    """Who an email is signed by. Outreach comes from a person, so the app's own name in the business name box gives way to theirs."""
+    from . import owner
+    name = str(settings.get("business_name") or "").strip()
+    return (owner.load(session).get("name") or "") if name.lower() == APP_NAME else name
+
+
 def footer(session):
     """The sender's details and the opt-out line every US commercial email needs (CAN-SPAM). Missing pieces are named."""
     from . import gmail, money
     settings = money.settings(session)
     email = settings.get("email") or gmail.load(session).get("email", "")  # the Gmail the emails go out from, when no business email is set
-    lines = [line for line in (settings.get("business_name"), email, settings.get("phone")) if line]
+    lines = [line for line in (sender_name(session, settings), email, settings.get("phone")) if line]
     missing = [] if settings.get("address") else ["your postal address (US law requires it in every commercial email)"]
     if settings.get("address"):
         lines.append(settings["address"])

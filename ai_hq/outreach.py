@@ -351,9 +351,14 @@ class Outreach:
     def review_addresses(self):
         """Drafts waiting to be sent, checked again: an address that isn't the business's own is taken off, and the owner told."""
         removed = 0
+        from .money import settings as money_settings
+        from .prospects import sender_name
         with self.db.Session.begin() as session:
+            signer = sender_name(session, money_settings(session))
             for row in session.scalars(select(Outbox).where(Outbox.stage == "draft", Outbox.email != "")).all():
                 prospect = session.get(Prospect, row.prospect_id)
+                if prospect is not None and signer and prospect.opener:  # written before the signature was fixed
+                    prospect.opener = re.sub(r"(?im)^cerebra[ \t]*$", lambda _: signer, prospect.opener)
                 email = tidy_email(row.email)
                 if email and prospect is not None and belongs(email, prospect.website, prospect.name, prospect.city):
                     row.email = email
