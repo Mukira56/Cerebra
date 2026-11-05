@@ -137,7 +137,13 @@ OTHER_ROLE = re.compile(r"\b(lawyer|attorney|legal (expert|advisor|counsel)|para
                         r"recruiter|sales (rep|representative|manager|executive|agent)|head of (partnerships|sales|growth)|partnerships|"
                         r"business development|cold call(er|ing)|telemarket(er|ing)|appointment setter|"
                         r"translator|transcri(ber|ption)|voice ?over|voice actor|tutor|nurse|therapist|massage|"
-                        r"structural engineer|licensed (engineer|architect)|interior design(er)?|autocad|real estate agent)\b", re.I)
+                        r"structural engineer|licensed (engineer|architect)|interior design(er)?|autocad|real estate agent|"
+                        r"videographer|filmmaker|video (creator|editor|editing)|photographer|photo editing|ugc|"
+                        r"copywrit(er|ing)|article (writer|reviewer)|ghostwriter|localization|legal review|"
+                        r"(facebook|google|meta|tiktok) ads|ads specialist|media buyer|performance marketing|"
+                        r"social media (marketing|marketer|manager|strategy|growth|content))\b", re.I)
+# "Build a video editor app" or "Website for my lawyer" is the owner's work even though it names someone else's.
+BUILD_WORK = re.compile(r"\b(build|develop|developer|development|app|plugin|api|dashboard|crm|wordpress|shopify|website for)\b", re.I)
 UNREAL_FIXED, UNREAL_HOURLY = 25_000, 500  # USD: beyond this, a short post's budget is more likely a typo or bait than a real job
 TITLE_CAP = 35  # a job whose title names none of the owner's work stays below automatic bidding (40)
 FULL_TIME = re.compile(r"\b(full[- ]?time|permanent|salaried)\b", re.I)
@@ -159,7 +165,7 @@ def score(lead, settings, now_ts=None):
         return 0, ["doesn't match what you sell" if not matched else f"only mentions {', '.join(matched[:3])} in passing"]
     points, reasons = min(45, 12 * len(in_title) + 4 * len(set(in_body) - set(in_title))), [f"matches {', '.join(matched[:5])}"]
     role = OTHER_ROLE.search(lead["title"])
-    if role:
+    if role and not BUILD_WORK.search(lead["title"]) and not _hits([word.lower() for word in settings.get("keywords") or []], role.group(0).lower()):
         points -= 30
         reasons.append(f"asks for {role.group(0).lower()}, not what you sell")
     employment = str(lead.get("employment") or "")
@@ -237,7 +243,7 @@ def score(lead, settings, now_ts=None):
 
 # Raised whenever the scoring rules change, so leads saved under older rules are scored again once (not only when their
 # source happens to list them again). 4: other professions, title cap, re-posts, unrealistic budgets.
-SCORE_VERSION = 4
+SCORE_VERSION = 5
 SCORE_KEY = "freelance_score_version"
 
 
