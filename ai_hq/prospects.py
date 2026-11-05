@@ -403,12 +403,15 @@ class Writer:
         rules = settings(session)
         choice = rules['writing_model'] if rules['writing_model'] != 'auto' else rules['writing_provider']
         if choice == "auto":
-            return self._default_profile_for(session)
+            profile = self._default_profile_for(session)
+            return {**profile, 'prospect_override': True, 'subscription_only': True} if rules['subscription_only'] else profile
         if choice.startswith('api:'):
+            if rules['subscription_only']:
+                raise ValueError('API models cannot use your ChatGPT or Claude subscription')
             from .modelconnections import parse_choice
             provider, model = parse_choice(choice)
             return {'provider': provider, 'model': model, 'api_choice': choice, 'label': f'{provider} API - {model}'}
-        return {**get_profile(session, choice), "prospect_override": True}
+        return {**get_profile(session, choice), "prospect_override": True, 'subscription_only': rules['subscription_only']}
 
     def _claim(self, key):
         with self._lock:
@@ -431,6 +434,11 @@ class Writer:
             return _json(result.output)
         if not (self.settings.live_enabled and self.settings.cli_confinement_accepted):
             raise ValueError("Switch AI agents on in Settings first to use Codex or Claude Code")
+        if selected.get('subscription_only'):
+            check = getattr(self, 'subscription_status', None)
+            if check is None:
+                raise ValueError('Subscription sign-in verification is unavailable')
+            check(selected['provider'])
         workdir = self.settings.data_dir / "chat-workspace"
         workdir.mkdir(parents=True, exist_ok=True)
         from .modelhub import chat_for
@@ -439,7 +447,8 @@ class Writer:
         else:
             result = chat_for(getattr(self, "hub", None), "writing", self.registry_source, selected, prompt, workdir)
         if not result.success:
-            raise ValueError(result.error or "The model couldn't write it")
+            reason = str(result.error or "The model couldn't write it").rstrip()
+            raise ValueError(f"{reason} Choose another model under Prospects > Writing model, save, and try again.")
         return _json(result.output)
 
     def opener(self, prospect_id):

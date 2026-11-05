@@ -1576,6 +1576,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     model_connections = modelconnections.Connections(db)
     app.state.model_connections = model_connections
     prospect_writer.connections = model_connections
+    prospect_writer.subscription_status = integrations.require_subscription
     app.state.prospect_writer = prospect_writer
 
     @app.get('/api/prospects/models')
@@ -1584,7 +1585,9 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             rules = outreach_settings(session)
             selected = rules['writing_model'] if rules['writing_model'] != 'auto' else rules['writing_provider']
-            return {'connections': modelconnections.public(session), 'options': modelconnections.options(session), 'selected': selected}
+            return {'connections': modelconnections.public(session), 'options': modelconnections.options(session),
+                    'subscription_options': modelconnections.subscription_options(session),
+                    'subscription_only': rules['subscription_only'], 'selected': selected}
 
     @app.put('/api/prospects/models/connections/{provider}')
     def save_model_connection(provider: str, payload: dict):

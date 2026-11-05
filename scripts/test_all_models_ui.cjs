@@ -12,6 +12,7 @@ const path = require('node:path');
     await page.locator('[data-page="prospects"]').click();
     const picker = page.getByLabel('Model for prospect drafts');
     await picker.waitFor();
+    await page.getByLabel('Advanced: use separately billed API models').check();
     assert.equal(await picker.locator('option[value="catalog:claude:sonnet"]').count(), 1);
     assert.equal(await picker.locator('option[value="catalog:codex:gpt-cli-fixture"]').count(), 1);
     for (const [name, key, option] of [['OpenAI API', 'fixture-openai-key', 'api:openai:gpt-api-fixture'], ['Anthropic API', 'fixture-anthropic-key', 'api:anthropic:claude-api-fixture']]) {

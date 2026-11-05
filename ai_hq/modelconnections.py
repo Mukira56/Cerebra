@@ -126,6 +126,34 @@ def options(session):
     return result
 
 
+def subscription_options(session):
+    """Model names via official clients, without offering API connections as sign-ins."""
+    from .catalog import catalog
+    from .profiles import list_profiles
+    groups = {'codex': 'ChatGPT / OpenAI subscription', 'claude': 'Claude subscription'}
+    result = [{'id': 'auto', 'label': 'My default subscription model', 'group': 'Default'}]
+    for profile in list_profiles(session):
+        provider = profile['provider']
+        if provider in groups:
+            label = profile['label']
+            if profile['id'] in groups:
+                label = 'ChatGPT plan default' if provider == 'codex' else 'Claude plan default'
+            result.append({'id': profile['id'], 'label': label, 'group': groups[provider]})
+    for provider, entries in catalog().items():
+        if provider == 'codex' and not any(item['model'] for item in entries):
+            # Known choices before the official client populates its catalog; access is unverified.
+            entries = [{'model': model, 'label': label} for model, label in (
+                ('gpt-6.1-sol', 'GPT-6.1-Sol'), ('gpt-6-astra', 'GPT-6-Astra'),
+                ('gpt-6.1-terra', 'GPT-6.1 Terra'), ('gpt-6-sol', 'GPT-6-Sol'),
+                ('gpt-6-luna', 'GPT-6-Luna'), ('gpt-5.6-sol', 'GPT-5.6-Sol'),
+                ('gpt-5.6-terra', 'GPT-5.6-Terra'), ('gpt-5.6-luna', 'GPT-5.6-Luna'))]
+        for item in entries:
+            if item['model']:
+                result.append({'id': f"catalog:{provider}:{item['model']}", 'label': item['label'],
+                               'group': groups[provider]})
+    return result
+
+
 class Connections:
     def __init__(self, db, client=None):
         self.db = db

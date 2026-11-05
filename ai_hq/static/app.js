@@ -1422,15 +1422,19 @@
   }
   function prospectWriterPanel() {
     const root = el("div");
+    let advancedMode = null;
     async function loadModels() {
       const state = await api("/api/prospects/models");
       const form = el("form"), save = submitButton("Save writing model");
       const picker = el("select"), search = input("Search model names…"), custom = check("Use a custom model ID", false);
       let chosen = state.selected || "auto";
+      if (advancedMode === null) advancedMode = chosen.startsWith("api:");
+      if (!advancedMode && chosen.startsWith("api:")) chosen = "auto";
+      const advanced = check("Advanced: use separately billed API models", advancedMode);
       function fillModels() {
         const groups = new Map(), query = search.value.trim().toLowerCase();
         picker.replaceChildren();
-        const choices = [...array(state.options)];
+        const choices = [...array(advancedMode ? state.options : state.subscription_options)];
         if (!choices.some(item => item.id === chosen)) choices.push({id: chosen, label: `${chosen} (saved model)`, group: "Saved choice"});
         choices.filter(item => item.id === chosen || !query || `${item.label} ${item.id} ${item.group}`.toLowerCase().includes(query)).forEach(item => {
           if (!groups.has(item.group)) { const group = el("optgroup"); group.label = item.group; groups.set(item.group, group); picker.append(group); }
@@ -1442,20 +1446,24 @@
       fillModels();
       search.addEventListener("input", fillModels);
       picker.addEventListener("change", () => { chosen = picker.value; });
-      const customProvider = select([["api:openai", "OpenAI API"], ["api:anthropic", "Anthropic API"], ["catalog:codex", "Codex CLI"], ["catalog:claude", "Claude Code CLI"]], "api:openai");
+      const customProvider = select(advancedMode ? [["api:openai", "OpenAI API"], ["api:anthropic", "Anthropic API"], ["catalog:codex", "ChatGPT subscription"], ["catalog:claude", "Claude subscription"]] : [["catalog:codex", "ChatGPT subscription"], ["catalog:claude", "Claude subscription"]], advancedMode ? "api:openai" : "catalog:codex");
       const customId = input("Exact model ID supplied by your provider");
       const customFields = append(el("div", "form-grid hidden"), field("Connection for custom model", customProvider), field("Custom model ID", customId));
       custom.control.addEventListener("change", () => { customFields.classList.toggle("hidden", !custom.control.checked); customId.required = custom.control.checked; });
       append(form, field("Search models", search), field("Model for prospect drafts", picker), custom.wrap, customFields,
-        hint("Choose an individual OpenAI or Anthropic API model, a Codex model, or a Claude Code model. API choices use the keys below and provider API billing; CLI choices use Models & sign-in. Only text-capable models can write emails. Save and retry a stopped draft. This applies to first emails, offers, follow-ups and replies."),
-        actionsRow(save, button("Connect / refresh API models", () => { connections.open = true; connections.scrollIntoView({block: "start"}); }, "button"), link("Models & sign-in →", "models")));
+        hint(advancedMode ? "API models require separate keys and billing. Turn Advanced off to use only your subscriptions." : "Choose the GPT or Claude model by name. Uses your existing ChatGPT or Claude subscription through the signed-in official Codex or Claude Code client. No API keys and no automatic API fallback. Model availability and usage limits depend on your plan; this does not unlock every ChatGPT website mode."),
+        !advancedMode ? hint("OpenAI names use the client's local catalog, with known choices shown if it is empty. Claude families are known choices. Neither list verifies your account's access. Use a custom model ID for a newer model your client supports.") : null,
+        hint("Applies to first emails, offers, follow-ups and replies. Save and retry a stopped draft. Saving does not turn on outreach or send email."),
+        actionsRow(save, link("Models & sign-in →", "models")), advanced.wrap);
+      advanced.control.addEventListener("change", () => { advancedMode = advanced.control.checked; loadModels().catch(issue => toast(issue.message, true)); });
       wireForm(form, save, async () => {
         const choice = custom.control.checked ? `${customProvider.value}:${customId.value.trim()}` : picker.value;
-        await mutate("/api/outreach", {writing_model: choice}, "PUT");
+        await mutate("/api/outreach", {writing_model: choice, subscription_only: !advancedMode}, "PUT");
         toast("Prospect writing model saved. Retry any draft that stopped.");
         await loadModels();
       });
       const connections = el("details");
+      connections.classList.toggle("hidden", !advancedMode);
       connections.append(el("summary", "", "OpenAI and Anthropic API connections"),
         hint("Connect each provider with its own API key, then refresh its model list. API usage is billed by that provider separately from CLI sign-ins. Keys are protected by this computer and never returned to the page. Catalog refresh does not generate content."));
       Object.entries(state.connections || {}).forEach(([id, connection]) => {

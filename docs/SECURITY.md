@@ -1,5 +1,9 @@
 # Security boundaries
 
+## Subscription model selection (0.74.13)
+
+Prospects' primary picker saves a subscription-only preference. Named models and the default selection then bypass the global API hub. The official client's read-only authentication status must confirm ChatGPT or Claude.ai sign-in before generation; API-key or unknown authentication fails closed. Cerebra does not inspect or copy subscription credentials. Model catalogs are choices, not proof of entitlement. The optional Advanced API mode preserves existing separately billed connections. Saving either mode does not enable outreach or send email. Older saved preferences retain their behavior until explicitly saved in subscription-only mode.
+
 ## Direct model connections (0.74.12)
 
 Prospects can use an explicitly selected OpenAI or Anthropic API model as well as individual Codex/Claude Code models. API keys are supplied by the owner, protected through vault.py, and never returned by connection or catalog endpoints. An optional Anthropic workspace ID is non-secret configuration. HTTP destinations are fixed to api.openai.com and api.anthropic.com; redirects do not forward credentials. Catalog refreshes list models only. Generation sends the selected prospect brief/profile context to the chosen provider and uses that provider's API billing; API keys and CLI subscription sign-ins are separate connections. API-only text drafting does not grant or require CLI filesystem execution permissions. Codex/Claude Code drafting still requires the existing live-agent policy.

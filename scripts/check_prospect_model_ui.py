@@ -12,6 +12,8 @@ sys.path.insert(0,str(Path.cwd()/"tests"))
 from fakes import FixtureRegistry
 from ai_hq.agents import AgentResult
 from ai_hq.models import Prospect
+from ai_hq import catalog
+catalog.catalog=lambda: {"codex":[{"model":"gpt-subscription-fixture","label":"GPT subscription fixture"}],"claude":[{"model":"sonnet","label":"Claude Sonnet"}]}
 calls=[]
 class ProspectModel(FixtureRegistry):
     def chat(self,name,prompt,workdir,model="",cancel_event=None):
@@ -21,6 +23,7 @@ class ProspectModel(FixtureRegistry):
 app.state.supervisor.registry=ProspectModel()
 app.state.prospect_writer.settings.live_enabled=True
 app.state.prospect_writer.settings.cli_confinement_accepted=True
+app.state.prospect_writer.subscription_status=lambda name: True
 with app.state.db.Session.begin() as session:
     session.add(Prospect(id="fixture-dental",name="Fixture Dental",kind="dentists",city="Austin",state="Texas",status="kept",facts=[{"key":"no_booking","text":"No online booking","seen":"https://fixture.example"}]))
 @app.get("/fixture-provider-calls")

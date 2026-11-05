@@ -30,7 +30,7 @@ from .models import Event, Metadata, Prospect, ProspectSearch, now
 
 KEY, DO_NOT_CONTACT = "outreach_settings", "outreach_do_not_contact"
 MAX_PER_DAY, PER_RUN = 40, 3  # a run sends at most a few, so emails are spread through the day
-DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "writing_provider": "auto", "writing_model": "auto"}
+DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "writing_provider": "auto", "writing_model": "auto", "subscription_only": False}
 MODES = ("draft", "send")
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 NOT_AN_INBOX = re.compile(r"\.(png|jpe?g|gif|svg|webp)$|example\.|sentry|wixpress|godaddy|domain\.com|email\.com|yourname|@2x", re.I)
@@ -66,6 +66,10 @@ def settings(session):
 def save_settings(session, changes):
     from .prospects import KINDS
     value = settings(session)
+    if "subscription_only" in changes:
+        if type(changes["subscription_only"]) is not bool:
+            raise ValueError("Subscription-only must be true or false")
+        value["subscription_only"] = changes["subscription_only"]
     if "writing_provider" in changes:
         if changes["writing_provider"] not in ("auto", "claude", "codex"):
             raise ValueError("Choose your default writing model, Claude, or ChatGPT (Codex)")
@@ -75,6 +79,8 @@ def save_settings(session, changes):
         from .modelconnections import validate_choice
         value["writing_model"] = validate_choice(session, changes["writing_model"])
         value["writing_provider"] = "auto"
+    if value["subscription_only"] and value["writing_model"].startswith("api:"):
+        raise ValueError("Choose a subscription model; API models cannot use your ChatGPT or Claude subscription")
     if "enabled" in changes:
         value["enabled"] = changes["enabled"] is True
     if "mode" in changes:

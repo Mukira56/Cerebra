@@ -153,6 +153,18 @@ class Integrations:
         status["detail"] = "Signed in" if status.get("signed_in") else "Not signed in. Press Sign in."
         return {key: redact(value) if isinstance(value, str) else value for key, value in status.items()}
 
+    def require_subscription(self, name):
+        """Check the client's own status, never its stored credentials or tokens."""
+        status = self.sign_in_status(name)
+        method = str(status.get('method') or '').lower()
+        subscription = (name == 'codex' and 'logged in using chatgpt' in method) or (
+            name == 'claude' and method == 'claude.ai')
+        if not status.get('signed_in') or not subscription:
+            label = 'ChatGPT through Codex' if name == 'codex' else 'Claude through Claude Code'
+            raise ValueError(f'Sign in to {label} with your subscription in Models & sign-in, or choose another model '
+                             'under Prospects > Writing model. No API request or paid fallback was made.')
+        return True
+
     # ---- toolchain -------------------------------------------------------------------------
     def tools(self, refresh=False):
         stamp, cached = self._tools_cache

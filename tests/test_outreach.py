@@ -302,3 +302,71 @@ def test_prospects_use_the_gmail_from_business_connections_and_say_when_it_cant_
         row = session.get(Metadata, "gmail_oauth")
         row.value = {**row.value, "can_send": True}
     assert client.get("/api/outreach").json()["sender"]["can_send"] is True
+
+
+def subscription_setup(client, signed_in=('codex', 'claude')):  # noqa: F811
+    """Claude is out of usage; the sign-in check answers from `signed_in`, as the official clients would."""
+    state = setup(client)
+    calls = []
+
+    class LimitedClaude(Model):
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            calls.append((name, model))
+            if name == 'claude':
+                return AgentResult(False, '', error='Claude usage limit reached.')
+            return super().chat(name, prompt, workdir, model, cancel_event)
+
+    def check(name):
+        if name not in signed_in:
+            raise ValueError(f'Sign in to {name} with your subscription')
+        return True
+    state.supervisor.registry = LimitedClaude()
+    state.prospect_writer.subscription_status = check
+    state.prospector.search('dentists', 'Austin', 'Texas')
+    smile = next(p for p in client.get('/api/prospects').json()['prospects'] if p['name'] == 'Smile Dental')
+    return state, calls, smile
+
+
+def test_when_claude_runs_out_a_named_gpt_model_writes_on_the_subscription_with_no_api_key(client):  # noqa: F811
+    state, calls, smile = subscription_setup(client)
+    client.put('/api/models/hub', json={'routes': {'writing': 'account:claude'}}).raise_for_status()
+    refused = client.post(f"/api/prospects/{smile['id']}/opener")
+    assert refused.status_code == 400 and 'usage limit' in refused.json()['detail'] and 'Writing model' in refused.json()['detail']  # says where to switch
+    choice = 'catalog:codex:gpt-6.1-sol'
+    saved = client.put('/api/outreach', json={'writing_model': choice, 'subscription_only': True})
+    assert saved.status_code == 200 and saved.json()['subscription_only'] is True and saved.json()['enabled'] is False  # saving never starts outreach
+    assert client.post(f"/api/prospects/{smile['id']}/opener").status_code == 200
+    assert calls[-1] == ('codex', 'gpt-6.1-sol')  # that exact model, through the signed-in client
+    assert client.get('/api/prospects/models').json()['selected'] == choice
+    assert client.get('/api/models/hub').json()['routes']['writing'] == 'account:claude'  # other work keeps its own route
+
+
+def test_subscription_choices_list_gpt_and_claude_models_and_no_api_models(client):  # noqa: F811
+    setup(client)
+    data = client.get('/api/prospects/models').json()
+    ids = [item['id'] for item in data['subscription_options']]
+    groups = {item['group'] for item in data['subscription_options']}
+    assert {'ChatGPT / OpenAI subscription', 'Claude subscription'} <= groups
+    assert any(item.startswith('catalog:codex:') for item in ids) and any(item.startswith('catalog:claude:') for item in ids)
+    assert not any(item.startswith('api:') for item in ids)
+
+
+def test_subscription_only_refuses_api_models_and_a_client_not_signed_in_to_a_subscription(client):  # noqa: F811
+    state, calls, smile = subscription_setup(client, signed_in=('claude',))
+    assert client.put('/api/outreach', json={'writing_model': 'api:openai:gpt-6.1-sol', 'subscription_only': True}).status_code == 400
+    client.put('/api/outreach', json={'writing_model': 'catalog:codex:gpt-6.1-sol', 'subscription_only': True}).raise_for_status()
+    refused = client.post(f"/api/prospects/{smile['id']}/opener")
+    assert refused.status_code == 400 and 'Sign in' in refused.json()['detail'] and calls == []  # checked first: no model was called
+
+
+def test_only_a_chatgpt_or_claude_ai_sign_in_counts_as_a_subscription(client):  # noqa: F811
+    import pytest
+    integrations = client.app.state.integrations
+    answers = {'codex': {'signed_in': True, 'method': 'Logged in using ChatGPT'}, 'claude': {'signed_in': True, 'method': 'claude.ai'}}
+    integrations.sign_in_status = lambda name: answers[name]
+    assert integrations.require_subscription('codex') and integrations.require_subscription('claude')
+    for name, status in (('codex', {'signed_in': True, 'method': 'Logged in using an API key'}), ('claude', {'signed_in': True, 'method': 'api_key'}),
+                         ('claude', {'signed_in': False, 'method': 'claude.ai'}), ('codex', {'signed_in': True})):
+        answers[name] = status
+        with pytest.raises(ValueError, match='No API request'):
+            integrations.require_subscription(name)
