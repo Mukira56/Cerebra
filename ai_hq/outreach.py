@@ -25,6 +25,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote, urljoin, urlparse
 
+import httpx
 from sqlalchemy import select
 
 from . import deliverability
@@ -453,6 +454,8 @@ class Outreach:
             return {**self._note(message), "sent": sent, "drafted": drafted, "replies": replies, "searched": searched}
         except ValueError as exc:  # a Gmail or model problem: stop this round, say why, never retry blindly
             return self._note(f"Stopped: {exc}", "error")
+        except httpx.HTTPError:  # no internet for a moment: nothing is lost, and the next run carries on
+            return self._note("Couldn't reach the internet. Cerebra tries again on the next run.", "error")
         finally:
             self._lock.release()
 
@@ -648,7 +651,8 @@ class Outreach:
         from .prospects import KINDS
         today = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         with self.db.Session() as session:
-            made_today = sum(1 for row in session.scalars(select(Outbox).where(Outbox.stage == "draft")).all() if row.created_at >= today)
+            # Emails written, not addresses found: each one uses the owner's model, and an address is found long before it's written.
+            made_today = len(session.scalars(select(Prospect.id).where(Prospect.opener != "", Prospect.status == "kept", Prospect.updated_at >= today)).all())
             room = min(room, rules["per_day"] - made_today)
             done = set(session.scalars(select(Outbox.prospect_id).where(Outbox.stage.notin_(["draft"]))).all())
             kinds = rules["kinds"] or list(KINDS)
