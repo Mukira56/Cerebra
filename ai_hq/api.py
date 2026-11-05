@@ -1693,6 +1693,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             return outreach_module.sent(session)
 
+    @app.post("/api/outreach/resume")
+    def outreach_resume():
+        return outreach.resume()
+
     @app.post("/api/outreach/run")
     def outreach_run():
         return outreach.tick()

@@ -15,7 +15,8 @@ Each run (every 15 minutes, by the Chief of Staff scheduler):
      line (required by US law: nothing is sent without the postal address);
    - when nobody is left to write to, the next search runs (the owner's kinds of business and cities, in turn).
 Every email is recorded on the business with what was sent and when. Nothing is retried blindly: a Gmail error stops the
-round and is shown. Never more than MAX_PER_DAY a day, so the owner's Gmail stays in good standing.
+round and is shown. Never more than MAX_PER_DAY a day, so the owner's Gmail stays in good standing; domains that can't
+receive mail are skipped and too many bounces pause automatic sending (ai_hq/deliverability.py).
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ from urllib.parse import urljoin, urlparse
 
 from sqlalchemy import select
 
+from . import deliverability
 from .models import Event, Metadata, Prospect, ProspectSearch, now
 
 KEY, DO_NOT_CONTACT = "outreach_settings", "outreach_do_not_contact"
@@ -214,6 +216,7 @@ class Outreach:
         self.db, self.settings, self.gmail, self.writer, self.finder, self.notifier = db, settings_, gmail, writer, finder, notifier
         self.clock = clock or (lambda: datetime.now().astimezone())
         self.status = {"state": "idle", "message": "", "at": ""}
+        self.mail_check = deliverability.MailCheck()
         self._lock = threading.Lock()
 
     def _note(self, message, state="idle"):
@@ -257,6 +260,8 @@ class Outreach:
         subject, body = subject[len("subject:"):].strip()[:150], body.strip()
         if not subject or len(body) < 20:
             raise ValueError("Write a subject and a message")
+        if not self.mail_check.can_receive(to):
+            raise ValueError(f"{to.split('@', 1)[1]} can't receive email, so this would bounce. Check the address.")
         from .prospects import footer
         with self.db.Session.begin() as session:
             problems = self.can_send(session)
@@ -324,6 +329,24 @@ class Outreach:
             time.sleep(getattr(self.finder, "pause", 1.1))
         return {"checked": len(missing), "found": found} if missing else {"skipped": "every business has been checked"}
 
+    def _set_aside(self, prospect_id, email):
+        """True when this address's domain can't receive mail: the business is skipped before any model time is spent on it."""
+        if self.mail_check.can_receive(email):
+            return False
+        with self.db.Session.begin() as session:
+            row = session.scalars(select(Outbox).where(Outbox.prospect_id == prospect_id, Outbox.stage == "draft")).first() or Outbox(prospect_id=prospect_id)
+            row.email, row.stage = email, "skipped"
+            session.add(row)
+            name = session.get(Prospect, prospect_id).name
+            session.add(Event(kind="prospects", message=f"Skipped {name}: {email} can't receive email", data={"prospect": prospect_id}))
+        return True
+
+    def resume(self):
+        with self.db.Session.begin() as session:
+            deliverability.resume(session)
+            session.add(Event(kind="prospects", message="Automatic sending resumed", data={}))
+        return self._note("Automatic sending resumed.")
+
     def sent_today(self, session):
         since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         return sum(1 for row in session.scalars(select(Outbox)).all() for item in row.emails or [] if item.get("at", "") >= since)
@@ -343,6 +366,17 @@ class Outreach:
             replies = self.check_replies() if waiting else 0
             with self.db.Session() as session:
                 room = min(PER_RUN, rules["per_day"] - self.sent_today(session))
+            with self.db.Session.begin() as session:
+                health = deliverability.health(session)
+                tell = health["paused"] and deliverability.first_notice(session)
+                if tell:
+                    session.add(Event(kind="prospects", message=f"Automatic sending paused: {health['reason']}", data={}))
+            if tell and self.notifier:
+                self.notifier.send("Automatic emails paused", health["reason"] + " Check the addresses, then resume on the Prospects page.", tags="warning")
+            if health["paused"]:
+                drafted = self.drafts(PER_RUN, rules) if rules["enabled"] and rules["mode"] == "draft" else 0
+                return {**self._note(f"Paused: {health['reason']} Resume on this page when you've checked the addresses.", "waiting"),
+                        "paused": True, "sent": 0, "drafted": drafted, "replies": replies}
             if room <= 0:
                 return {**self._note(f"Today's {rules['per_day']} emails are sent; more tomorrow."), "replies": replies}
             sent = self.follow_up(room, rules)
@@ -511,12 +545,16 @@ class Outreach:
             with self.db.Session() as session:
                 draft = session.scalars(select(Outbox).where(Outbox.prospect_id == prospect_id, Outbox.stage == "draft")).first()
                 draft_email, opener = (draft.email if draft else ""), session.get(Prospect, prospect_id).opener
+            if draft_email and self._set_aside(prospect_id, draft_email):
+                continue
             if draft_email:
                 result = self.send_one(prospect_id, draft_email, opener if opener.lower().startswith("subject:") else
                                        self.writer.opener(prospect_id)["opener"], follow_up=True)  # enabled automatic outreach has its own follow-up policy
                 sent += bool(result)
                 continue
             email = find_email(reader, website)
+            if email and email not in stop["emails"] and self._set_aside(prospect_id, email):
+                continue
             with self.db.Session.begin() as session:
                 if not email:
                     remember_email(session, prospect_id, "")
@@ -557,8 +595,9 @@ class Outreach:
         for prospect_id in candidates[:max(0, room) * 4]:
             if made >= room:
                 break
-            if not self.lookup_email(prospect_id)["email"]:
-                continue  # remembered as having no public email
+            email = self.lookup_email(prospect_id)["email"]
+            if not email or self._set_aside(prospect_id, email):
+                continue  # no public email (remembered), or its domain can't receive mail
             self.writer.opener(prospect_id)
             made += 1
         return made
@@ -627,7 +666,7 @@ class Outreach:
         mail = gmail_module.public(gmail_module.load(session))
         return {"settings": settings(session), "ready": self.ready(session), "can_send": self.can_send(session), "status": dict(self.status), "counts": counts,
                 "sender": {"configured": mail["configured"], "connected": mail["connected"], "email": mail["email"], "can_send": mail["can_send"]},
-                "sent_today": self.sent_today(session), "max_per_day": MAX_PER_DAY,
+                "sent_today": self.sent_today(session), "max_per_day": MAX_PER_DAY, "health": deliverability.health(session),
                 "recent": [{"id": row.id, "prospect_id": row.prospect_id, "name": names.get(row.prospect_id, ""), "email": row.email, "stage": row.stage,
                             "emails": len(row.emails or []), "next_at": row.next_at, "reply": row.reply or {}, "updated_at": row.updated_at}
                            for row in rows if row.stage not in {"no_email", "skipped", "draft"}][:50],

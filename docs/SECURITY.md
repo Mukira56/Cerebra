@@ -10,6 +10,10 @@ Prospects can use an explicitly selected OpenAI or Anthropic API model as well a
 
 Saving a model or key does not enable outreach or send an email. An explicitly selected API model overrides the global writing route only for Prospects. There is no automatic paid retry or provider fallback after a failed generation request. Partial/invalid drafts are not saved over an existing draft. Usage events record token counts when returned, with monetary cost unknown rather than labelled free. Fresh customer installations have no API keys or inherited model catalogs.
 
+## Outreach delivery checks (0.74.14)
+
+Before an outreach email is written or sent, the recipient's domain name is looked up over DNS-over-HTTPS at cloudflare-dns.com to see whether it can receive mail. Only the business's domain is sent: never the full address, the email or anything about the owner. If the lookup fails, sending goes on as normal.
+
 ## Business connections (0.9.0)
 
 Optional Etsy/Printify/image/Gmail/notification secrets use the Windows account's DPAPI through vault.py; on macOS the login Keychain and on Linux the Secret Service (`secret-tool`, secret on stdin) hold the secret, and the database keeps only a `keychain:` reference. Without a secret store, saving fails rather than storing plain text. APIs return saved/checked flags, never plaintext secrets. Service destinations are fixed for Etsy, Printify, Google and OpenAI; the user explicitly configures an HTTPS ntfy server. No application server access logging records OAuth callback query strings. Gmail callback bypasses the cross-site navigation check only on its exact GET route and still requires a single-use, expiring OAuth state and PKCE. All other API session/origin/CSRF rules remain.
