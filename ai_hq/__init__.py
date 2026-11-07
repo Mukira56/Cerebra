@@ -1,2 +1,2 @@
 """AI Development Headquarters. No model calls occur on import."""
-__version__ = "0.74.22"
+__version__ = "0.74.23"
