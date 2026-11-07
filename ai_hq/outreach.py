@@ -33,6 +33,7 @@ from .models import Event, Metadata, Prospect, ProspectSearch, now
 
 KEY, DO_NOT_CONTACT = "outreach_settings", "outreach_do_not_contact"
 MAX_PER_DAY, PER_RUN = 40, 3  # a run sends at most a few, so emails are spread through the day
+REST_AFTER_LIMIT = timedelta(minutes=30)  # usage limits last hours: asking again every run only spends what comes back
 RESEARCH_PER_RUN = 3  # businesses looked up per run: about 300 a day, and a run stays quick
 DEFAULTS = {"enabled": False, "mode": "draft", "per_day": 10, "follow_up_days": [4, 7], "places": [], "kinds": [], "writing_provider": "auto", "writing_model": "auto", "subscription_only": False}
 MODES = ("draft", "send")
@@ -249,6 +250,7 @@ class Outreach:
         self.status = {"state": "idle", "message": "", "at": ""}
         self.mail_check = deliverability.MailCheck()
         self.website_finder = None
+        self.rest_until, self.rest_reason = None, ""  # writing waits after a usage limit; replies are still read
         self._lock = threading.Lock()
 
     def _note(self, message, state="idle"):
@@ -428,6 +430,11 @@ class Outreach:
                 return self._note("Waiting for you: " + "; ".join(problems), "waiting")
             replies = self.check_replies() if waiting else 0
             self.review_addresses()
+            if self.rest_until and datetime.now(timezone.utc) < self.rest_until:
+                when = self.rest_until.astimezone()
+                return {**self._note(f"Writing waits until {when:%I:%M %p}".replace(" 0", " ").lstrip("0") + f" after a usage limit. {self.rest_reason} Replies are still read.", "waiting"),
+                        "replies": replies, "resting": True}
+            self.rest_until = None
             if rules["enabled"]:
                 self.research()
             with self.db.Session() as session:
@@ -458,6 +465,9 @@ class Outreach:
                 (f"; searched {searched}" if searched else "")
             return {**self._note(message), "sent": sent, "drafted": drafted, "replies": replies, "searched": searched}
         except ValueError as exc:  # a Gmail or model problem: stop this round, say why, never retry blindly
+            from .prospects import failure_kind
+            if failure_kind(str(exc)) == "limit":
+                self.rest_until, self.rest_reason = datetime.now(timezone.utc) + REST_AFTER_LIMIT, str(exc).split(" Choose another model")[0]
             return self._note(f"Stopped: {exc}", "error")
         except httpx.HTTPError:  # no internet for a moment: nothing is lost, and the next run carries on
             return self._note("Couldn't reach the internet. Cerebra tries again on the next run.", "error")

@@ -589,29 +589,33 @@ class Writer:
         else:
             result = chat_for(getattr(self, "hub", None), "writing", self.registry_source, selected, prompt, workdir)
         if not result.success:
-            written = self._other_subscription(selected.get("provider"), result.error, prompt, workdir)
+            written, why_not = self._other_subscription(selected.get("provider"), result.error, prompt, workdir)
             if written is not None:
                 return _json(written)
-            raise ValueError(f"{plain_failure(selected.get('provider'), result.error)} Choose another model under Prospects > Writing model, save, and try again.")
+            raise ValueError(" ".join(part for part in (plain_failure(selected.get("provider"), result.error), why_not,
+                                                        "Choose another model under Prospects > Writing model, save, and try again.") if part))
         return _json(result.output)
 
     def _other_subscription(self, provider, error, prompt, workdir):
         """When a limit or a timeout stops one subscription, the owner's other one writes instead. It must be proven to be a
-        real plan first: a client signed in with an API key would be paid usage, so it's never used. No proof, no switch."""
+        real plan first: a client signed in with an API key would be paid usage, so it's never used. No proof, no switch.
+        Returns (what it wrote, or None) and, when it couldn't, why: the owner needs to know which of the two to fix."""
         other = OTHER_MODEL.get(provider)
         check = getattr(self, "subscription_status", None)
         if other is None or check is None or not failure_kind(error):
-            return None
+            return None, ""
+        name = MODEL_NAMES[other]
         try:
             check(other)
-        except (ValueError, OSError):
-            return None
+        except (ValueError, OSError) as exc:
+            first = str(exc).split(". ")[0].rstrip(".")
+            return None, f"{name} couldn't take over because it isn't confirmed as signed in with your subscription ({first})."
         result = self.registry_source().chat(other, prompt, str(workdir), "")
         if not result.success:
-            return None
+            return None, f"{name} couldn't take over either: {plain_failure(other, result.error)}"
         with self.db.Session.begin() as session:
-            session.add(Event(kind="prospects", message=f"{plain_failure(provider, error)} {MODEL_NAMES[other]} wrote this draft instead, on your subscription.", data={}))
-        return result.output
+            session.add(Event(kind="prospects", message=f"{plain_failure(provider, error)} {name} wrote this draft instead, on your subscription.", data={}))
+        return result.output, ""
 
     def opener(self, prospect_id):
         self._claim(prospect_id)

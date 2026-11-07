@@ -89,6 +89,41 @@ def test_when_both_are_out_it_says_so_plainly_and_tries_each_once(client):  # no
     answer = draft(client, smile)
     assert answer.status_code == 400 and [name for name, _ in calls] == ["codex", "claude"]
     assert "ERROR" not in answer.json()["detail"] and "usage limit" in answer.json()["detail"]
+    assert "Claude couldn't take over either: Claude has reached its usage limit" in answer.json()["detail"]  # the owner knows both are out
+
+
+def test_a_switch_that_cant_happen_says_why(client):  # noqa: F811
+    _, calls, _, smile = prepared(client, {"codex": "usage limit"}, signed_in=("codex",))
+    detail = draft(client, smile).json()["detail"]
+    assert "Claude couldn't take over because it isn't confirmed as signed in with your subscription (No API request or paid fallback was made)" in detail
+
+
+def test_after_a_limit_writing_rests_but_replies_are_still_read(client):  # noqa: F811
+    from datetime import datetime, timedelta, timezone
+    state, calls, _, smile = prepared(client, {"codex": "usage limit", "claude": "usage limit"})
+    client.put("/api/outreach", json={"enabled": True, "mode": "draft", "per_day": 5, "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["dentists"]}).raise_for_status()
+    replies = []
+    state.outreach.check_replies = lambda: replies.append(1) or 0
+    from ai_hq.models import Outbox
+    with state.db.Session.begin() as session:  # a follow-up is due, as it was on the owner's machine: it needs a model
+        session.add(Outbox(prospect_id=smile["id"], email="x@y.example", stage="sent", thread_id="t1", next_at="2026-11-05T00:00:00+00:00",
+                           emails=[{"at": "2026-11-01T00:00:00+00:00", "subject": "Online booking", "body": "Hello, a short note.", "message_id": "<m1>"}]))
+    first = state.outreach.tick()
+    assert first["state"] == "error" and "usage limit" in first["message"]
+    asked = len(calls)
+    second = state.outreach.tick()
+    assert second.get("resting") is True and len(calls) == asked and len(replies) == 2  # no model asked, replies still read
+    assert "after a usage limit" in second["message"] and "Replies are still read" in second["message"] and "couldn't take over either" in second["message"]
+    state.outreach.rest_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+    state.outreach.tick()
+    assert len(calls) > asked  # it tries again once the rest is over
+
+
+def test_a_timeout_does_not_make_it_rest(client):  # noqa: F811
+    state, _, _, _ = prepared(client, {"codex": "connection timed out", "claude": "connection timed out"})
+    client.put("/api/outreach", json={"enabled": True, "mode": "draft", "per_day": 5, "places": [{"city": "Austin", "state": "Texas"}], "kinds": ["dentists"]}).raise_for_status()
+    state.outreach.tick()
+    assert state.outreach.rest_until is None  # a network blip is worth retrying on the next run
 
 
 def test_a_named_model_that_works_is_used_with_no_switch(client):  # noqa: F811
