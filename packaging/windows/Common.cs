@@ -9,7 +9,7 @@ using Microsoft.Win32;
 
 internal static class Shared {
     internal const string AppId = "AIDevelopmentHQ";
-    internal const string Version = "0.74.26";
+    internal const string Version = "0.74.27";
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIDevelopmentHQ";
     // Keep existing install identities for upgrades; fresh installs use product-named folders.
     internal const string Product = "Cerebra";

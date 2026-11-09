@@ -18,7 +18,7 @@ import tomllib
 from release_privacy import audit, copy_app, copy_dependencies
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.74.26'
+VERSION='0.74.27'
 PUBLIC_DOCS={'ARCHITECTURE.md','SECURITY.md','USER_GUIDE.md','WINDOWS_INSTALLER.md'}
 
 TRACE_MODULES=['ai_hq.api','ai_hq.manage','ai_hq.doctor','ai_hq.telemetry','ai_hq.gitops','ai_hq.agents','ai_hq.supervisor','ai_hq.processes',
