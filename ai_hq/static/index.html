@@ -1,65 +1,73 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light" data-size="normal">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0a0e13">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#1b5fd0">
   <title>Cerebra · Development command center</title>
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/comfort.css">
   <script src="/static/factory.js" defer></script>
   <script src="/static/system.js" defer></script>
   <script src="/static/guides.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
-<body>
+<body class="simple-menu" data-section="home">
   <div class="shell">
-    <aside class="sidebar" aria-label="Main navigation">
-      <a class="brand" href="#overview" aria-label="Cerebra overview"><img class="brand-mark" src="/static/logo.svg" alt="" width="34" height="34"><span><strong>Cerebra</strong><small>AI ENGINEERING BRAIN</small></span></a>
+    <aside class="sidebar" aria-label="Main menu">
+      <a class="brand" href="#overview" aria-label="Cerebra home"><img class="brand-mark" src="/static/logo.svg" alt="" width="34" height="34"><span><strong>Cerebra</strong><small>Your business helper</small></span></a>
       <nav id="navigation">
-        <p class="nav-caption">WORKSPACE</p>
-        <a class="nav-link" href="#overview" data-page="overview"><span class="nav-icon" aria-hidden="true">~</span>Overview</a>
-        <a class="nav-link" href="#chief" data-page="chief"><span class="nav-icon" aria-hidden="true">◈</span>Chief of Staff</a>
-        <a class="nav-link" href="#chat" data-page="chat"><span class="nav-icon" aria-hidden="true">&gt;_</span>Support</a>
-        <p class="nav-caption">EARN</p>
-        <a class="nav-link" href="#freelance" data-page="freelance"><span class="nav-icon" aria-hidden="true">⌕</span>Freelance</a>
-        <a class="nav-link" href="#prospects" data-page="prospects"><span class="nav-icon" aria-hidden="true">⌖</span>Prospects</a>
-        <a class="nav-link" href="#partners" data-page="partners"><span class="nav-icon" aria-hidden="true">✉</span>Company pitches</a>
-        <a class="nav-link" href="#books" data-page="books"><span class="nav-icon" aria-hidden="true">▤</span>Books</a>
-        <a class="nav-link" href="#etsy" data-page="etsy"><span class="nav-icon" aria-hidden="true">✿</span>Etsy</a>
-        <a class="nav-link" href="#marketing" data-page="marketing"><span class="nav-icon" aria-hidden="true">✎</span>Marketing</a>
-        <a class="nav-link" href="#funding" data-page="funding"><span class="nav-icon" aria-hidden="true">◆</span>Funding</a>
-        <a class="nav-link" href="#money" data-page="money"><span class="nav-icon" aria-hidden="true">¤</span>Money</a>
-        <p class="nav-caption">BUILD</p>
-        <a class="nav-link" href="#business" data-page="business"><span class="nav-icon" aria-hidden="true">$</span>Business Studio</a>
-        <a class="nav-link" href="#tasks" data-page="tasks"><span class="nav-icon" aria-hidden="true">#</span>Tasks</a>
-        <a class="nav-link" href="#projects" data-page="projects"><span class="nav-icon" aria-hidden="true">{}</span>Projects<span id="project-count" class="nav-count">0</span></a>
-        <a class="nav-link" href="#approvals" data-page="approvals"><span class="nav-icon" aria-hidden="true">✓</span>Approvals<span id="approval-count" class="nav-count attention hidden">0</span></a>
-        <a class="nav-link" href="#council" data-page="council"><span class="nav-icon" aria-hidden="true">⇄</span>Council</a>
-        <p class="nav-caption">INSIGHT</p>
-        <a class="nav-link" href="#system" data-page="system"><span class="nav-icon" aria-hidden="true">⌬</span>System view</a>
-        <a class="nav-link" href="#reports" data-page="reports"><span class="nav-icon" aria-hidden="true">¶</span>Reports</a>
-        <a class="nav-link" href="#activity" data-page="activity"><span class="nav-icon" aria-hidden="true">≡</span>Activity log</a>
-        <p class="nav-caption">SETUP</p>
-        <a class="nav-link" href="#connections" data-page="connections"><span class="nav-icon" aria-hidden="true">↔</span>Business connections</a>
-        <a class="nav-link" href="#models" data-page="models"><span class="nav-icon" aria-hidden="true">◇</span>Models &amp; sign-in</a>
-        <a class="nav-link" href="#github" data-page="github"><span class="nav-icon" aria-hidden="true">⑂</span>GitHub</a>
-        <a class="nav-link" href="#toolchain" data-page="toolchain"><span class="nav-icon" aria-hidden="true">⚒</span>Toolchain</a>
+        <p class="nav-caption">Home</p>
+        <a class="nav-link" href="#overview" data-page="overview"><span class="nav-icon" aria-hidden="true">⌂</span>Home</a>
+        <a class="nav-link" href="#approvals" data-page="approvals"><span class="nav-icon" aria-hidden="true">✓</span>Waiting for my OK<span id="approval-count" class="nav-count attention hidden">0</span></a>
+        <a class="nav-link" href="#chat" data-page="chat"><span class="nav-icon" aria-hidden="true">?</span>Ask for help</a>
+        <a class="nav-link advanced" href="#chief" data-page="chief"><span class="nav-icon" aria-hidden="true">◈</span>Goals &amp; helpers</a>
+        <p class="nav-caption">Make money</p>
+        <a class="nav-link" href="#partners" data-page="partners"><span class="nav-icon" aria-hidden="true">✉</span>Pitch companies</a>
+        <a class="nav-link" href="#freelance" data-page="freelance"><span class="nav-icon" aria-hidden="true">⌕</span>Find work</a>
+        <a class="nav-link" href="#money" data-page="money"><span class="nav-icon" aria-hidden="true">$</span>Money &amp; invoices</a>
+        <a class="nav-link" href="#books" data-page="books"><span class="nav-icon" aria-hidden="true">▤</span>Write books</a>
+        <a class="nav-link" href="#etsy" data-page="etsy"><span class="nav-icon" aria-hidden="true">✿</span>Sell on Etsy</a>
+        <a class="nav-link advanced" href="#prospects" data-page="prospects"><span class="nav-icon" aria-hidden="true">⌖</span>Local customers</a>
+        <a class="nav-link advanced" href="#marketing" data-page="marketing"><span class="nav-icon" aria-hidden="true">✎</span>Social media posts</a>
+        <a class="nav-link advanced" href="#funding" data-page="funding"><span class="nav-icon" aria-hidden="true">◆</span>Grants &amp; credits</a>
+        <p class="nav-caption advanced">Build software</p>
+        <a class="nav-link advanced" href="#business" data-page="business"><span class="nav-icon" aria-hidden="true">▣</span>Client work</a>
+        <a class="nav-link advanced" href="#tasks" data-page="tasks"><span class="nav-icon" aria-hidden="true">#</span>Coding tasks</a>
+        <a class="nav-link advanced" href="#projects" data-page="projects"><span class="nav-icon" aria-hidden="true">{}</span>Projects<span id="project-count" class="nav-count">0</span></a>
+        <a class="nav-link advanced" href="#council" data-page="council"><span class="nav-icon" aria-hidden="true">⇄</span>AI discussion</a>
+        <p class="nav-caption advanced">What happened</p>
+        <a class="nav-link advanced" href="#reports" data-page="reports"><span class="nav-icon" aria-hidden="true">¶</span>Reports</a>
+        <a class="nav-link advanced" href="#activity" data-page="activity"><span class="nav-icon" aria-hidden="true">≡</span>History</a>
+        <a class="nav-link advanced" href="#system" data-page="system"><span class="nav-icon" aria-hidden="true">⌬</span>Live view</a>
+        <p class="nav-caption">Settings &amp; accounts</p>
+        <a class="nav-link" href="#connections" data-page="connections"><span class="nav-icon" aria-hidden="true">↔</span>Connected accounts</a>
+        <a class="nav-link advanced" href="#models" data-page="models"><span class="nav-icon" aria-hidden="true">◇</span>AI accounts</a>
+        <a class="nav-link advanced" href="#github" data-page="github"><span class="nav-icon" aria-hidden="true">⑂</span>GitHub</a>
+        <a class="nav-link advanced" href="#toolchain" data-page="toolchain"><span class="nav-icon" aria-hidden="true">⚒</span>Install tools</a>
         <a class="nav-link" href="#settings" data-page="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</a>
+        <button id="menu-switch" class="button small ghost menu-switch" type="button">Show all pages</button>
       </nav>
-      <div class="sidebar-bottom"><div>● 127.0.0.1 · private</div><div id="version-label">Cerebra</div></div>
+      <div class="comfort-controls" aria-label="How Cerebra looks">
+        <span class="label">Text size</span>
+        <div class="comfort-row"><button type="button" data-comfort="size:normal" aria-label="Normal text">A</button><button type="button" data-comfort="size:large" aria-label="Large text" class="size-large">A+</button><button type="button" data-comfort="size:huge" aria-label="Largest text" class="size-huge">A++</button></div>
+        <span class="label">Colours</span>
+        <div class="comfort-row"><button type="button" data-comfort="theme:light">Light</button><button type="button" data-comfort="theme:dark">Dark</button></div>
+      </div>
+      <div class="sidebar-bottom"><div>Runs on this computer only</div><div id="version-label">Cerebra</div></div>
     </aside>
     <div class="main-shell">
       <header class="topbar">
-        <div class="path">~/cerebra/<strong id="breadcrumb-title">overview</strong></div>
-        <div class="topbar-right"><a id="update-status" class="pill hidden" href="#settings" title="Update download — open Settings › Updates"></a><span id="agents-status" class="pill">agents: …</span><span id="connection-status" class="pill"><span class="dot"></span>Connecting</span></div>
+        <div class="path">Cerebra › <strong id="breadcrumb-title">Home</strong></div>
+        <div class="topbar-right"><a id="update-status" class="pill hidden" href="#settings" title="Update download — open Settings › Updates"></a><span id="agents-status" class="pill">AI helpers: …</span><span id="connection-status" class="pill"><span class="dot"></span>Connecting</span></div>
       </header>
       <main id="main" tabindex="-1">
-        <div class="page-heading"><div><div class="eyebrow" id="page-eyebrow">WORKSPACE</div><h1 id="page-title">Overview</h1><p id="page-subtitle"></p></div><div id="heading-actions" class="heading-actions"></div></div>
+        <div class="page-heading"><div><div class="eyebrow" id="page-eyebrow">HOME</div><h1 id="page-title">Home</h1><p id="page-subtitle"></p></div><div id="heading-actions" class="heading-actions"></div></div>
         <div id="global-notice" class="notice hidden" role="status"></div>
         <div id="page-content" aria-live="polite"></div>
-        <footer class="footer"><span>Local workspace · AI work uses your own Codex / Claude accounts</span><span id="footer-permission">You approve every step</span></footer>
+        <footer class="footer"><span>Everything stays on this computer · AI work uses your own accounts</span><span id="footer-permission">You approve every step</span></footer>
       </main>
     </div>
   </div>

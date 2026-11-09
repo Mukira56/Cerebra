@@ -7,7 +7,7 @@ using System.Windows.Forms;
 using System.Reflection;
 
 [assembly: AssemblyTitle("Cerebra")]
-[assembly: AssemblyVersion("0.74.29.0")]
+[assembly: AssemblyVersion("0.74.30.0")]
 [assembly: AssemblyDescription("Local AI development headquarters")]
 
 internal static class Launcher {

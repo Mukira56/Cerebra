@@ -76,9 +76,9 @@ internal sealed class DesktopWindow : Form {
     }
     internal async Task SmokeCheck() {
         for(int attempt=0;attempt<100;attempt++) {
-            string connected=await view.CoreWebView2.ExecuteScriptAsync("document.querySelector('#connection-status')?.textContent || ''");
-            if(connected.Contains("Local connection")) {
-                string result=await view.CoreWebView2.ExecuteScriptAsync("JSON.stringify({title:document.title,logo:!!document.querySelector('.brand-mark')?.naturalWidth,authenticated:document.querySelector('#connection-status').textContent.includes('Local connection'),native:true})");
+            string connected=await view.CoreWebView2.ExecuteScriptAsync("document.querySelector('#connection-status.good') ? 'connected' : ''");
+            if(connected.Contains("connected")) {
+                string result=await view.CoreWebView2.ExecuteScriptAsync("JSON.stringify({title:document.title,logo:!!document.querySelector('.brand-mark')?.naturalWidth,authenticated:!!document.querySelector('#connection-status.good'),native:true})");
                 var decoded=Shared.Json.Deserialize<string>(result);
                 var proof=Shared.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(decoded);
                 if(!Convert.ToBoolean(proof["logo"]) || !Convert.ToBoolean(proof["authenticated"])) throw new Exception("Native window did not load the authenticated workspace.");

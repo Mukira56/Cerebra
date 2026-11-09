@@ -15,11 +15,26 @@ const path = require('node:path');
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
     await page.goto(process.env.AIHQ_URL);
-    await page.getByText('Local connection', {exact: true}).waitFor();
+    await page.getByText('Connected', {exact: true}).waitFor();
+    // The simple menu shows the everyday pages; the rest are one click away.
+    assert.equal(await page.locator('[data-page="projects"]').isVisible(), false, 'Coding pages wait behind Show all pages');
+    await page.getByText('What would you like to do today?', {exact: true}).waitFor();
+    assert.equal(await page.locator('.home-tile').count(), 8, 'Home has a big button for each everyday job');
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light', 'Light colours by default');
+    await page.locator('[data-comfort="size:huge"]').click();
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).fontSize), '20px', 'The largest text size applies');
+    await page.locator('[data-comfort="size:normal"]').click();
+    await page.locator('[data-comfort="theme:dark"]').click();
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark', 'Dark colours on request');
+    if (shots) await page.screenshot({path: path.join(shots, 'home-dark.png')});
+    await page.locator('[data-comfort="theme:light"]').click();
+    await page.locator('#menu-switch').click();
+    assert.equal(await page.locator('[data-page="projects"]').isVisible(), true, 'Show all pages reveals the rest');
+    await page.getByText('Get started', {exact: true}).waitFor();  // the coding steps show once all pages are shown
     const shot = async name => { if (shots) await page.screenshot({path: path.join(shots, `${name}.png`), fullPage: false}); };
     assert.equal(await page.locator('.brand-mark').evaluate(node => node.complete && node.naturalWidth > 0), true);
     assert.equal(await page.getByText(/mock|demo/i).count(), 0, 'No demo or mock wording on the overview');
-    await page.getByText('Get started', {exact: true}).waitFor();
+
     await shot('overview-empty');
 
     // Add a project through the form.
@@ -295,7 +310,7 @@ const path = require('node:path');
     const phone = await mobile.newPage(); phone.on('pageerror', error => errors.push('mobile: ' + error.message));
     const cookies = await context.cookies(); await mobile.addCookies(cookies);
     await phone.goto(process.env.AIHQ_URL.split('#')[0] + '#overview');
-    await phone.getByText('Local connection', {exact: true}).waitFor();
+    await phone.getByText('Connected', {exact: true}).waitFor();
     if (shots) await phone.screenshot({path: path.join(shots, 'mobile.png')});
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));

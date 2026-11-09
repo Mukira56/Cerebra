@@ -10,33 +10,55 @@
   }
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
-    overview: ["WORKSPACE", "Overview", "Everything happening in Cerebra, at a glance."],
-    chat: ["WORKSPACE", "Support", "Ask about a project or task, or have Cerebra plan, create and start the work."],
-    council: ["BUILD", "Council", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
-    marketing: ["EARN", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
-    chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
-    prospects: ["EARN", "Prospects", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
-    partners: ["EARN", "Company pitches", "Offer your service to companies by email from your Gmail: Cerebra finds AI and language companies, reads each one's own website for its public role address and application pages, and sends your pitch within your daily number. Forms are yours to fill in."],
-    funding: ["EARN", "Funding", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
-    etsy: ["EARN", "Etsy", "Find what sells on Etsy and how crowded it is, from Etsy's own public listings: demand, competition, prices and the tags top sellers use. Nothing is written to Etsy."],
-    books: ["EARN", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
-    freelance: ["EARN", "Freelance", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
-    money: ["EARN", "Money", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
-    business: ["BUILD", "Business Studio", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
-    connections: ["SETUP", "Business connections", "Connect your own accounts. Secrets stay protected by this computer's own secret store; external work needs your confirmation."],
+    overview: ["WORKSPACE", "Home", "Everything happening in Cerebra, at a glance."],
+    chat: ["WORKSPACE", "Ask for help", "Ask about a project or task, or have Cerebra plan, create and start the work."],
+    council: ["BUILD", "AI discussion", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
+    marketing: ["EARN", "Social media posts", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
+    chief: ["WORKSPACE", "Goals & helpers", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
+    prospects: ["EARN", "Local customers", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
+    partners: ["EARN", "Pitch companies", "Offer your service to companies by email from your Gmail: Cerebra finds AI and language companies, reads each one's own website for its public role address and application pages, and sends your pitch within your daily number. Forms are yours to fill in."],
+    funding: ["EARN", "Grants & credits", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
+    etsy: ["EARN", "Sell on Etsy", "Find what sells on Etsy and how crowded it is, from Etsy's own public listings: demand, competition, prices and the tags top sellers use. Nothing is written to Etsy."],
+    books: ["EARN", "Write books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
+    freelance: ["EARN", "Find work", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
+    money: ["EARN", "Money & invoices", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
+    business: ["BUILD", "Client work", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
+    connections: ["SETUP", "Connected accounts", "Connect your own accounts. Secrets stay protected by this computer's own secret store; external work needs your confirmation."],
     job: ["BUILD", "Business result", ""],
-    tasks: ["BUILD", "Tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
+    tasks: ["BUILD", "Coding tasks", "Describe what to build. AI plans it, writes it, tests it and checks it; you approve."],
     projects: ["BUILD", "Projects", "Repositories Cerebra is allowed to work in."],
-    approvals: ["BUILD", "Approvals", "Nothing important happens without your yes."],
-    system: ["INSIGHT", "Factory floor", "A live blueprint of your AI development factory. Inspect a building or a person to see its recorded work."],
+    approvals: ["WORKSPACE", "Waiting for my OK", "Nothing important happens without your yes."],
+    system: ["INSIGHT", "Live view", "A live blueprint of your AI development factory. Inspect a building or a person to see its recorded work."],
     reports: ["INSIGHT", "Reports", "What happened in each task, explained in plain words."],
     report: ["INSIGHT", "Task report", ""],
-    activity: ["INSIGHT", "Activity log", "Every decision the supervisor recorded."],
-    models: ["SETUP", "Models & sign-in", "Sign in to your AI accounts, choose models, and add more."],
+    activity: ["INSIGHT", "History", "Every decision the supervisor recorded."],
+    models: ["SETUP", "AI accounts", "Sign in to your AI accounts, choose models, and add more."],
     github: ["SETUP", "GitHub", "Connect your GitHub account to clone, publish and push projects."],
-    toolchain: ["SETUP", "Toolchain", "The tools a software engineer needs, checked and installable in one place."],
+    toolchain: ["SETUP", "Install tools", "The tools a software engineer needs, checked and installable in one place."],
     settings: ["SETUP", "Settings", "Agent permissions, limits, and where your data lives."]
   };
+  // Each kind of work has its own section name and colour (comfort.css): Home blue, Make money green, Build purple,
+  // What happened teal, Settings slate.
+  const SECTIONS = {WORKSPACE: ["home", "HOME"], EARN: ["earn", "MAKE MONEY"], BUILD: ["build", "BUILD SOFTWARE"], INSIGHT: ["insight", "WHAT HAPPENED"], SETUP: ["setup", "SETTINGS & ACCOUNTS"]};
+  // Comfort settings for this viewer: theme, text size and the simple menu (kept in this browser only).
+  const comfort = {theme: "light", size: "normal", simple: true};
+  try { Object.assign(comfort, JSON.parse(localStorage.getItem("cerebra-comfort") || "{}")); } catch { /* private window: the defaults */ }
+  function applyComfort() {
+    document.documentElement.dataset.theme = comfort.theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.size = ["large", "huge"].includes(comfort.size) ? comfort.size : "normal";
+    document.body.classList.toggle("simple-menu", comfort.simple !== false);
+    const meta = document.querySelector('meta[name="color-scheme"]'); if (meta) meta.content = comfort.theme === "dark" ? "dark" : "light";
+    document.querySelectorAll("[data-comfort]").forEach(node => { const [key, value] = node.dataset.comfort.split(":"); node.setAttribute("aria-pressed", String(String(comfort[key]) === value)); });
+    const toggle = document.getElementById("menu-switch"); if (toggle) toggle.textContent = comfort.simple !== false ? "Show all pages" : "Show fewer pages";
+  }
+  function setComfort(key, value) {
+    comfort[key] = value; try { localStorage.setItem("cerebra-comfort", JSON.stringify(comfort)); } catch { /* not kept */ }
+    applyComfort(); if (key === "simple" && data) render();  // Home shows or hides the coding steps
+  }
+  const simpleMenu = () => comfort.simple !== false;
+  applyComfort();
+  document.querySelectorAll("[data-comfort]").forEach(node => node.addEventListener("click", () => { const [key, value] = node.dataset.comfort.split(":"); setComfort(key, value); }));
+  document.getElementById("menu-switch")?.addEventListener("click", () => setComfort("simple", comfort.simple === false));
   const PROVIDER_ICON = {codex: "◇", claude: "✳", copilot: "⧉", gemini: "✦"};
   const ACTIVE = ["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"];
   let csrf = "", data = null, page = "overview", param = "", lastFingerprint = "", fetching = null, toastTimer = 0;
@@ -130,11 +152,13 @@
   // ---------- chrome ----------
   function heading() {
     const [eyebrow, title, subtitle] = pages[page];
-    $("#page-eyebrow").textContent = eyebrow; $("#page-title").textContent = title; $("#page-subtitle").textContent = subtitle;
-    $("#breadcrumb-title").textContent = param ? `${page}/${param.slice(0, 8)}` : page;
+    const [section, sectionName] = SECTIONS[eyebrow] || ["home", eyebrow];
+    document.body.dataset.section = section;
+    $("#page-eyebrow").textContent = sectionName; $("#page-title").textContent = title; $("#page-subtitle").textContent = subtitle;
+    $("#breadcrumb-title").textContent = title;
     document.querySelectorAll("[data-page]").forEach(node => node.classList.toggle("active", node.dataset.page === page || (page === "report" && node.dataset.page === "reports") || (page === "job" && node.dataset.page === "business")));
     const actions = $("#heading-actions"); actions.replaceChildren();
-    if (["overview", "tasks"].includes(page)) actions.append(button("+ New task", () => taskForm(), "button primary"));
+    if (page === "tasks" || (page === "overview" && !simpleMenu())) actions.append(button("+ New task", () => taskForm(), "button primary"));
     if (page === "projects") actions.append(button("+ Add project", () => projectForm(), "button primary"));
     if (page === "business") actions.append(button("+ New business job", () => businessForm(), "button primary"));
     if (page === "job") actions.append(button("← Business Studio", () => { location.hash = "business"; }, "button ghost"));
@@ -145,7 +169,7 @@
     if (!data) return;
     $("#project-count").textContent = array(data.projects).length;
     const count = pendingApprovals().length; $("#approval-count").textContent = count; $("#approval-count").classList.toggle("hidden", !count);
-    const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "away mode" : "agents on") : "agents off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
+    const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "AI helpers: away mode" : "AI helpers: on") : "AI helpers: off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
     $("#version-label").textContent = `Cerebra v${data.version || ""}`;
     // The taskbar shows the window title: say when something needs the owner, is running, or failed.
     const waitingCount = pendingApprovals().length + finishedTasks().length, workingCount = realTasks().filter(task => ACTIVE.includes(task.state)).length, failedCount = realTasks().filter(task => task.state === "FAILED" && !task.finished).length;
@@ -183,8 +207,8 @@
       el("p", "welcome-note", "Personal details are optional. Sharing and automation start off."));
     const routes = el("div", "welcome-routes");
     [["01", "Projects", "Add a folder when you’re ready to build.", "projects"],
-     ["02", "Models & sign-in", "Connect the AI tools you choose.", "models"],
-     ["03", "Business connections", "Use your own services and accounts.", "connections"]].forEach(([number, title, description, destination]) => {
+     ["02", "AI accounts", "Connect the AI tools you choose.", "models"],
+     ["03", "Connected accounts", "Use your own services and accounts.", "connections"]].forEach(([number, title, description, destination]) => {
       const item = link("", destination, "welcome-route");
       append(item, el("span", "welcome-number", number), append(el("span"), el("strong", "", title), el("small", "", description)), el("span", "welcome-arrow", "→"));
       routes.append(item);
@@ -279,10 +303,33 @@
     if (!events.length) return body(empty("Your activity starts here", "Task updates and approvals appear here as you use your workspace.", null, "≡"));
     const list = el("div", "trace"); events.slice(0, limit).forEach(event => list.append(append(el("div"), el("time", "", date(event.created_at)), el("span", "k", event.kind), el("span", "", event.message)))); return list;
   }
+  // The big buttons at the top of Home: the everyday jobs, one click each.
+  function homeTiles() {
+    const waiting = pendingApprovals().length + finishedTasks().length;
+    const tiles = [
+      ["waiting", "✓", "Waiting for my OK", waiting ? "Things to look at and approve" : "Nothing is waiting for you", "approvals", waiting],
+      ["earn", "✉", "Pitch companies", "Email companies about your services", "partners"],
+      ["earn", "⌕", "Find work", "Paid jobs that match your skills", "freelance"],
+      ["earn", "$", "Money & invoices", "Quotes, invoices and what you've earned", "money"],
+      ["earn", "▤", "Write books", "Books for Amazon KDP", "books"],
+      ["earn", "✿", "Sell on Etsy", "What sells, and listings to make", "etsy"],
+      ["home", "?", "Ask for help", "Ask Cerebra anything in plain words", "chat"],
+      ["setup", "⚙", "Settings", "Accounts, text size and updates", "settings"],
+    ];
+    const box = el("div", "home-tiles");
+    tiles.forEach(([kind, icon, title, note, destination, count]) => {
+      const tile = link("", destination, `home-tile ${kind}`);
+      append(tile, el("span", "tile-icon", icon), append(el("span"), el("strong", "", title), el("span", "tile-note", note)), count ? el("span", "tile-count", count) : null);
+      tile.setAttribute("aria-label", `${title}: ${note}`);
+      box.append(tile);
+    });
+    return append(el("section"), el("h2", "home-question", "What would you like to do today?"), box);
+  }
   function overview() {
     const node = el("div"), tasks = realTasks(), active = tasks.filter(task => ACTIVE.includes(task.state)), setup = setupChecklist();
+    node.append(homeTiles());
     if (data.onboarding?.needs_setup && !data.onboarding.existing_workspace) node.append(customerWelcome(data.onboarding));
-    if (!setup.complete) node.append(panel("Get started", body(el("p", "row-meta", "These steps apply when you want Cerebra to run a coding task. You can use other workspace tools before completing them."), setup.list)));
+    if (!setup.complete && !simpleMenu()) node.append(panel("Get started", body(el("p", "row-meta", "These steps apply when you want Cerebra to run a coding task. You can use other workspace tools before completing them."), setup.list)));
     // Tasks paused because Cerebra closed or stopped, or waiting for an AI model with usage left.
     const stopped = tasks.filter(task => task.state === "BLOCKED" && ["paused_on_close", "interrupted_restart"].includes(task.results?.blocked_reason));
     const noUsage = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_usage");
@@ -3446,6 +3493,20 @@
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
   }
+  // Text size, colours and the menu, the same switches as the side menu, where anyone looks for them first.
+  function appearancePanel() {
+    const choice = (label, key, value) => {
+      const node = button(label, () => { setComfort(key, value); render(); }, "button");
+      node.setAttribute("aria-pressed", String(String(comfort[key]) === String(value)));
+      if (String(comfort[key]) === String(value)) node.classList.add("primary");
+      return node;
+    };
+    return panel("How Cerebra looks", body(
+      el("p", "", "Make the writing bigger, or choose light or dark colours. Your choice is remembered."),
+      el("h4", "", "Text size"), actionsRow(choice("Normal", "size", "normal"), choice("Large", "size", "large"), choice("Largest", "size", "huge")),
+      el("h4", "", "Colours"), actionsRow(choice("Light", "theme", "light"), choice("Dark", "theme", "dark")),
+      el("h4", "", "Menu"), actionsRow(choice("Everyday pages only", "simple", true), choice("All pages, including coding tools", "simple", false))));
+  }
   function settingsView() {
     const values = data.settings || {}, root = el("div");
     const permissions = el("form"), usage = check("I understand the AI agents run on my own accounts and can use my plan's usage or credits."), reads = check("I understand the agents can read files outside the project folder with my Windows permissions (they can only write inside it).");
@@ -3458,7 +3519,8 @@
       const on = submitButton("Switch agents on"); permissions.append(actionsRow(on));
       wireForm(permissions, on, async () => { if (!usage.control.checked || !reads.control.checked) throw new Error("Tick both boxes to switch agents on."); await mutate("/api/permissions", {enabled: true, acknowledge_provider_usage: true, acknowledge_residual_read_risk: true}); await refresh(true); toast("AI agents switched on."); });
     }
-    root.append(panel("Agent permissions", body(permissions)));
+    root.append(appearancePanel());
+    root.append(panel("AI helpers: permission to work", body(permissions)));
     root.append(panel("Readiness check", body(readinessPanel())));
     root.append(panel("Full access — let agents control this laptop", body(fullAccessForm())));
     root.append(panel("About you — so the AI team can use your real details", body(ownerForm())));
@@ -3557,10 +3619,10 @@
     let done; fetching = new Promise(resolve => { done = resolve; });
     try {
       const next = await api("/api/overview"), fingerprint = JSON.stringify(next); data = next;
-      const status = $("#connection-status"); status.className = "pill good"; status.replaceChildren(el("span", "dot"), document.createTextNode("Local connection")); notice("");
+      const status = $("#connection-status"); status.className = "pill good"; status.replaceChildren(el("span", "dot"), document.createTextNode("Connected")); notice("");
       if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "projects", "approvals", "reports", "activity"].includes(page) || force) render(); else chrome(); if (page === "system" && !force) paintTeamBar(); }
       if (detailTaskId && dialog.open) await taskDetail(detailTaskId, true);
-    } catch (issue) { const status = $("#connection-status"); status.className = "pill bad"; status.replaceChildren(el("span", "dot"), document.createTextNode("Disconnected")); notice(`Local connection unavailable. ${issue.message}`, true); }
+    } catch (issue) { const status = $("#connection-status"); status.className = "pill bad"; status.replaceChildren(el("span", "dot"), document.createTextNode("Not connected")); notice(`Cerebra isn't answering right now. Close it and open it again. (${issue.message})`, true); }
     finally { fetching = null; done(); }
   }
   function route() { const [name, ...rest] = location.hash.slice(1).split("/"); page = Object.hasOwn(pages, name) ? name : "overview"; param = rest.join("/"); if (page === "job" && !param) page = "business"; if (page === "report" && !param) page = "reports"; render(); }
