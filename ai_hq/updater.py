@@ -117,6 +117,22 @@ API = "https://api.github.com/repos/" + REPOSITORY
 USER_AGENT = "Cerebra-updater"
 
 
+CONNECT_TRIES = 3
+
+
+def _ask(client, method, url, **options):
+    """One request, tried again when the connection itself fails: some routes to GitHub drop about half of all new
+    connections, and a connection that never opened can safely be tried again."""
+    import httpx
+    for attempt in range(CONNECT_TRIES):
+        try:
+            return client.request(method, url, **options)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            if attempt == CONNECT_TRIES - 1:
+                raise
+            time.sleep(1 + attempt)
+
+
 class PublicGitHub:
     """Reads Cerebra's releases from GitHub, with no sign-in. The public API allows 60 checks an hour per internet address, and
     an address can be shared with many other people, so when it says no, the same facts come from GitHub's ordinary web pages."""
@@ -128,8 +144,8 @@ class PublicGitHub:
         import httpx
         path = f"/releases/tags/{tag}" if tag else "/releases/latest"
         try:
-            with httpx.Client(timeout=30, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}) as client:
-                answer = client.get(API + path)
+            with httpx.Client(timeout=httpx.Timeout(30, connect=10), headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}) as client:
+                answer = _ask(client, "GET", API + path)
         except httpx.HTTPError:
             # GitHub's API and its ordinary pages are served from different addresses: when only the API can't be
             # reached (a blocked or unreliable route), the same facts still come from the release pages.
@@ -157,14 +173,14 @@ class PublicGitHub:
         limited = ValueError("GitHub is limiting update checks from this internet connection for now. Try again in an hour.")
         site = f"https://github.com/{REPOSITORY}/releases"
         try:
-            with httpx.Client(timeout=30, headers={"User-Agent": USER_AGENT}) as client:
+            with httpx.Client(timeout=httpx.Timeout(30, connect=10), headers={"User-Agent": USER_AGENT}) as client:
                 if not tag:
-                    latest = client.get(f"{site}/latest")
+                    latest = _ask(client, "GET", f"{site}/latest")
                     tag = str(latest.headers.get("location") or "").rsplit("/", 1)[-1] if latest.status_code in {301, 302, 303, 307, 308} else ""
                 if not TAG.fullmatch(tag or ""):
                     raise limited
                 name = f"Cerebra-Setup-{tag[1:]}-Windows-x64.exe"
-                found = client.head(f"{site}/download/{tag}/{name}", follow_redirects=True)
+                found = _ask(client, "HEAD", f"{site}/download/{tag}/{name}", follow_redirects=True)
         except httpx.HTTPError:
             raise limited from None
         if found.status_code == 404:

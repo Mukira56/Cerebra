@@ -101,3 +101,19 @@ def test_when_github_cant_be_reached_at_all_the_owner_is_told_to_check_the_conne
     monkeypatch.setattr(httpx, "Client", lambda **options: real(transport=httpx.MockTransport(down), **options))
     with pytest.raises(ValueError, match="could not be reached"):
         PublicGitHub().release()
+
+
+def test_a_connection_that_fails_now_and_then_is_tried_again(monkeypatch):
+    monkeypatch.setattr(updater, "REPOSITORY", REPOSITORY)
+    monkeypatch.setattr(updater, "API", f"https://api.github.com/repos/{REPOSITORY}")
+    monkeypatch.setattr(updater.time, "sleep", lambda seconds: None)
+    real_handler, failures = GitHub(api=200), []
+
+    def flaky(request):
+        if len(failures) < 2:
+            failures.append(request.url)
+            raise httpx.ConnectTimeout("timed out", request=request)
+        return real_handler(request)
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **options: real(transport=httpx.MockTransport(flaky), **options))
+    assert PublicGitHub().release()["body"] == "Notes" and len(failures) == 2  # the API answered on the third try
