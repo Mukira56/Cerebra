@@ -538,6 +538,32 @@ class Outbox(Base):
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
 
+class PartnerCompany(Base):
+    """A company the owner pitches their service to (ai_hq/partners.py): its public role addresses and application pages,
+    read from its own website, and every email sent with the reply. status: new | ready | forms | none | unreadable |
+    sent | followed_up | replied | opted_out | bounced | applied | dropped | skipped."""
+    __tablename__ = "partner_companies"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String, default="")
+    website: Mapped[str] = mapped_column(String, default="")
+    domain: Mapped[str] = mapped_column(String, default="", index=True)
+    source: Mapped[str] = mapped_column(String, default="")
+    rank: Mapped[int] = mapped_column(Integer, default=2)
+    status: Mapped[str] = mapped_column(String, default="new", index=True)
+    email: Mapped[str] = mapped_column(String, default="")
+    emails: Mapped[list] = mapped_column(JSON, default=list)
+    pages: Mapped[list] = mapped_column(JSON, default=list)
+    about: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    thread_id: Mapped[str] = mapped_column(String, default="")
+    sent: Mapped[list] = mapped_column(JSON, default=list)
+    next_at: Mapped[str] = mapped_column(String, default="")
+    reply: Mapped[dict] = mapped_column(JSON, default=dict)
+    checked_at: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class ModelUsage(Base):
     """One call through the model hub: which kind of work, which model, the tokens and what it cost (USD)."""
     __tablename__ = "model_usage"

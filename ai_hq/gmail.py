@@ -147,7 +147,10 @@ class Gmail:
         if response.status_code != 200:
             raise ValueError(f"Gmail didn't send it ({response.status_code})")
         sent = response.json()
-        headers = self.get(f"messages/{sent['id']}", format="metadata", metadataHeaders="Message-ID").get("payload", {}).get("headers", [])
+        try:  # the email is already sent: a failed look-up only costs the follow-up its In-Reply-To header, never a second copy
+            headers = self.get(f"messages/{sent['id']}", format="metadata", metadataHeaders="Message-ID").get("payload", {}).get("headers", [])
+        except (ValueError, httpx.HTTPError):
+            headers = []
         message_id = next((item["value"] for item in headers if item["name"].lower() == "message-id"), "")
         return {"id": sent["id"], "thread_id": sent.get("threadId", ""), "message_id": message_id}
 

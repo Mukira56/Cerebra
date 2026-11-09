@@ -1760,6 +1760,80 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def outreach_run():
         return outreach.tick()
 
+    # ---- company pitches: offer the owner's service to AI and language companies, from their Gmail (ai_hq/partners.py) ----
+    from . import partners as partners_module
+    partners = partners_module.Partners(db, mailbox, notifier)
+    app.state.partners = partners
+    registry.add("partners", "Pitch companies", "Reads the websites of the companies on Company pitches for their public role addresses, sends your pitch "
+                 "within your daily number and one follow-up, and stops on any reply; never writes again to anyone who says no.", partners.tick, 20, outward=True)
+
+    def pitched(work):
+        try:
+            return work()
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/partners")
+    def partners_overview():
+        with db.Session() as session:
+            return partners.overview(session)
+
+    @app.put("/api/partners")
+    def partners_save(payload: dict):
+        if "enabled" in payload and not isinstance(payload["enabled"], bool):
+            raise ValueError("Enabled must be true or false")
+        with db.Session.begin() as session:
+            before = partners_module.settings(session)
+            saved = partners_module.save_settings(session, {**payload, "enabled": False} if payload.get("enabled") is True else payload)
+            if payload.get("enabled") is True:
+                session.flush()
+                problems = partners.ready(session)
+                if problems:
+                    raise ValueError("Before switching it on: " + "; ".join(problems))
+                saved = partners_module.save_settings(session, {"enabled": True})
+            chief.sync_feature_schedule(session, registry, "partners", before["enabled"], saved["enabled"])
+            return saved
+
+    @app.post("/api/partners/find")
+    def partners_find(payload: dict):
+        return partners.start_search(find=payload.get("find") is not False)
+
+    @app.post("/api/partners/add")
+    def partners_add(payload: dict):
+        with db.Session.begin() as session:
+            row = partners.add(session, payload.get("name"), payload.get("website"))
+            if row is None:
+                raise ValueError("That company is already listed, or the website address isn't one")
+            return partners_module.public(row)
+
+    @app.post("/api/partners/send-next")
+    def partners_send_next(payload: dict):
+        return partners.send_next(payload.get("count") or 1)
+
+    @app.post("/api/partners/run")
+    def partners_run():
+        return partners.tick()
+
+    @app.post("/api/partners/resume")
+    def partners_resume():
+        return partners.resume()
+
+    @app.post("/api/partners/{company_id}/send")
+    def partners_send(company_id: str, payload: dict):
+        return pitched(lambda: partners.send_to(company_id, payload.get("to"), payload.get("subject"), payload.get("text")))
+
+    @app.post("/api/partners/{company_id}/open")
+    def partners_open(company_id: str, payload: dict):
+        """Opens the company's website or one of its application pages in the owner's browser: only addresses read from its site."""
+        import webbrowser
+        url = pitched(lambda: partners.page_for(company_id, payload.get("url")))
+        webbrowser.open(url)
+        return {"opened": url}
+
+    @app.patch("/api/partners/{company_id}")
+    def partners_update(company_id: str, payload: dict):
+        return pitched(lambda: partners.update(company_id, payload))
+
     @app.get("/api/prospects/{prospect_id}/email")
     def prospect_email(prospect_id: str):
         try:

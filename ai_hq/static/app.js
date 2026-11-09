@@ -16,6 +16,7 @@
     marketing: ["EARN", "Marketing", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Chief of Staff", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
     prospects: ["EARN", "Prospects", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
+    partners: ["EARN", "Company pitches", "Offer your service to companies by email from your Gmail: Cerebra finds AI and language companies, reads each one's own website for its public role address and application pages, and sends your pitch within your daily number. Forms are yours to fill in."],
     funding: ["EARN", "Funding", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
     etsy: ["EARN", "Etsy", "Find what sells on Etsy and how crowded it is, from Etsy's own public listings: demand, competition, prices and the tags top sellers use. Nothing is written to Etsy."],
     books: ["EARN", "Books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
@@ -168,7 +169,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -1385,6 +1386,107 @@
     });
     if (goal) form.append(planSection(goal, plan));
     showDialog(goal ? goal.title : "New goal", form);
+  }
+
+  // ---------- company pitches: the owner's service offered to companies by email (ai_hq/partners.py) ----------
+  const PARTNER_STAGE = {new: ["not read yet", "muted"], ready: ["ready to pitch", "blue"], forms: ["apply on their site", "amber"], none: ["no contact found", "muted"],
+    unreadable: ["site not readable", "muted"], sent: ["pitched", "cyan"], followed_up: ["followed up", "cyan"], replied: ["replied", "green"], opted_out: ["said no", "muted"],
+    bounced: ["bounced", "red"], applied: ["you applied", "green"], dropped: ["dropped", "muted"], skipped: ["can't receive email", "muted"]};
+  let partnerFilter = "ready";
+  function partnerBadge(status) { const [label, style] = PARTNER_STAGE[status] || [status, "muted"]; return badge(label, style); }
+  function partnersView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading…")));
+    (async () => {
+      let state; try { state = await api("/api/partners"); } catch (issue) { root.replaceChildren(body(empty("Company pitches unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const counts = state.counts || {}, rules = state.settings || {}, search = state.search || {}, stats = el("div", "grid stats");
+      [["Companies listed", state.total || 0, `${counts.new || 0} not read yet`, "blue"], ["Ready to pitch", counts.ready || 0, "a public role address", "cyan"],
+       ["Apply on their site", counts.forms || 0, "application pages to open", "amber"], ["Pitched", (counts.sent || 0) + (counts.followed_up || 0), `${state.sent_today} of ${state.limit} today`, "blue"],
+       ["Replied", counts.replied || 0, "answer from your Gmail", "green"]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      if (search.running) setTimeout(() => { if (token === renderToken) render(); }, 4000);
+      // 1. the pitch
+      const form = el("form", "partner-pitch"), save = submitButton("Save");
+      const subject = input("Subject, e.g. Translation and language data for {company}", rules.subject || ""),
+        text = textarea("Hello {company} team,\n\nWho you are, what you offer, why it helps them, and one easy next step (a free sample, a short call).\n\nThank you,", rules.body || ""),
+        followUp = textarea("Your follow-up", rules.follow_up || state.default_follow_up || ""), perDay = input("10", rules.per_day ?? 10, "number"), days = input("6", rules.follow_up_days ?? 6, "number");
+      subject.maxLength = 150; text.rows = 10; followUp.rows = 4; perDay.min = 1; perDay.max = state.max_per_day; days.min = 0; days.max = 30;
+      const on = check("Work on its own: read company websites and send my pitch within my daily number", rules.enabled === true),
+        mode = select([["send", "Send each pitch automatically"], ["review", "Only when I press Send (follow-ups wait too)"]], rules.mode || "send");
+      append(form, field("Subject", subject, "{company} becomes each company's name, {website} its web address."), field("Your email", text),
+        field("Follow-up (sent once, in the same thread, if nobody answers)", followUp),
+        append(el("div", "form-grid"), field("Pitches a day", perDay, `Up to ${state.max_per_day}. The first week stays at 10 a day or fewer, to protect your Gmail.`),
+          field("Follow up after (days, 0 for none)", days), field("Sending", mode)),
+        on.wrap, Object.assign(hint(`Added under every email (US law needs your postal address and an opt-out):\n${state.signature || ""}`), {style: "white-space: pre-line"}), actionsRow(save,
+          button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/partners/run", {}, "POST", 600000)).then(() => render()), "button ghost")));
+      wireForm(form, save, async () => {
+        await mutate("/api/partners", {subject: subject.value, body: text.value, follow_up: followUp.value, per_day: Number(perDay.value || 10), follow_up_days: Number(days.value || 0),
+          mode: mode.value, enabled: on.control.checked}, "PUT");
+        toast(on.control.checked ? "Saved. Company pitches are on." : "Saved."); render();
+      });
+      const before = array(state.ready).length ? panel("Before a pitch can go out", body(append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))),
+        actionsRow(link("Business connections →", "connections"), link("Money › Your business →", "money")))) : null;
+      const status = state.status?.message ? hint(`Last run ${state.status.at ? date(state.status.at) : ""}: ${state.status.message}`, state.status.state === "error") : null;
+      const paused = state.health?.paused ? append(el("div"), hint(state.health.reason, true),
+        actionsRow(button("Resume sending", () => act("Resumed.", () => mutate("/api/partners/resume", {}, "POST")).then(() => render()), "button small primary"))) : null;
+      const preview = state.preview ? append(el("div"), el("div", "row-meta", `To ${state.preview.company} (${state.preview.to}) · Subject: ${state.preview.subject}`),
+        el("pre", "code-block", state.preview.body)) : null;
+      // 2. the companies
+      const find = button(state.total ? "Find more companies" : "Find companies and their emails", () => act(result => result.message, () => mutate("/api/partners/find", {})).then(() => render()), "button primary");
+      const more = button("Read 40 more websites", () => act(result => result.message, () => mutate("/api/partners/find", {find: false})).then(() => render()), "button");
+      const next = button(`Send to the next ${Math.min(5, counts.ready || 0) || 5} now`, () => act(result => result.message, () => mutate("/api/partners/send-next", {count: 5}, "POST", 600000)).then(() => render()), "button");
+      find.disabled = more.disabled = !!search.running; next.disabled = !(counts.ready > 0);
+      const addForm = el("form"), addGo = submitButton("Add"), addName = input("Company name"), addSite = input("Website, e.g. example.com");
+      addName.required = addSite.required = true;
+      append(addForm, append(el("div", "form-grid"), field("Company", addName), field("Website", addSite)), actionsRow(addGo));
+      wireForm(addForm, addGo, async () => { await mutate("/api/partners/add", {name: addName.value, website: addSite.value}); toast("Added. Its website is read on the next run, or press Read 40 more websites."); render(); });
+      const filters = {ready: `Ready to pitch (${counts.ready || 0})`, forms: `Apply on their site (${counts.forms || 0})`, pitched: "Pitched", replied: "Replied or said no", applied: "You applied",
+        new: `Not read yet (${counts.new || 0})`, none: "No contact found", all: "Everything"};
+      const pick = select(Object.entries(filters), partnerFilter); pick.addEventListener("change", () => { partnerFilter = pick.value; render(); });
+      const groups = {pitched: ["sent", "followed_up"], none: ["none", "unreadable", "skipped", "dropped"], replied: ["replied", "opted_out", "bounced"]};
+      const shown = array(state.companies).filter(item => partnerFilter === "all" || (groups[partnerFilter] || [partnerFilter]).includes(item.status));
+      const list = el("div", "row-list");
+      shown.slice(0, 300).forEach(item => {
+        const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name), el("div", "row-meta", [item.domain, item.source].filter(Boolean).join(" · ")),
+          item.about ? el("div", "row-meta", item.about.slice(0, 160)) : null,
+          el("div", "row-meta", item.email ? `✉ ${item.email}` : array(item.pages).length ? `${item.pages.length} application page(s): ${item.pages.map(page => page.label).slice(0, 3).join(", ")}` :
+            item.notes || (item.status === "new" ? "Its website is read next" : "No public role address")),
+          item.reply?.snippet ? el("div", "row-meta", `↩ ${item.reply.snippet.slice(0, 160)}`) : null), partnerBadge(item.status));
+        row.addEventListener("click", () => partnerDialog(item, state)); list.append(row);
+      });
+      root.replaceChildren(stats, before, paused, status,
+        append(el("div", "grid two"),
+          append(el("div"),
+            panel("Companies", append(el("div"), body(append(el("div", "actions"), find, more, next, pick),
+              search.message ? hint(search.running ? `${search.message} This page refreshes itself.` : search.message) : null),
+              shown.length ? list : body(empty(state.total ? "Nothing here" : "No companies yet", "Press Find companies: Cerebra lists AI, language-data and translation companies (a starter list, then Wikidata), then reads each one's own website for a public role address such as partnerships@ or vendors@, and for its pages for vendors, linguists and contributors.", null, "✉"))), null, shown.length),
+            panel("Add a company you know", body(addForm))),
+          append(el("div"), panel("Your pitch", body(form)), preview ? panel("How the next one reads", body(preview)) : null,
+            panel("How it works", body(hint("Only a company's own role addresses are used (partnerships@, vendors@, hello@, info@…), never a person's own address, and nothing is guessed. Each email goes from your Gmail with your name, postal address and an opt-out line. One follow-up at most; a reply stops it and tells you; “no thanks” or a bounce means that company is never written to again. Many companies take vendors and linguists only through a form: open the page, apply yourself, and mark it applied. Cerebra never fills in forms."))))));
+    })();
+    return root;
+  }
+  function partnerDialog(item, state) {
+    const rules = state.settings || {}, fill = value => String(value || "").replaceAll("{company}", item.name).replaceAll("{website}", item.domain || item.website);
+    const to = input("Their email", item.email || ""), subject = input("Subject", fill(rules.subject)), text = textarea("Your email", fill(rules.body)), notes = textarea("Notes", item.notes || "");
+    text.rows = 10; notes.rows = 2;
+    const open = url => act("Opened in your browser.", () => mutate(`/api/partners/${item.id}/open`, {url}));
+    const pages = append(el("div", "actions"), button("Open their website", () => open(item.website), "button small"),
+      ...array(item.pages).map(page => button(page.label || "Application page", () => open(page.url), "button small")));
+    const sentAlready = ["sent", "followed_up", "replied", "opted_out", "bounced"].includes(item.status);
+    const send = button("Send with Gmail", () => act(result => result.message, () => mutate(`/api/partners/${item.id}/send`, {to: to.value.trim(), subject: subject.value, text: text.value}, "POST", 120000))
+      .then(result => { if (result) { closeDialog(); render(); } }), "button primary");
+    const mark = status => act("Saved.", () => mutate(`/api/partners/${item.id}`, {status, notes: notes.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } });
+    showDialog(item.name, append(el("div"), el("div", "row-meta", [item.domain, item.source].filter(Boolean).join(" · ")), item.about ? el("p", "", item.about) : null, partnerBadge(item.status),
+      el("h4", "", "Their website and application pages"), pages,
+      array(item.emails).length > 1 ? hint(`Other role addresses on their site: ${item.emails.filter(value => value !== item.email).join(", ")}`) : null,
+      sentAlready ? append(el("div"), el("h4", "", "What was sent"), ...array(item.sent).map(mail => append(el("div"), el("div", "row-meta", `${date(mail.at)}${mail.follow_up ? " · follow-up" : ""}: ${mail.subject}`), el("pre", "code-block", mail.body))),
+        item.reply?.snippet ? hint(`Their reply: ${item.reply.snippet}`) : null) :
+        append(el("div"), el("h4", "", "Email them"), field("To", to, item.email ? "Their public role address, from their own website." : "No role address on their site: type one you know, or apply on their page above."),
+          field("Subject", subject), field("Your email", text, "Your name, postal address and an opt-out line are added under it."), actionsRow(send)),
+      field("Notes", notes), actionsRow(button("Mark as applied", () => mark("applied"), "button"), !sentAlready ? button("Drop it", () => mark("dropped"), "button ghost") : null,
+        ["dropped", "applied"].includes(item.status) && !sentAlready ? button("Put back in line", () => mark("ready"), "button ghost") : null)));
   }
 
   // ---------- prospects: US local businesses that could use what you sell ----------

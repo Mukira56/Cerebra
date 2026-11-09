@@ -295,10 +295,12 @@ const path = require('node:path');
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
     // No page prints a stray "null" (an empty value handed to the browser's append).
-    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'books', 'etsy', 'chief', 'prospects', 'funding', 'freelance', 'marketing', 'council', 'chat', 'system']) {
+    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'books', 'etsy', 'chief', 'prospects', 'partners', 'funding', 'freelance', 'marketing', 'council', 'chat', 'system']) {
       await page.evaluate(view => { location.hash = view; }, name); await page.waitForTimeout(600);
       assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('body').innerText()), `"null" is printed on the ${name} page`);
     }
+    await page.evaluate(() => { location.hash = 'partners'; }); await page.waitForTimeout(800);
+    assert.ok(await page.getByRole('button', {name: 'Find companies and their emails'}).count() && await page.locator('.panel-header h2', {hasText: 'Your pitch'}).count(), 'Company pitches shows the pitch and the find button');
     await page.evaluate(() => { location.hash = 'money'; }); await page.waitForTimeout(800);
     assert.ok(await page.getByText('Earned this month').count() && await page.getByRole('button', {name: '+ New quote'}).count(), 'The Money page shows earnings and can start a quote');
     assert.ok(await page.getByText(/Start earning · \d of 6 done/).count(), 'A new owner sees the Start earning checklist');
@@ -315,7 +317,7 @@ const path = require('node:path');
       await page.keyboard.press('Escape');
     }
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({pages: 24, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
+    console.log(JSON.stringify({pages: 25, errors: errors.length, mobile_width_ok: true, workers_running_waiting_failed_offline: true, reduced_motion:true}));
   } catch (error) {
     if (shots && activePage) {
       await activePage.screenshot({path:path.join(shots,'failure.png')}).catch(() => {});
