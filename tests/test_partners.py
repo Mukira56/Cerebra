@@ -278,3 +278,19 @@ def test_a_sent_email_counts_as_sent_even_when_gmail_cant_say_its_message_id(cli
 def test_articles_and_guides_are_not_application_pages():
     page = {"url": "https://www.lingua.example/", "html": '<a href="/blog/vendor-evaluation-guide">Data Labeling Vendor Evaluation Guide</a> <a href="/vendors">Become a vendor</a>'}
     assert [item[2] for item in partners.links(page, {"lingua.example"})] == ["Become a vendor"]
+
+
+def test_a_run_that_cant_send_says_why_on_the_page_and_tells_the_owner_once(client):  # noqa: F811
+    state, robot = prepared(client)
+    client.put("/api/partners", json={"enabled": True}).raise_for_status()
+    told = []
+    robot.notifier = type("Notifier", (), {"send": lambda self, title, text, tags="": told.append(text)})()
+
+    def expired(*args, **kwargs):
+        raise ValueError("Gmail access was revoked or expired. Connect Gmail again.")
+    robot.gmail.send = expired
+    first = robot.tick()
+    assert first["sent"] == 0 and "Not sent:" in first["message"] and "Connect Gmail again" in first["message"] and first["state"] == "error"
+    robot.tick()
+    assert len(told) == 1 and "Connect Gmail again" in told[0]
+    assert "Connect Gmail again" in client.get("/api/partners").json()["status"]["message"]

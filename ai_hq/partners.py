@@ -514,7 +514,7 @@ class Partners:
                 if "Gmail" in str(exc):
                     break  # Gmail itself said no: stop, don't try the rest
         message = f"Sent {sent} pitch(es)." + (f" Skipped: {'; '.join(problems[:3])}" if problems else "") + ("" if queue else " Nobody is waiting: find companies first.")
-        return {"sent": sent, "message": message}
+        return {"sent": sent, "message": message, "problems": problems}
 
     def follow_ups(self, room):
         with self.db.Session() as session:
@@ -617,9 +617,15 @@ class Partners:
                 return {**self._note("Today's pitches are sent; more tomorrow."), "replies": replies}
             sending = rules["enabled"] and rules["mode"] == "send"  # switched off, or "only when I press Send": nothing goes on its own
             sent = self.follow_ups(room) if sending else 0
+            skipped = []
             if sending and sent < room:
-                sent += self.send_next(room - sent)["sent"]
-            return {**self._note(f"Sent {sent} email(s); {replies} new repl(ies)."), "sent": sent, "replies": replies}
+                result = self.send_next(room - sent)
+                sent, skipped = sent + result["sent"], result.get("problems", [])
+            message = f"Sent {sent} email(s); {replies} new repl(ies)." + (f" Not sent: {'; '.join(skipped[:3])}" if skipped else "")
+            gmail_down = next((item for item in skipped if "Gmail" in item), "")
+            if gmail_down and self.notifier and self.status.get("message") != message:
+                self.notifier.send("Company pitches can't send", gmail_down[:300], tags="email")  # once, not every 20 minutes
+            return {**self._note(message, "error" if gmail_down else "idle"), "sent": sent, "replies": replies}
         except ValueError as exc:
             return self._note(f"Stopped: {exc}", "error")
         except httpx.HTTPError:
