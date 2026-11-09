@@ -59,7 +59,18 @@ STARTER = (
     ("Rev", "https://www.rev.com"), ("Mistral AI", "https://mistral.ai"), ("AI21 Labs", "https://www.ai21.com"),
 )
 WIKIDATA = "https://query.wikidata.org/sparql"
-SITE = "https://mukira56.github.io/Cerebra-Releases/"  # Wikimedia asks every automated reader for a way to reach its maker
+
+
+def contact_site():
+    """Wikimedia asks every automated reader for a way to reach its maker: the public release channel's website."""
+    from .updater import release_repository
+    try:
+        owner, _, name = release_repository().partition("/")
+    except (ValueError, OSError):
+        owner = name = ""
+    return f"https://{owner.lower()}.github.io/{name}/" if owner and name else "https://github.com/"
+
+
 LANGUAGE_FIELDS = {"Q7553", "Q79798", "Q30642", "Q189436"}  # translation, machine translation, language processing, speech recognition
 AI_FIELDS = {"Q11660", "Q2539", "Q2878974"}  # artificial intelligence, machine learning, deep learning
 QUERY = ("SELECT ?item ?itemLabel ?site ?field WHERE { VALUES ?field { " + " ".join(f"wd:{key}" for key in sorted(LANGUAGE_FIELDS | AI_FIELDS)) + " } "
@@ -291,7 +302,7 @@ class Partners:
         self.reader, self.pause, self.starter = reader, 1.1, STARTER
         from .network import LazyClient
         from . import __version__
-        self.client = client or LazyClient(timeout=90, headers={"User-Agent": f"Cerebra/{__version__} ({SITE}; company research)",
+        self.client = client or LazyClient(timeout=90, headers={"User-Agent": f"Cerebra/{__version__} ({contact_site()}; company research)",
                                                                 "Accept": "application/sparql-results+json"})
         self.mail_check = deliverability.MailCheck()
         self.status = {"state": "idle", "message": "", "at": ""}
