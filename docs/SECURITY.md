@@ -1,5 +1,76 @@
 # Security boundaries
 
+## Engineering checklist (0.74.28)
+
+Cerebra is a desktop program: one owner, a server bound to 127.0.0.1, and a local SQLite database. Each common production concern is listed here with how Cerebra handles it, or why it does not apply.
+
+**Added in 0.74.28**
+- **Retries, exponential backoff, circuit breaker (`ai_hq/resilience.py`):**
+  - Every outside-service call made through `network.LazyClient` retries a connection that never opened. That is safe for any method, because nothing was sent.
+  - Read timeouts and 429/502/503/504 answers are retried for GET/HEAD/OPTIONS only. A POST that may have arrived is never repeated.
+  - Waits grow exponentially with jitter (0.5 s, 1 s, 2 s, capped at 8 s) and honour a short `Retry-After`.
+  - Each host has its own breaker: five failed connections in a row pause that host for 30 seconds, then one trial call is let through.
+  - Services on this computer (Ollama) are asked once.
+  - Connection timeouts are at most 10 seconds.
+- **Logging and monitoring (`ai_hq/logs.py`):**
+  - Problems only, in `logs/cerebra.log` under the data folder: unexpected errors with their traceback, requests that fail with 5xx or take over 10 s, retries, paused services, rate-limit refusals and database upgrades.
+  - Every line passes through `security.redact`, and query strings are never logged.
+  - The log rotates at 1 MB and keeps five old files.
+  - `GET /api/logs` (session required) returns the newest lines.
+- **Error handling and status codes:**
+  - An unexpected error answers 500 with a short reference and never internals; the full traceback goes to the log.
+  - Existing handlers stay as they were: bad values 400, conflicts 409, missing records 404, no session 401, CSRF/origin 403, oversized body 413, rate limit 429.
+- **Rate limiting:**
+  - 300 changes (POST/PUT/PATCH/DELETE) per session per rolling minute, answered with 429 and `Retry-After`. Reads are not limited.
+  - Launch-key attempts stay limited to 10 failures a minute.
+- **Database indexing:** indexes on the columns the pages and workers query constantly: task state and date, and the task links on runs, reviews, findings, approvals, worktrees and events, plus the event date, chat messages and business jobs.
+- **Database migrations:**
+  - `db.upgrade` adds missing columns (with the model default) and missing indexes to an older database inside one transaction, and logs what changed.
+  - Table and column names come only from Cerebra's models.
+  - An unknown future schema version is still refused.
+- **N+1 queries:** the freelance approval sweep loads all pending approvals in one query instead of one per task.
+- **Company pitch research:** to tailor each pitch, the text a company shows on its own public home page (title, description, headings and opening paragraphs, at most 2,400 characters) is sent with the owner's pitch to the owner's own writing model (the Prospects choice: subscription or a free model, never a paid API without the owner choosing it). The website text is labelled as data, and the result is checked before use: no brackets, placeholders or tool names, and a length limit. Without a usable paragraph that company is not emailed automatically.
+
+**Already in place**
+- **Authentication and session management:**
+  - A one-time launch key is exchanged for an HttpOnly, SameSite=Strict session cookie.
+  - Sessions live in memory, expire after 12 hours, and end when Cerebra restarts.
+- **Authorization and least privilege:**
+  - Agents are off until both acknowledgements are given.
+  - Each task needs its own approvals, path allowlists confine changes, and model-written tasks run project-only.
+- **CSRF and CORS:**
+  - Every change needs the per-session CSRF token.
+  - Origin and `Sec-Fetch-Site` are checked, with no CORS headers, so other sites cannot call the API.
+  - Only loopback Host and clients are accepted.
+- **XSS:** the page builds the DOM from text (no `innerHTML`), and a strict Content-Security-Policy allows scripts only from Cerebra itself. Generated previews are sandboxed.
+- **Input and server-side validation:** Pydantic schemas validate every request body, with 128 KB body limits, path canonicalisation and traversal checks.
+- **SQL injection:** all queries go through SQLAlchemy with bound parameters, with no string-built SQL from input.
+- **Secrets management and environment variables:**
+  - Keys and tokens are protected by Windows DPAPI, macOS Keychain or Linux Secret Service (`vault.py`) and never returned by the API.
+  - Logs and outputs are redacted.
+- **OAuth and HTTPS/TLS:**
+  - Gmail uses OAuth with PKCE and a single-use, expiring state.
+  - Outside services are called only over HTTPS at fixed hosts, with certificate checks on.
+- **Idempotency and race conditions:**
+  - External sends and uploads record an operation reservation first and are never retried automatically when the outcome is uncertain.
+  - Shared state is guarded by locks.
+  - SQLite runs in WAL mode with a 30 s busy timeout.
+- **Database transactions:** changes use `Session.begin()` blocks, so a failure rolls the whole change back.
+- **Pagination:** list endpoints are capped (tasks 500, approvals 200, events 100, jobs 200).
+- **Backups:** a daily checked copy, with optional second folder and restore.
+- **Git and CI/CD:**
+  - Task work happens on isolated branches and worktrees.
+  - `.github/workflows/tests.yml` runs the suite on Linux and macOS on demand.
+  - Releases ship with a SHA-256 file.
+- **File upload security:** there is no upload endpoint. Source files for business jobs must be existing regular files (not links), at most 20 MB, and are copied, never moved.
+- **Soft deletes and recovery:** deletions are deliberate owner actions, and the daily backups can restore an earlier state. Records that matter for money (sent pitches, invoices) keep their history.
+
+**Does not apply to a single-user desktop program**
+- **Load balancing, API gateways, reverse proxies, CDNs, DNS and Docker:** Cerebra serves one person on their own computer at 127.0.0.1. Putting it behind a proxy or exposing it is unsupported (see Local access).
+- **Message queues:** background work runs from database-backed queues inside the program (tasks, jobs, schedules) and survives restarts without a separate broker.
+- **Caching:** results that are costly to recompute (Git status of finished tasks, catalogs) are kept briefly in memory. Pages and API answers are `no-store` so private data is never cached by the browser.
+- **Password hashing, two-factor authentication and JWTs:** there are no Cerebra passwords or accounts. The local session is an opaque random token (safer than a JWT here, since it can be revoked by restarting), and the launch key is compared as a SHA-256 digest in constant time. Two-factor protection belongs to the owner's Google, GitHub, Etsy and other accounts, which Cerebra uses through their own sign-in.
+
 ## Subscription model selection (0.74.13)
 
 Prospects' primary picker saves a subscription-only preference. Named models and the default selection then bypass the global API hub. The official client's read-only authentication status must confirm ChatGPT or Claude.ai sign-in before generation; API-key or unknown authentication fails closed. Cerebra does not inspect or copy subscription credentials. Model catalogs are choices, not proof of entitlement. The optional Advanced API mode preserves existing separately billed connections. Saving either mode does not enable outreach or send email. Older saved preferences retain their behavior until explicitly saved in subscription-only mode.

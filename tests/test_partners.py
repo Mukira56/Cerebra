@@ -25,7 +25,8 @@ PAGES = {
     ("hidden.example", "/contact-us"): '<html><body><a href="/cdn-cgi/l/email-protection#2f474a4343406f47464b4b4a41014a574e425f434a">[email&#160;protected]</a></body></html>',
 }
 PITCH = {"subject": "Language data for {company}", "body": "Hello {company} team,\n\nI provide translation and language data in two languages, "
-         "reviewed by native speakers, for teams training AI models. I'd be glad to send a free sample.\n\nThank you for reading."}
+         "reviewed by native speakers, for teams training AI models. I'd be glad to send a free sample.\n\nThank you for reading.",
+         "personalize": False}  # the plain pitch; tailoring each email to its company is tested in test_partner_tailoring.py
 
 
 def site(request):
@@ -64,7 +65,7 @@ def prepared(client, pitch=True):  # noqa: F811
     state = setup(client)
     robot = state.partners
     robot.reader = prospects.Reader(httpx.Client(transport=httpx.MockTransport(site)), resolve=lambda host: host.endswith(".example"))
-    robot.client, robot.pause, robot.starter = httpx.Client(transport=httpx.MockTransport(wikidata)), 0, ()
+    robot.client, robot.pause, robot.starter, robot.big_tech = httpx.Client(transport=httpx.MockTransport(wikidata)), 0, (), ()
     robot.gmail, robot.mail_check = state.outreach.gmail, Receiving()
     if pitch:
         client.put("/api/partners", json=PITCH).raise_for_status()

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from uuid import uuid4
-from sqlalchemy import String, Text, ForeignKey, JSON, Boolean, Integer, Float
+from sqlalchemy import String, Text, ForeignKey, JSON, Boolean, Integer, Float, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 def uid(): return uuid4().hex
@@ -560,6 +560,10 @@ class PartnerCompany(Base):
     next_at: Mapped[str] = mapped_column(String, default="")
     reply: Mapped[dict] = mapped_column(JSON, default=dict)
     checked_at: Mapped[str] = mapped_column(String, default="")
+    kind: Mapped[str] = mapped_column(String, default="")  # "big_tech" for big tech companies and AI labs (their own pitch)
+    research: Mapped[str] = mapped_column(Text, default="")  # what the company says about itself on its own site
+    personal: Mapped[str] = mapped_column(Text, default="")  # the paragraph written for this company from that research
+    personal_at: Mapped[str] = mapped_column(String, default="")  # when it was written ("" = not yet)
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
@@ -581,6 +585,22 @@ class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
+
+# Lookups the pages and workers make constantly (task lists, a task's runs/reviews/approvals, the event feed, a chat's
+# messages). SQLite does not index foreign keys by itself. db.Database.init creates any missing index on older databases.
+Index("ix_tasks_state", Task.state)
+Index("ix_tasks_created_at", Task.created_at)
+Index("ix_dependencies_depends_on", Dependency.depends_on)
+Index("ix_runs_task_id", Run.task_id)
+Index("ix_reviews_task_id", Review.task_id)
+Index("ix_review_findings_review_id", Finding.review_id)
+Index("ix_approvals_task_id_status", Approval.task_id, Approval.status)
+Index("ix_approvals_created_at", Approval.created_at)
+Index("ix_worktrees_task_id", Worktree.task_id)
+Index("ix_execution_events_task_id", Event.task_id)
+Index("ix_execution_events_created_at", Event.created_at)
+Index("ix_chat_messages_conversation_id", ChatMessage.conversation_id)
+Index("ix_business_jobs_task_id", BusinessJob.task_id)
 
 def as_dict(row):
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}

@@ -1401,7 +1401,7 @@
       let state; try { state = await api("/api/partners"); } catch (issue) { root.replaceChildren(body(empty("Company pitches unavailable", issue.message))); return; }
       if (token !== renderToken) return;
       const counts = state.counts || {}, rules = state.settings || {}, search = state.search || {}, stats = el("div", "grid stats");
-      [["Companies listed", state.total || 0, `${counts.new || 0} not read yet`, "blue"], ["Ready to pitch", counts.ready || 0, "a public role address", "cyan"],
+      [["Companies listed", state.total || 0, `${counts.new || 0} not read yet · ${state.big_tech || 0} big tech`, "blue"], ["Ready to pitch", counts.ready || 0, "a public role address", "cyan"],
        ["Apply on their site", counts.forms || 0, "application pages to open", "amber"], ["Pitched", (counts.sent || 0) + (counts.followed_up || 0), `${state.sent_today} of ${state.limit} today`, "blue"],
        ["Replied", counts.replied || 0, "answer from your Gmail", "green"]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
@@ -1412,9 +1412,15 @@
         text = textarea("Hello {company} team,\n\nWho you are, what you offer, why it helps them, and one easy next step (a free sample, a short call).\n\nThank you,", rules.body || ""),
         followUp = textarea("Your follow-up", rules.follow_up || state.default_follow_up || ""), perDay = input("10", rules.per_day ?? 10, "number"), days = input("6", rules.follow_up_days ?? 6, "number");
       subject.maxLength = 150; text.rows = 10; followUp.rows = 4; perDay.min = 1; perDay.max = state.max_per_day; days.min = 0; days.max = 30;
+      const tailor = check("Tailor each email to its company: Cerebra reads what the company says about itself on its own website, and your writing model adds a short paragraph on their work and how you help it", rules.personalize !== false);
+      const bigSubject = input("Subject for big tech, e.g. Kiswahili and African-language training data for {company}'s AI", rules.big_subject || ""),
+        bigText = textarea("Your email to big tech companies and AI labs (Google, Microsoft, Meta, OpenAI, Anthropic…). Leave empty to send them the pitch above.", rules.big_body || "");
+      bigSubject.maxLength = 150; bigText.rows = 8;
       const on = check("Work on its own: read company websites and send my pitch within my daily number", rules.enabled === true),
         mode = select([["send", "Send each pitch automatically"], ["review", "Only when I press Send (follow-ups wait too)"]], rules.mode || "send");
-      append(form, field("Subject", subject, "{company} becomes each company's name, {website} its web address."), field("Your email", text),
+      append(form, field("Subject", subject, "{company} becomes each company's name, {website} its web address."),
+        field("Your email", text, "Put {personal} where each company's own paragraph should go; without it, the paragraph goes after your greeting."), tailor.wrap,
+        field("Big tech and AI labs: subject", bigSubject), field("Big tech and AI labs: your email", bigText, "Used for the big tech companies and AI labs in your list. {personal} works here too."),
         field("Follow-up (sent once, in the same thread, if nobody answers)", followUp),
         append(el("div", "form-grid"), field("Pitches a day", perDay, `Up to ${state.max_per_day}. The first week stays at 10 a day or fewer, to protect your Gmail.`),
           field("Follow up after (days, 0 for none)", days), field("Sending", mode)),
@@ -1422,7 +1428,7 @@
           button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/partners/run", {}, "POST", 600000)).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/partners", {subject: subject.value, body: text.value, follow_up: followUp.value, per_day: Number(perDay.value || 10), follow_up_days: Number(days.value || 0),
-          mode: mode.value, enabled: on.control.checked}, "PUT");
+          mode: mode.value, enabled: on.control.checked, personalize: tailor.control.checked, big_subject: bigSubject.value, big_body: bigText.value}, "PUT");
         toast(on.control.checked ? "Saved. Company pitches are on." : "Saved."); render();
       });
       const before = array(state.ready).length ? panel("Before a pitch can go out", body(append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))),
@@ -1430,7 +1436,7 @@
       const status = state.status?.message ? hint(`Last run ${state.status.at ? date(state.status.at) : ""}: ${state.status.message}`, state.status.state === "error") : null;
       const paused = state.health?.paused ? append(el("div"), hint(state.health.reason, true),
         actionsRow(button("Resume sending", () => act("Resumed.", () => mutate("/api/partners/resume", {}, "POST")).then(() => render()), "button small primary"))) : null;
-      const preview = state.preview ? append(el("div"), el("div", "row-meta", `To ${state.preview.company} (${state.preview.to}) · Subject: ${state.preview.subject}`),
+      const preview = state.preview ? append(el("div"), el("div", "row-meta", `To ${state.preview.company} (${state.preview.to}) · Subject: ${state.preview.subject}${state.preview.tailored ? " · tailored to them" : rules.personalize !== false ? " · its own paragraph is written just before sending" : ""}`),
         el("pre", "code-block", state.preview.body)) : null;
       // 2. the companies
       const find = button(state.total ? "Find more companies" : "Find companies and their emails", () => act(result => result.message, () => mutate("/api/partners/find", {})).then(() => render()), "button primary");
@@ -1448,7 +1454,7 @@
       const shown = array(state.companies).filter(item => partnerFilter === "all" || (groups[partnerFilter] || [partnerFilter]).includes(item.status));
       const list = el("div", "row-list");
       shown.slice(0, 300).forEach(item => {
-        const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name), el("div", "row-meta", [item.domain, item.source].filter(Boolean).join(" · ")),
+        const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name), el("div", "row-meta", [item.domain, item.source, item.kind === "big_tech" ? "big tech" : "", item.personal ? "tailored" : ""].filter(Boolean).join(" · ")),
           item.about ? el("div", "row-meta", item.about.slice(0, 160)) : null,
           el("div", "row-meta", item.email ? `✉ ${item.email}` : array(item.pages).length ? `${item.pages.length} application page(s): ${item.pages.map(page => page.label).slice(0, 3).join(", ")}` :
             item.notes || (item.status === "new" ? "Its website is read next" : "No public role address")),
@@ -1467,10 +1473,24 @@
     })();
     return root;
   }
+  function withPersonal(text, personal) {  // the same rule as partners.with_personal
+    personal = String(personal || "").trim(); text = String(text || "");
+    if (text.includes("{personal}")) return text.replaceAll("{personal}", personal).replace(/\n{3,}/g, "\n\n");
+    if (!personal) return text;
+    const trimmed = text.trim(), at = trimmed.indexOf("\n\n");
+    return at < 0 ? `${personal}\n\n${trimmed}` : `${trimmed.slice(0, at)}\n\n${personal}\n\n${trimmed.slice(at + 2)}`;
+  }
   function partnerDialog(item, state) {
     const rules = state.settings || {}, fill = value => String(value || "").replaceAll("{company}", item.name).replaceAll("{website}", item.domain || item.website);
-    const to = input("Their email", item.email || ""), subject = input("Subject", fill(rules.subject)), text = textarea("Your email", fill(rules.body)), notes = textarea("Notes", item.notes || "");
-    text.rows = 10; notes.rows = 2;
+    const big = item.kind === "big_tech" && rules.big_subject && rules.big_body;
+    const pitchSubject = big ? rules.big_subject : rules.subject, pitchBody = big ? rules.big_body : rules.body;
+    const to = input("Their email", item.email || ""), subject = input("Subject", fill(pitchSubject)), text = textarea("Your email", fill(withPersonal(pitchBody, item.personal))), notes = textarea("Notes", item.notes || "");
+    const personal = textarea("A short paragraph about their work and how you help it", item.personal || "");
+    text.rows = 10; notes.rows = 2; personal.rows = 3;
+    const refill = value => { text.value = fill(withPersonal(pitchBody, value)); };
+    const writeIt = button(item.personal ? "Write it again" : "Write it from their website", () => act("Written from their website.", () => mutate(`/api/partners/${item.id}/tailor`, {again: !!item.personal}, "POST", 300000))
+      .then(result => { if (result) { personal.value = result.personal; item.personal = result.personal; refill(result.personal); } }), "button small");
+    const keep = button("Use my edit", () => act("Saved.", () => mutate(`/api/partners/${item.id}`, {personal: personal.value}, "PATCH")).then(result => { if (result) { item.personal = result.personal; refill(result.personal); } }), "button small ghost");
     const open = url => act("Opened in your browser.", () => mutate(`/api/partners/${item.id}/open`, {url}));
     const pages = append(el("div", "actions"), button("Open their website", () => open(item.website), "button small"),
       ...array(item.pages).map(page => button(page.label || "Application page", () => open(page.url), "button small")));
@@ -1484,7 +1504,8 @@
       sentAlready ? append(el("div"), el("h4", "", "What was sent"), ...array(item.sent).map(mail => append(el("div"), el("div", "row-meta", `${date(mail.at)}${mail.follow_up ? " · follow-up" : ""}: ${mail.subject}`), el("pre", "code-block", mail.body))),
         item.reply?.snippet ? hint(`Their reply: ${item.reply.snippet}`) : null) :
         append(el("div"), el("h4", "", "Email them"), field("To", to, item.email ? "Their public role address, from their own website." : "No role address on their site: type one you know, or apply on their page above."),
-          field("Subject", subject), field("Your email", text, "Your name, postal address and an opt-out line are added under it."), actionsRow(send)),
+          field(`Tailored to ${item.name}`, personal, item.personal ? "Written from what their own website says. Edit it if you like, then press Use my edit." : "Not written yet: it's written from their website just before an automatic send, or press the button now."),
+          actionsRow(writeIt, keep), field("Subject", subject), field("Your email", text, "Your name, postal address and an opt-out line are added under it."), actionsRow(send)),
       field("Notes", notes), actionsRow(button("Mark as applied", () => mark("applied"), "button"), !sentAlready ? button("Drop it", () => mark("dropped"), "button ghost") : null,
         ["dropped", "applied"].includes(item.status) && !sentAlready ? button("Put back in line", () => mark("ready"), "button ghost") : null)));
   }

@@ -30,6 +30,9 @@ STATIC = Path(__file__).parent / "static"
 
 def create_app(settings=None, bootstrap_key=None, start_worker=True):
     settings = settings or Settings()
+    from . import logs
+    logs.setup(settings.data_dir)
+    log = logs.get("api")
     from . import backups as backups_module
     restored = backups_module.apply_pending(settings.data_dir)
     db = Database(settings.db_path)
@@ -94,6 +97,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     sessions = {}
     bootstrap_lock = Lock()
     failed_sessions = []
+    # Rate limit: changes (POST/PUT/PATCH/DELETE) per session in a rolling minute. A person clicking never comes near it;
+    # a runaway script or page loop is stopped with 429 instead of flooding outside services from the owner's accounts.
+    CHANGES_PER_MINUTE = 300
+    recent_changes = {}
+    changes_lock = Lock()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -173,6 +181,16 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 return JSONResponse({"detail":"Open the launch URL to establish a local session"}, status_code=401)
             if request.method not in {"GET", "HEAD"} and not secrets.compare_digest(request.headers.get("x-csrf-token", ""), entry[0]):
                 return JSONResponse({"detail":"Missing or invalid CSRF token"}, status_code=403)
+            if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                current = time.monotonic()
+                with changes_lock:
+                    stamps = [stamp for stamp in recent_changes.get(token, []) if current - stamp < 60]
+                    if len(stamps) >= CHANGES_PER_MINUTE:
+                        recent_changes[token] = stamps
+                        wait = max(1, int(60 - (current - stamps[0])) + 1)
+                        log.warning("Rate limit: %s %s refused (%d changes in a minute)", request.method, request.url.path, len(stamps))
+                        return JSONResponse({"detail":f"Too many changes in a minute; try again in {wait} seconds"}, status_code=429, headers={"Retry-After": str(wait)})
+                    recent_changes[token] = stamps + [current]
         if request.method in {"POST", "PATCH", "PUT"}:
             try:
                 body_length = int(request.headers.get("content-length", "0") or 0)
@@ -186,7 +204,17 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                     return JSONResponse({"detail":"Request body too large"}, status_code=413)
                 body.extend(chunk)
             request._body = bytes(body)
-        response = await call_next(request)
+        started = time.monotonic()
+        try:
+            response = await call_next(request)
+        except Exception as exc:  # an unexpected error: logged in full, answered without internals
+            reference = secrets.token_hex(4)
+            logs.error(log, f"{request.method} {request.url.path} failed (reference {reference})", exc)
+            response = JSONResponse({"detail":f"Something went wrong inside Cerebra (reference {reference}). The details are in cerebra.log in the logs folder of Cerebra's data folder."}, status_code=500)
+        elapsed = time.monotonic() - started
+        if response.status_code >= 500 or elapsed > 10:
+            # The path only: query strings can carry an OAuth code
+            log.warning("%s %s answered %d in %.1f s", request.method, request.url.path, response.status_code, elapsed)
         response.headers.update({"X-Content-Type-Options":"nosniff", "Referrer-Policy":"no-referrer", "X-Frame-Options":"DENY", "Cache-Control":"no-store",
             "Cross-Origin-Opener-Policy":"same-origin", "Cross-Origin-Resource-Policy":"same-origin",
             "Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), clipboard-read=()", "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
@@ -213,6 +241,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from .gitops import GitError
     @app.exception_handler(GitError)
     async def git_error(_, exc): return JSONResponse({"detail":redact(str(exc))[:2000]}, status_code=400)
+
+    @app.get("/api/logs")
+    def recent_log(lines: int = 200):
+        """The newest lines of Cerebra's own log (problems only, already redacted), for troubleshooting."""
+        return {"path": str(logs.path() or ""), "lines": logs.tail(max(1, min(lines, 2000)))}
 
     @app.get("/health")
     def health(): return {"status":"ok", "application":"AI Development HQ", "version":__version__}
@@ -1161,9 +1194,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             tasks = [task for task in session.scalars(select(Task).where(Task.state.in_(["AWAITING_APPROVAL", "READY", "BLOCKED"]))).all()
                      if (task.results or {}).get("freelance_lead") and not task.pause_requested]
-            pending = {task.id: [approval.id for approval in session.scalars(select(Approval).where(Approval.task_id == task.id, Approval.status.in_(["pending", "PENDING"]),
-                                                                                                   Approval.kind.in_(["plan", "live_execution", "review_findings"]))).all()]
-                       for task in tasks}
+            pending = {task.id: [] for task in tasks}  # one query for all of them, not one per task
+            for approval in session.scalars(select(Approval).where(Approval.task_id.in_(list(pending)), Approval.status.in_(["pending", "PENDING"]),
+                                                                   Approval.kind.in_(["plan", "live_execution", "review_findings"])).order_by(Approval.created_at)):
+                pending[approval.task_id].append(approval.id)
             ready = [task.id for task in tasks if task.state == "READY" and task.approved and not (task.results or {}).get("queued")]
         for task_id, approvals in pending.items():
             for approval_id in approvals:
@@ -1763,6 +1797,13 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     # ---- company pitches: offer the owner's service to AI and language companies, from their Gmail (ai_hq/partners.py) ----
     from . import partners as partners_module
     partners = partners_module.Partners(db, mailbox, notifier)
+
+    def partner_write(prompt):
+        """Each pitch's own paragraph, with the owner's writing model (the same one Prospects uses, subscription or free)."""
+        with db.Session() as session:
+            selected = prospect_writer.profile_for(session)
+        return prospect_writer._ask(selected, prompt)
+    partners.write = partner_write
     app.state.partners = partners
     registry.add("partners", "Pitch companies", "Reads the websites of the companies on Company pitches for their public role addresses, sends your pitch "
                  "within your daily number and one follow-up, and stops on any reply; never writes again to anyone who says no.", partners.tick, 20, outward=True)
@@ -1821,6 +1862,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.post("/api/partners/{company_id}/send")
     def partners_send(company_id: str, payload: dict):
         return pitched(lambda: partners.send_to(company_id, payload.get("to"), payload.get("subject"), payload.get("text")))
+
+    @app.post("/api/partners/{company_id}/tailor")
+    def partners_tailor(company_id: str, payload: dict):
+        """Writes (or rewrites) this company's own paragraph from its website, for the owner to read before sending."""
+        paragraph = pitched(lambda: partners.tailor(company_id, force=payload.get("again") is True))
+        return {"personal": paragraph}
 
     @app.post("/api/partners/{company_id}/open")
     def partners_open(company_id: str, payload: dict):
