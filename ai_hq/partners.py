@@ -90,7 +90,7 @@ PAGE_KINDS = (
     (re.compile(r"contact|get[ -]?in[ -]?touch|talk[ -]?to|reach[ -]?us|enquir|inquir", re.I), 3, False),
     (re.compile(r"about|company|partners?\b", re.I), 1, False),
 )
-NOT_A_POLICY = re.compile(r"code of conduct|privacy|policy|notice|terms|cookie|security|statement", re.I)
+NOT_A_POLICY = re.compile(r"code of conduct|privacy|policy|notice|terms|cookie|security|statement|guide|e-?book|white ?paper|blog|webinar|case[ -]?stud|report|podcast|news", re.I)
 NOT_A_PAGE = re.compile(r"^(mailto|tel|javascript):|\.(pdf|jpe?g|png|gif|svg|webp|zip|mp4)(\?|$)|/(login|signin|sign-in|cart|privacy|terms|cookie)", re.I)
 # Role addresses, best first. A company's own inbox for this kind of message; never a person's.
 ROLES = (("partner", "partnership", "bd", "bizdev", "business", "alliances", "collaborat"),

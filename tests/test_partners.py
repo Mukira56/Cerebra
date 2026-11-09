@@ -273,3 +273,8 @@ def test_a_sent_email_counts_as_sent_even_when_gmail_cant_say_its_message_id(cli
     mailbox._access = ("token", time.monotonic() + 600)
     assert mailbox.send("team@forms.example", "Hello", "A short note.") == {"id": "abc", "thread_id": "t9", "message_id": ""}
     assert posted == ["/gmail/v1/users/me/messages/send"]
+
+
+def test_articles_and_guides_are_not_application_pages():
+    page = {"url": "https://www.lingua.example/", "html": '<a href="/blog/vendor-evaluation-guide">Data Labeling Vendor Evaluation Guide</a> <a href="/vendors">Become a vendor</a>'}
+    assert [item[2] for item in partners.links(page, {"lingua.example"})] == ["Become a vendor"]
