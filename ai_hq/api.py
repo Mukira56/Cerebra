@@ -1803,7 +1803,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             selected = prospect_writer.profile_for(session)
         return prospect_writer._ask(selected, prompt)
-    partners.write = partner_write
+    partners.write = partners.research.write = partner_write
     app.state.partners = partners
     registry.add("partners", "Pitch companies", "Reads the websites of the companies on Company pitches for their public role addresses, sends your pitch "
                  "within your daily number and one follow-up, and stops on any reply; never writes again to anyone who says no.", partners.tick, 20, outward=True)
@@ -1866,8 +1866,36 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.post("/api/partners/{company_id}/tailor")
     def partners_tailor(company_id: str, payload: dict):
         """Writes (or rewrites) this company's own paragraph from its website, for the owner to read before sending."""
-        paragraph = pitched(lambda: partners.tailor(company_id, force=payload.get("again") is True))
+        paragraph = pitched(lambda: partners.tailor(company_id, force=payload.get("again") is True, research_now=True))
         return {"personal": paragraph}
+
+    @app.get("/api/partners/market-facts")
+    def partners_market_facts():
+        """The owner's market figures, each with its source: the only figures (besides a company's own) a pitch may use."""
+        from . import dossier
+        with db.Session() as session:
+            return {"facts": dossier.market_facts(session)}
+
+    @app.put("/api/partners/market-facts")
+    def partners_save_market_facts(payload: dict):
+        from . import dossier
+        if not isinstance(payload.get("facts"), list):
+            raise ValueError("Send the market facts as a list")
+        with db.Session.begin() as session:
+            return {"facts": dossier.save_market_facts(session, payload["facts"])}
+
+    @app.get("/api/partners/{company_id}/research")
+    def partners_research(company_id: str):
+        """What Cerebra has learned about one company: its dossier and the pages it was written from."""
+        from .models import CompanyPage, PartnerCompany
+        with db.Session() as session:
+            row = session.get(PartnerCompany, company_id)
+            if row is None:
+                raise HTTPException(404, "Company not found")
+            pages = session.scalars(select(CompanyPage).where(CompanyPage.company_id == company_id).order_by(CompanyPage.fetched_at)).all()
+            return {"dossier": row.dossier or {}, "dossier_at": row.dossier_at, "state": row.research_state,
+                    "pages": [{"url": page.url, "kind": page.kind, "fetched_at": page.fetched_at, "words": len(page.text.split()),
+                               "readable": page.readable} for page in pages]}
 
     @app.post("/api/partners/{company_id}/open")
     def partners_open(company_id: str, payload: dict):

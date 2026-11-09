@@ -1401,7 +1401,7 @@
       let state; try { state = await api("/api/partners"); } catch (issue) { root.replaceChildren(body(empty("Company pitches unavailable", issue.message))); return; }
       if (token !== renderToken) return;
       const counts = state.counts || {}, rules = state.settings || {}, search = state.search || {}, stats = el("div", "grid stats");
-      [["Companies listed", state.total || 0, `${counts.new || 0} not read yet · ${state.big_tech || 0} big tech`, "blue"], ["Ready to pitch", counts.ready || 0, "a public role address", "cyan"],
+      [["Companies listed", state.total || 0, `${counts.new || 0} not read yet · ${state.big_tech || 0} big tech · ${state.researched || 0} researched`, "blue"], ["Ready to pitch", counts.ready || 0, "a public role address", "cyan"],
        ["Apply on their site", counts.forms || 0, "application pages to open", "amber"], ["Pitched", (counts.sent || 0) + (counts.followed_up || 0), `${state.sent_today} of ${state.limit} today`, "blue"],
        ["Replied", counts.replied || 0, "answer from your Gmail", "green"]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
@@ -1455,7 +1455,7 @@
       const list = el("div", "row-list");
       shown.slice(0, 300).forEach(item => {
         const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name), el("div", "row-meta", [item.domain, item.source, item.kind === "big_tech" ? "big tech" : "", item.personal ? "tailored" : ""].filter(Boolean).join(" · ")),
-          item.about ? el("div", "row-meta", item.about.slice(0, 160)) : null,
+          (item.summary || item.about) ? el("div", "row-meta", (item.summary || item.about).slice(0, 160)) : null,
           el("div", "row-meta", item.email ? `✉ ${item.email}` : array(item.pages).length ? `${item.pages.length} application page(s): ${item.pages.map(page => page.label).slice(0, 3).join(", ")}` :
             item.notes || (item.status === "new" ? "Its website is read next" : "No public role address")),
           item.reply?.snippet ? el("div", "row-meta", `↩ ${item.reply.snippet.slice(0, 160)}`) : null), partnerBadge(item.status));
@@ -1468,7 +1468,7 @@
               search.message ? hint(search.running ? `${search.message} This page refreshes itself.` : search.message) : null),
               shown.length ? list : body(empty(state.total ? "Nothing here" : "No companies yet", "Press Find companies: Cerebra lists AI, language-data and translation companies (a starter list, then Wikidata), then reads each one's own website for a public role address such as partnerships@ or vendors@, and for its pages for vendors, linguists and contributors.", null, "✉"))), null, shown.length),
             panel("Add a company you know", body(addForm))),
-          append(el("div"), panel("Your pitch", body(form)), preview ? panel("How the next one reads", body(preview)) : null,
+          append(el("div"), panel("Your pitch", body(form)), preview ? panel("How the next one reads", body(preview)) : null, marketFactsPanel(),
             panel("How it works", body(hint("Only a company's own role addresses are used (partnerships@, vendors@, hello@, info@…), never a person's own address, and nothing is guessed. Each email goes from your Gmail with your name, postal address and an opt-out line. One follow-up at most; a reply stops it and tells you; “no thanks” or a bounce means that company is never written to again. Many companies take vendors and linguists only through a form: open the page, apply yourself, and mark it applied. Cerebra never fills in forms."))))));
     })();
     return root;
@@ -1480,6 +1480,35 @@
     const trimmed = text.trim(), at = trimmed.indexOf("\n\n");
     return at < 0 ? `${personal}\n\n${trimmed}` : `${trimmed.slice(0, at)}\n\n${personal}\n\n${trimmed.slice(at + 2)}`;
   }
+  function marketFactsPanel() {
+    // The only figures besides a company's own that a pitch may use: each needs its source.
+    const box = el("div"), list = el("div");
+    const rowFor = (item = {}) => {
+      const fact = input("What, e.g. Kiswahili speakers", item.fact || ""), figure = input("Figure, e.g. over 100 million", item.figure || ""), source = input("Source, e.g. UNESCO", item.source || "");
+      const line = append(el("div", "form-grid"), field("Fact", fact), field("Figure", figure), field("Source", source));
+      line.read = () => ({fact: fact.value, figure: figure.value, source: source.value});
+      return line;
+    };
+    const save = button("Save market facts", () => act("Saved.", () => mutate("/api/partners/market-facts", {facts: [...list.children].map(line => line.read())}, "PUT")), "button small primary");
+    const add = button("Add a fact", () => list.append(rowFor()), "button small ghost");
+    api("/api/partners/market-facts").then(result => array(result.facts).forEach(item => list.append(rowFor(item)))).catch(() => {});
+    append(box, hint("Pitches may only use figures from a company's own research or from this list, and every figure is checked before an email goes. Keep each one with where it comes from; clear a fact's boxes and save to remove it."), list, actionsRow(add, save));
+    return panel("Market facts for your pitches", body(box));
+  }
+  function researchBlock(item) {
+    const box = el("div"); box.append(el("p", "row-meta", "Loading what Cerebra has learned about them…"));
+    api(`/api/partners/${item.id}/research`).then(found => {
+      const facts = found.dossier || {}, read = array(found.pages).filter(page => page.readable);
+      const list = (label, values) => array(values).length ? el("div", "row-meta", `${label}: ${values.join("; ")}`) : null;
+      box.replaceChildren(
+        facts.summary ? el("p", "", facts.summary) : hint(read.length ? `${read.length} page(s) of their website read so far; the summary is written once enough is in.` : "Their website hasn't been studied yet: it is read a few pages at a time, the companies about to be pitched first."),
+        list("Products", facts.products), list("AI work", facts.ai_work), list("Languages", facts.languages), list("Markets", facts.markets),
+        list("Africa", facts.africa), list("Hiring", facts.hiring), list("Priorities", facts.priorities),
+        array(facts.facts).length ? append(el("ul", "tips"), ...facts.facts.map(fact => el("li", "", `${fact.fact} (${fact.url})`))) : null,
+        read.length ? el("div", "row-meta", `From ${read.length} page(s) of their own website${found.dossier_at ? `, summarised ${date(found.dossier_at)}` : ""}.`) : null);
+    }).catch(issue => box.replaceChildren(hint(issue.message, true)));
+    return box;
+  }
   function partnerDialog(item, state) {
     const rules = state.settings || {}, fill = value => String(value || "").replaceAll("{company}", item.name).replaceAll("{website}", item.domain || item.website);
     const big = item.kind === "big_tech" && rules.big_subject && rules.big_body;
@@ -1488,7 +1517,7 @@
     const personal = textarea("A short paragraph about their work and how you help it", item.personal || "");
     text.rows = 10; notes.rows = 2; personal.rows = 3;
     const refill = value => { text.value = fill(withPersonal(pitchBody, value)); };
-    const writeIt = button(item.personal ? "Write it again" : "Write it from their website", () => act("Written from their website.", () => mutate(`/api/partners/${item.id}/tailor`, {again: !!item.personal}, "POST", 300000))
+    const writeIt = button(item.personal ? "Write it again" : "Research them and write it", () => act("Written from their website.", () => mutate(`/api/partners/${item.id}/tailor`, {again: !!item.personal}, "POST", 300000))
       .then(result => { if (result) { personal.value = result.personal; item.personal = result.personal; refill(result.personal); } }), "button small");
     const keep = button("Use my edit", () => act("Saved.", () => mutate(`/api/partners/${item.id}`, {personal: personal.value}, "PATCH")).then(result => { if (result) { item.personal = result.personal; refill(result.personal); } }), "button small ghost");
     const open = url => act("Opened in your browser.", () => mutate(`/api/partners/${item.id}/open`, {url}));
@@ -1498,7 +1527,8 @@
     const send = button("Send with Gmail", () => act(result => result.message, () => mutate(`/api/partners/${item.id}/send`, {to: to.value.trim(), subject: subject.value, text: text.value}, "POST", 120000))
       .then(result => { if (result) { closeDialog(); render(); } }), "button primary");
     const mark = status => act("Saved.", () => mutate(`/api/partners/${item.id}`, {status, notes: notes.value}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } });
-    showDialog(item.name, append(el("div"), el("div", "row-meta", [item.domain, item.source].filter(Boolean).join(" · ")), item.about ? el("p", "", item.about) : null, partnerBadge(item.status),
+    showDialog(item.name, append(el("div"), el("div", "row-meta", [item.domain, item.source].filter(Boolean).join(" · ")), partnerBadge(item.status),
+      el("h4", "", "What Cerebra has learned about them"), researchBlock(item),
       el("h4", "", "Their website and application pages"), pages,
       array(item.emails).length > 1 ? hint(`Other role addresses on their site: ${item.emails.filter(value => value !== item.email).join(", ")}`) : null,
       sentAlready ? append(el("div"), el("h4", "", "What was sent"), ...array(item.sent).map(mail => append(el("div"), el("div", "row-meta", `${date(mail.at)}${mail.follow_up ? " · follow-up" : ""}: ${mail.subject}`), el("pre", "code-block", mail.body))),

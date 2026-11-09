@@ -564,8 +564,24 @@ class PartnerCompany(Base):
     research: Mapped[str] = mapped_column(Text, default="")  # what the company says about itself on its own site
     personal: Mapped[str] = mapped_column(Text, default="")  # the paragraph written for this company from that research
     personal_at: Mapped[str] = mapped_column(String, default="")  # when it was written ("" = not yet)
+    dossier: Mapped[dict] = mapped_column(JSON, default=dict)  # the research summary written from its pages (ai_hq/dossier.py)
+    dossier_at: Mapped[str] = mapped_column(String, default="")
+    research_state: Mapped[str] = mapped_column(String, default="")  # "" reading | read (all worth reading is in) | done (analysed)
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
+
+
+class CompanyPage(Base):
+    """One page of a pitched company's own website, kept for its research (ai_hq/dossier.py). kind: home | about | products | ..."""
+    __tablename__ = "company_pages"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    company_id: Mapped[str] = mapped_column(ForeignKey("partner_companies.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String, default="")
+    text: Mapped[str] = mapped_column(Text, default="")
+    readable: Mapped[bool] = mapped_column(Boolean, default=False)
+    links: Mapped[list] = mapped_column(JSON, default=list)  # on the home page: the pages worth reading next
+    fetched_at: Mapped[str] = mapped_column(String, default=now)
 
 
 class ModelUsage(Base):

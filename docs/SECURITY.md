@@ -29,7 +29,11 @@ Cerebra is a desktop program: one owner, a server bound to 127.0.0.1, and a loca
   - Table and column names come only from Cerebra's models.
   - An unknown future schema version is still refused.
 - **N+1 queries:** the freelance approval sweep loads all pending approvals in one query instead of one per task.
-- **Company pitch research:** to tailor each pitch, the text a company shows on its own public home page (title, description, headings and opening paragraphs, at most 2,400 characters) is sent with the owner's pitch to the owner's own writing model (the Prospects choice: subscription or a free model, never a paid API without the owner choosing it). The website text is labelled as data, and the result is checked before use: no brackets, placeholders or tool names, and a length limit. Without a usable paragraph that company is not emailed automatically.
+- **Company pitch research (0.74.29):**
+  - Each pitched company's own public website is read a few pages at a time, with robots.txt respected and a pause between pages. It never touches login, account, legal or file pages, and reads at most 14 pages per company. The pages are kept in the `company_pages` table.
+  - The owner's own writing model (the Prospects choice) turns them into a dossier, keeping only facts whose page is stored.
+  - Pitch paragraphs are written from the dossier and the owner's market facts, each with its source. Every number in a paragraph must appear in those sources, or the paragraph is rejected and the company is not emailed automatically.
+  - Website text is always labelled as data, never instructions.
 
 **Already in place**
 - **Authentication and session management:**
