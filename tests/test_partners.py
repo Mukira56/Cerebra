@@ -294,3 +294,27 @@ def test_a_run_that_cant_send_says_why_on_the_page_and_tells_the_owner_once(clie
     robot.tick()
     assert len(told) == 1 and "Connect Gmail again" in told[0]
     assert "Connect Gmail again" in client.get("/api/partners").json()["status"]["message"]
+
+
+def test_a_gmail_sign_in_google_ended_is_remembered_and_named_before_anything_is_tried(client):  # noqa: F811
+    from ai_hq import gmail as gmail_module
+    state, robot = prepared(client)
+    db = client.app.state.db
+    with db.Session.begin() as session:
+        value = gmail_module.load(session)
+        gmail_module._store(session, {**value, "client_id": "1-a.apps.googleusercontent.com", "client_secret": "", "refresh_token": "x"})
+    refused = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(400, json={"error": "invalid_grant"})))
+    mailbox = gmail_module.Gmail(db, "http://127.0.0.1/callback", client=refused)
+    from ai_hq import vault
+    original = vault.unprotect
+    vault.unprotect = lambda value: value
+    try:
+        try:
+            mailbox.send("team@forms.example", "Hello", "A short note.")
+        except ValueError as exc:
+            assert "Connect Gmail again" in str(exc)
+    finally:
+        vault.unprotect = original
+    with db.Session() as session:
+        assert gmail_module.public(gmail_module.load(session))["expired"] is True
+    assert any("Google ended your Gmail sign-in" in item for item in client.get("/api/partners").json()["ready"])

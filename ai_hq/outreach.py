@@ -264,6 +264,7 @@ class Outreach:
         from .prospects import footer
         mail = gmail_module.public(gmail_module.load(session))
         problems = ["Connect Gmail in Business connections"] if not mail["connected"] else \
+            ["Google ended your Gmail sign-in: press Connect Gmail in Business connections again"] if mail.get("expired") else \
             ["Connect Gmail again and allow sending email (it's read-only now)"] if not mail["can_send"] else []
         return problems + [f"Add {item} in Money › Your business" for item in footer(session)[1]]
 

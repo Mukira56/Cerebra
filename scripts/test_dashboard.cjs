@@ -253,6 +253,11 @@ const path = require('node:path');
     assert.ok(await page.getByRole('button', {name: 'Check for updates'}).isVisible(), 'Updates can be checked from inside the app');
     assert.ok(await page.getByRole('button', {name: 'Turn Away mode on'}).isDisabled(), 'Away mode needs agents on first');
     await shot('settings');
+    // The top bar's update button scrolls to Settings › Updates, even when Settings is already open.
+    await page.evaluate(() => { const pill = document.getElementById('update-status'); pill.className = 'pill good'; pill.textContent = 'Update 9.9.9 ready · install'; window.scrollTo(0, 0); document.querySelector('main, .content, #content')?.scrollTo?.(0, 0); });
+    await page.locator('#update-status').click(); await page.waitForTimeout(900);
+    const updatesTop = await page.evaluate(() => document.getElementById('updates-panel').getBoundingClientRect().top);
+    assert.ok(updatesTop >= 0 && updatesTop < 400, `The update button brings Settings › Updates into view (top ${updatesTop})`);
 
     // Switch agents on, delegate approvals to Away mode, then turn both off again.
     await page.getByText(/run on my own accounts/).click();

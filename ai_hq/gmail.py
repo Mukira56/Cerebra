@@ -40,7 +40,8 @@ def load(session):
 def public(value):
     return {"configured": bool(value.get("client_id")), "client_id": value.get("client_id", ""),
             "connected": bool(value.get("refresh_token")), "email": value.get("email", ""), "connected_at": value.get("connected_at", ""),
-            "can_send": bool(value.get("refresh_token") and value.get("can_send"))}
+            "can_send": bool(value.get("refresh_token") and value.get("can_send")),
+            "expired": bool(value.get("refresh_token") and value.get("expired_at"))}
 
 
 def _store(session, value):
@@ -101,6 +102,7 @@ class Gmail:
         email = self.get("profile").get("emailAddress", "")
         with self.db.Session.begin() as session:
             stored = load(session)
+            stored.pop("expired_at", None)
             stored.update(refresh_token=vault.protect(tokens["refresh_token"]), email=email, connected_at=now(),
                           can_send=SEND in tokens.get("scope", "").split())  # the owner may allow reading only
             _store(session, stored)
@@ -117,6 +119,12 @@ class Gmail:
         response = self.client.post(TOKEN, data={"client_id": value["client_id"], "client_secret": vault.unprotect(value["client_secret"]),
                                                  "refresh_token": vault.unprotect(value["refresh_token"]), "grant_type": "refresh_token"})
         if response.status_code != 200:
+            if response.status_code in {400, 401}:  # Google ended the sign-in (revoked, or a 7-day "Testing" app): remember it, so every page says so
+                with self.db.Session.begin() as session:
+                    stored = load(session)
+                    if stored.get("refresh_token"):
+                        stored["expired_at"] = now()
+                        _store(session, stored)
             raise ValueError("Gmail access was revoked or expired. Connect Gmail again.")
         data = response.json()
         self._access = (data["access_token"], time.monotonic() + int(data.get("expires_in", 3600)) - 120)

@@ -18,6 +18,8 @@ class GitHub:
         url = str(request.url)
         self.asked.append(url)
         if request.url.host == "api.github.com":
+            if self.api == "unreachable":
+                raise httpx.ConnectTimeout("timed out", request=request)
             if self.api == 200:
                 return httpx.Response(200, json={"tag_name": "v9.9.9", "name": "Notes title", "body": "Notes", "assets": [
                     {"name": NAME, "size": 5, "browser_download_url": f"{SITE}/download/v9.9.9/{NAME}"}]})
@@ -82,3 +84,20 @@ def test_the_download_addresses_pass_the_updaters_own_check(github):
     github()
     assert all(item["url"].startswith(f"https://github.com/{updater.REPOSITORY}/releases/download/") for item in PublicGitHub().release()["assets"])
     assert updater.INSTALLER.match(NAME)
+
+
+def test_when_only_the_api_cant_be_reached_the_release_comes_from_the_website(github):
+    github(api="unreachable")
+    assert PublicGitHub().release()["tagName"] == "v9.9.9"
+
+
+def test_when_github_cant_be_reached_at_all_the_owner_is_told_to_check_the_connection(monkeypatch):
+    real = httpx.Client
+    monkeypatch.setattr(updater, "REPOSITORY", REPOSITORY)
+    monkeypatch.setattr(updater, "API", f"https://api.github.com/repos/{REPOSITORY}")
+
+    def down(request):
+        raise httpx.ConnectError("no route", request=request)
+    monkeypatch.setattr(httpx, "Client", lambda **options: real(transport=httpx.MockTransport(down), **options))
+    with pytest.raises(ValueError, match="could not be reached"):
+        PublicGitHub().release()

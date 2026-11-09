@@ -30,7 +30,10 @@ internal sealed class DesktopWindow : Form {
     }
     internal async Task OpenWorkspace(string url) {
         if(!Local(url)) throw new InvalidOperationException("The workspace address is not the configured local service.");
-        Show(); if(WindowState==FormWindowState.Minimized) WindowState=FormWindowState.Normal; Activate();
+        Show(); if(WindowState==FormWindowState.Minimized) WindowState=FormWindowState.Normal;
+        // Started by the update helper (a background process), Windows won't let Activate() take the foreground and only
+        // flashes the taskbar, so Cerebra seemed not to reopen. Raising it to the top of the window stack always works.
+        TopMost=true; TopMost=false; BringToFront(); Activate();
         if(view.CoreWebView2==null) {
             string profile=Path.Combine((string)Shared.Config(Shared.Root)["data_dir"],"desktop-profile");
             var environment=await CoreWebView2Environment.CreateAsync(null,profile);

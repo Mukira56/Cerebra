@@ -3131,7 +3131,7 @@
       }
       root.append(panel("Shopify stores", body(withNotes(shopifyStores(stores), "shopify")), button("How to connect…", () => guideDialog("shopify"), "button small ghost")));
       const gmailForm = el("form"), clientId = input("Google Desktop app OAuth client ID", mail.client_id || ""), secret = input("Google client secret", ""); secret.type = "password"; secret.autocomplete = "off";
-      const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", "hint", mail.connected ? (mail.can_send ? `Connected: ${mail.email} (reads, and sends what you send from Prospects)` : `Connected read-only: ${mail.email}. Connect Gmail again and allow sending to email businesses from Prospects.`) : "Not connected");
+      const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", mail.expired ? "hint warn" : "hint", mail.expired ? `Google ended the sign-in for ${mail.email}, so nothing can be sent or read. Press Connect Gmail… again. If your Google Cloud app is in Testing, publish it (OAuth consent screen › Publish app) so the sign-in no longer ends after 7 days.` : mail.connected ? (mail.can_send ? `Connected: ${mail.email} (reads, and sends what you send from Prospects)` : `Connected read-only: ${mail.email}. Connect Gmail again and allow sending to email businesses from Prospects.`) : "Not connected");
       append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra reads messages to see wins and replies, and sends only the emails you send from Prospects (or Automatic outreach, if you switch it on). It never deletes or changes mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
       wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Read-only Gmail intake", body(withNotes(gmailForm, "gmail")), button("How to connect…", () => guideDialog("gmail"), "button small ghost")));
       const notifyForm = el("form"), ntfy = check("Send progress notifications through ntfy", notifications.ntfy_enabled), telegram = check("Send progress notifications to my Telegram bot", notifications.telegram_enabled);
@@ -3429,7 +3429,7 @@
     const save = submitButton("Save"); limits.append(actionsRow(save));
     wireForm(limits, save, async () => { const payload = {}; Object.entries(controls).forEach(([name, control]) => { payload[name] = unlimited[name]?.[0].checked ? unlimited[name][1] : control.type === "number" ? Number(control.value) : control.value.trim(); }); await mutate("/api/settings", payload, "PATCH"); await refresh(true); toast("Settings saved."); });
     root.append(panel("Limits & programs", body(limits)));
-    root.append(panel("Updates", body(updatesPanel())));
+    const updates = panel("Updates", body(updatesPanel())); updates.id = "updates-panel"; root.append(updates);
     root.append(panel("Backups", body(backupsPanel())));
 
     root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));
@@ -3514,6 +3514,14 @@
   }
   function route() { const [name, ...rest] = location.hash.slice(1).split("/"); page = Object.hasOwn(pages, name) ? name : "overview"; param = rest.join("/"); if (page === "job" && !param) page = "business"; if (page === "report" && !param) page = "reports"; render(); }
   window.addEventListener("hashchange", route);
+  // The top bar's update button opens Settings › Updates itself: a plain link did nothing when Settings was already open,
+  // and otherwise left the Updates panel far below the fold.
+  $("#update-status").addEventListener("click", event => {
+    event.preventDefault();
+    const show = (tries = 20) => { const target = document.getElementById("updates-panel"); if (target) target.scrollIntoView({behavior: "smooth", block: "start"}); else if (tries) setTimeout(() => show(tries - 1), 100); };
+    if (page !== "settings") location.hash = "settings";
+    show();
+  });
   async function boot() {
     try {
       const hash = new URLSearchParams(location.hash.slice(1)), key = hash.get("key");

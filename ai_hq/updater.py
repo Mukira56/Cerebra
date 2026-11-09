@@ -131,7 +131,12 @@ class PublicGitHub:
             with httpx.Client(timeout=30, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}) as client:
                 answer = client.get(API + path)
         except httpx.HTTPError:
-            raise ValueError("GitHub could not be reached. Check your internet connection and try again.") from None
+            # GitHub's API and its ordinary pages are served from different addresses: when only the API can't be
+            # reached (a blocked or unreliable route), the same facts still come from the release pages.
+            try:
+                return self._from_website(tag)
+            except ValueError:
+                raise ValueError("GitHub could not be reached. Check your internet connection and try again.") from None
         if answer.status_code == 404:
             return None
         if answer.status_code in {403, 429}:
