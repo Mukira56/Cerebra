@@ -444,10 +444,10 @@
   }
 
   // ---------- tasks ----------
-  let taskStateFilter = "";
+  let taskStateFilter = "", taskProjectFilter = "";
   function tasksView() {
-    const node = el("div"), filters = el("div", "form-grid"), projectFilter = select([["", "All projects"], ...array(data.projects).map(project => [project.id, project.name])]), stateFilter = select([["", "All states"], ["active", "Active (working now)"], ...[...new Set([...array(data.tasks).map(task => task.state), "FAILED", "COMPLETED"])].map(state => [state, nice(state)])], taskStateFilter);
-    taskStateFilter = "";
+    const node = el("div"), filters = el("div", "form-grid"), projectFilter = select([["", "All projects"], ...array(data.projects).map(project => [project.id, project.name])], taskProjectFilter), stateFilter = select([["", "All states"], ["active", "Active (working now)"], ...[...new Set([...array(data.tasks).map(task => task.state), "FAILED", "COMPLETED"])].map(state => [state, nice(state)])], taskStateFilter);
+    taskStateFilter = ""; taskProjectFilter = "";
     const search = input("Search tasks: words, a task ID, a project, an error…"); search.type = "search";
     const holder = el("div");
     function paint() { const tasks = array(data.tasks).filter(task => (!projectFilter.value || task.project_id === projectFilter.value) && (!stateFilter.value || task.state === stateFilter.value || (stateFilter.value === "active" && ACTIVE.includes(task.state)))
@@ -705,7 +705,9 @@
   }
   function projectsView() {
     if (!array(data.projects).length) return panel("Projects", body(empty("No projects yet", "Add an existing folder, start a new project, or clone one from GitHub.", button("+ Add project", () => projectForm(), "button primary"), "{}")));
-    const grid = el("div", "grid cards");
+    const grid = el("div", "grid cards"), root = el("div"), glance = el("div");
+    root.append(glance, grid);
+    projectsAtAGlance(glance);
     data.projects.forEach(project => {
       const card = el("article", "card"), top = el("div", "card-top"), info = el("div"), tasks = array(data.tasks).filter(task => task.project_id === project.id);
       const where = el("div", "row-meta project-path", project.path); where.title = project.path;
@@ -723,7 +725,26 @@
       append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), viewControls("project", project.id), button("Chat", () => newChat(project.id), "button small"), button("Get paid…", () => paymentsTaskChooser(project), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
       grid.append(card);
     });
-    return grid;
+    return root;
+  }
+  // Every project in one table: what's working, what needs the owner, what's done or failed, and what the AI runs used.
+  function projectsAtAGlance(holder) {
+    const token = renderToken;
+    api("/api/projects/summary").then(summary => {
+      if (token !== renderToken || array(summary.projects).length < 2) return;  // one project: its card says it all
+      const t = summary.totals, cell = (value, cls) => el("td", value ? cls || "" : "muted", String(value));
+      const rows = summary.projects.map(item => {
+        const name = el("td"), open = el("a", "", item.name);
+        open.href = "#tasks"; open.addEventListener("click", () => { taskProjectFilter = item.id; });
+        name.append(open);
+        return append(el("tr"), name, cell(item.approvals, "attention"), cell(item.working), cell(item.queued), cell(item.stuck, "attention"),
+          cell(item.done), cell(item.failed, "attention"), el("td", "", item.tokens ? tokens(item.tokens) : "—"), el("td", "row-meta", relative(item.last_activity)));
+      });
+      holder.replaceChildren(panel("All projects at a glance", body(
+        hint(`${t.working} working, ${t.approvals} ${t.approvals === 1 ? "approval" : "approvals"} waiting for you, ${t.done} done and ${t.failed} failed across ${summary.projects.length} projects.`),
+        append(el("div", "table-wrap"), append(el("table", "glance"), append(el("thead"), append(el("tr"), el("th", "", "Project"), el("th", "", "Needs you"), el("th", "", "Working"),
+          el("th", "", "Queued"), el("th", "", "Stuck"), el("th", "", "Done"), el("th", "", "Failed"), el("th", "", "Tokens"), el("th", "", "Last activity"))), append(el("tbody"), ...rows))))));
+    }).catch(() => {});
   }
   const TEST_PRESETS = [["none", "Not yet: add tests later", null], ["pytest", "Python: pytest", ["python", "-m", "pytest", "-q"]], ["unittest", "Python: unittest", ["python", "-m", "unittest", "-q"]],
     ["npm", "Node.js: npm test", ["npm", "test"]], ["pnpm", "Node.js: pnpm test", ["pnpm", "test"]], ["yarn", "Node.js: yarn test", ["yarn", "test"]], ["dotnet", ".NET: dotnet test", ["dotnet", "test"]],

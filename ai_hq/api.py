@@ -332,6 +332,44 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         task["test_results"] = [{key: result.get(key) for key in ("command", "passed", "exit_code")} for result in (task.get("test_results") or [])[-10:]]
         return task
 
+    @app.get("/api/projects/summary")
+    def projects_summary():
+        """Every project at a glance: tasks working, waiting for the owner, queued, done and failed; the last activity;
+        and what the AI runs used. A handful of grouped queries over all tasks, however many there are."""
+        from sqlalchemy import func
+        from .supervisor import ACTIVE
+        groups = {"working": ACTIVE | {"PLANNING"}, "waiting": {"AWAITING_APPROVAL"}, "queued": {"PENDING", "READY"},
+                  "stuck": {"BLOCKED"}, "done": {"COMPLETED"}, "failed": {"FAILED"}}
+        with db.Session() as session:
+            rows = {project.id: {"id": project.id, "name": project.name, "tasks": 0, "last_activity": project.created_at,
+                                 **{key: 0 for key in groups}, "approvals": 0, "runs": 0, "tokens": 0, "list_cost": 0.0}
+                    for project in session.scalars(select(Project).order_by(Project.name))}
+            for project_id, state, count, latest in session.execute(select(Task.project_id, Task.state, func.count(), func.max(Task.updated_at))
+                                                                    .group_by(Task.project_id, Task.state)):
+                row = rows.get(project_id)
+                if row is None:
+                    continue
+                row["tasks"] += count
+                row["last_activity"] = max(row["last_activity"] or "", latest or "")
+                for key, states in groups.items():
+                    if state in states:
+                        row[key] += count
+            for project_id, count in session.execute(select(Task.project_id, func.count(Approval.id)).join(Approval, Approval.task_id == Task.id)
+                                                     .where(func.upper(Approval.status) == "PENDING").group_by(Task.project_id)):
+                if project_id in rows:
+                    rows[project_id]["approvals"] = count
+            for project_id, runs, tokens, cost in session.execute(select(Task.project_id, func.count(Run.id),
+                                                                         func.coalesce(func.sum(Run.input_tokens + Run.output_tokens + Run.cached_tokens), 0),
+                                                                         func.coalesce(func.sum(Run.list_cost), 0.0))
+                                                                  .join(Run, Run.task_id == Task.id).group_by(Task.project_id)):
+                if project_id in rows:
+                    rows[project_id].update(runs=runs, tokens=int(tokens), list_cost=round(float(cost), 2))
+        # Projects that need the owner first, then those working, then the most recently active.
+        projects = sorted(rows.values(), key=lambda row: row["last_activity"] or "", reverse=True)
+        projects.sort(key=lambda row: (-row["approvals"], -row["working"]))
+        totals = {key: sum(row[key] for row in projects) for key in ("tasks", "working", "waiting", "queued", "stuck", "done", "failed", "approvals", "runs", "tokens")}
+        return {"projects": projects, "totals": totals}
+
     @app.get("/api/overview")
     def overview():
         with db.Session() as session:

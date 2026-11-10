@@ -264,3 +264,26 @@ def test_the_test_button_always_asks_the_model_for_real(client):  # noqa: F811
     client.post("/api/models/hub/test", json={"category": "research"})
     calls = len(site.bodies)
     assert client.post("/api/models/hub/test", json={"category": "research"}).json()["ok"] and len(site.bodies) == calls + 1
+
+
+def test_every_project_at_a_glance(client, tmp_path):  # noqa: F811
+    from test_routing_access import calculator
+    from test_product_api import enable_agents
+    from ai_hq.models import Approval, Run, Task
+    enable_agents(client)
+    quiet = client.post("/api/projects", json={"name": "Quiet", "path": str(calculator(tmp_path / "quiet")), "authorize": True, "test_commands": [["python", "-c", "pass"]]}).json()
+    busy = client.post("/api/projects", json={"name": "Busy", "path": str(calculator(tmp_path / "busy")), "authorize": True, "test_commands": [["python", "-c", "pass"]]}).json()
+    done = client.post("/api/tasks", json={"project_id": quiet["id"], "description": "Fix calculator addition"}).json()
+    waiting = client.post("/api/tasks", json={"project_id": busy["id"], "description": "Fix calculator subtraction"}).json()
+    failed = client.post("/api/tasks", json={"project_id": busy["id"], "description": "Fix calculator division"}).json()
+    with client.app.state.db.Session.begin() as session:
+        session.get(Task, done["id"]).state = "COMPLETED"
+        session.get(Task, failed["id"]).state = "FAILED"
+        session.get(Task, waiting["id"]).state = "AWAITING_APPROVAL"
+        session.add(Approval(task_id=waiting["id"], kind="merge", status="PENDING"))
+        session.add(Run(task_id=failed["id"], agent="claude", role="implement", status="failed", input_tokens=300, output_tokens=100))
+    summary = client.get("/api/projects/summary").json()
+    first, second = summary["projects"]
+    assert first["name"] == "Busy" and first["waiting"] == 1 and first["approvals"] >= 1 and first["failed"] == 1 and first["tokens"] == 400
+    assert second["name"] == "Quiet" and second["done"] == 1 and second["tasks"] == 1
+    assert summary["totals"]["tasks"] == 3 and summary["totals"]["failed"] == 1

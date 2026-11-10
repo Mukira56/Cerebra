@@ -156,7 +156,11 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 ## Phase 10: Multi-project management
 
-**Status:** Not started on new work. Projects, task queues, dependencies and resumable tasks already exist.
+**Status:** In progress. Projects, task queues, dependencies and resumable tasks already exist.
+
+**Done after 0.74.35:** **All projects at a glance** on the Projects page (`GET /api/projects/summary`): per project, the approvals waiting for the owner, tasks working, queued, stuck, done and failed, tokens used and last activity, from grouped queries over every task. Projects needing the owner come first; a name opens Tasks filtered to that project.
+
+**Remaining:** priorities across projects (which project's queue runs first), and a weekly progress summary per project.
 
 ## Phase 11: Hardening
 
@@ -166,6 +170,6 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Also fixed in 0.74.35:** three invisible control characters in Company pitches' page finder (since it was added) kept translator, interpreter and "become a…" pages from being recognised. A source check (`tests/test_source_hygiene.py`) now fails on any control character.
 
-**Next priority:** Phase 5, the remaining resource work: sending only the files that matter as context, caching repeated questions, and cost per task. Then Phase 10's consolidated project dashboard.
+**Next priority:** Phase 5's last item, sending only the files that matter as context. Then Phase 9's evaluation sets and regression alerts.
 
 **Previous priority:** Phase 3, measuring downstream success. Record when a task started from an architect spec, then compare completion and first-review pass rates per architect model in Model intelligence.
