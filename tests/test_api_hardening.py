@@ -41,3 +41,9 @@ def test_changes_are_rate_limited_per_session(client):
     refused = client.delete("/api/business/gmail")
     assert refused.status_code == 429 and int(refused.headers["Retry-After"]) > 0
     assert client.get("/api/logs").status_code == 200  # reading is never limited
+
+
+def test_the_bundled_fonts_are_served_as_fonts(client):
+    response = client.get("/static/fonts/Inter-Regular.woff2")
+    assert response.status_code == 200 and response.headers["content-type"] == "font/woff2" and len(response.content) > 50000
+    assert client.get("/static/fonts/Inter-LICENSE.txt").status_code == 200  # the licence travels with the fonts

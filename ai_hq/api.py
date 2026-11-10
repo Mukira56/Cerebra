@@ -27,6 +27,8 @@ from .security import redact
 from . import __version__
 
 STATIC = Path(__file__).parent / "static"
+import mimetypes  # noqa: E402
+mimetypes.add_type("font/woff2", ".woff2")  # the bundled interface fonts (Windows doesn't always know this type)
 
 def create_app(settings=None, bootstrap_key=None, start_worker=True):
     settings = settings or Settings()

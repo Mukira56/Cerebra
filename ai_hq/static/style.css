@@ -5,6 +5,14 @@
    green done/connected/offer, amber waiting for the owner, red failed, blue running/info, grey off.
    Shapes are rectangular: 2-4 px corners, 1 px borders, shadows only on dialogs and menus. */
 
+/* ---------- fonts: bundled with Cerebra (SIL Open Font License, see fonts/*-LICENSE.txt) ---------- */
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: url("/static/fonts/Inter-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap; src: url("/static/fonts/Inter-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 600; font-display: swap; src: url("/static/fonts/Inter-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 700; font-display: swap; src: url("/static/fonts/Inter-Bold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("/static/fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 700; font-display: swap; src: url("/static/fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
+
 /* ---------- tokens ---------- */
 :root {
   --base: 14px;
