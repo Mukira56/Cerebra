@@ -125,4 +125,16 @@ def build(task, project, data_dir):
     return {"task_id": task.get("id"), "project": project.get("name"), "emoji": emoji, "headline": headline, "meaning": meaning,
             "asked": task.get("description", ""), "helpers": helpers, "steps": steps, "changed_files": changed,
             "saved": saved, "next": next_step, "state": state, "updated_at": task.get("updated_at"), "evidence": proof,
-            "feedback": (task.get("results") or {}).get("feedback")}
+            "feedback": (task.get("results") or {}).get("feedback"), "usage": usage(task.get("runs", []))}
+
+
+def usage(runs):
+    """A task's (or project's) runs added up: tokens and the list-price equivalent the providers reported."""
+    total = {"runs": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "list_cost": 0.0}
+    for run in runs:
+        total["runs"] += 1
+        for key in ("input_tokens", "output_tokens", "cached_tokens"):
+            total[key] += int(run.get(key) or 0)
+        total["list_cost"] += float(run.get("list_cost") or 0.0)
+    total["list_cost"] = round(total["list_cost"], 4)
+    return total

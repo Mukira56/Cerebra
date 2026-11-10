@@ -111,7 +111,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 **Remaining**
 - Retrieve only the files that matter when context is needed.
 - Cache repeated questions.
-- Show cost per task and per project.
+- ~~Show cost per task and per project~~ Done after 0.74.35: every coding run records the tokens and list-price equivalent its provider reported (Claude's result event, Codex's turn events; nothing estimated). Each task report shows "What it used", and Model intelligence has "Use per project" from one grouped query.
 - ~~Continue non-coding work while Claude is used up~~ Done in 0.74.35: a writing turn routed to the owner's Claude account moves to a free model when Claude's plan is used up, and only then. Coding tasks still wait for Claude.
 
 ## Phase 6: Software development workflow

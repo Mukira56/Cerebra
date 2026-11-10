@@ -2239,6 +2239,15 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             value, measured, policy = modelhub.settings(session), modelhub.performance(session), routing.load(session)
             today = {key: modelhub.calls_today(session, key) for key in modelhub.CATEGORIES}
             recent = list(session.scalars(select(Task).order_by(Task.created_at.desc()).limit(200)))
+            # Use per project: one grouped query over every run, not a query per task.
+            from sqlalchemy import func
+            spent = session.execute(select(Project.name, func.count(func.distinct(Task.id)), func.count(Run.id), func.coalesce(func.sum(Run.input_tokens), 0),
+                                           func.coalesce(func.sum(Run.output_tokens), 0), func.coalesce(func.sum(Run.cached_tokens), 0),
+                                           func.coalesce(func.sum(Run.list_cost), 0.0))
+                                    .join(Task, Task.project_id == Project.id).join(Run, Run.task_id == Task.id)
+                                    .group_by(Project.id, Project.name).order_by(func.sum(Run.list_cost).desc())).all()
+        projects = [{"project": name, "tasks": tasks, "runs": runs, "input_tokens": int(given), "output_tokens": int(written),
+                     "cached_tokens": int(cached), "list_cost": round(float(cost), 2)} for name, tasks, runs, given, written, cached, cost in spent]
         work = []
         for key, (label, about, default) in modelhub.CATEGORIES.items():
             current = value["routes"].get(key) or default
@@ -2276,7 +2285,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                       "handoffs": (task.results or {}).get("handoffs", [])} for task in recent[:15]]
         memory = modelhub.memory_bytes()
         return {"work": work, "coding": sorted(coding.values(), key=lambda item: -item["tasks"]), "decisions": decisions, "routing": policy,
-                "specs": sorted(specs.values(), key=lambda item: -item["tasks"]),
+                "specs": sorted(specs.values(), key=lambda item: -item["tasks"]), "projects": projects,
                 "adaptive": value["adaptive"], "min_calls": modelhub.MIN_CALLS, "memory_gb": round(memory / 2**30, 1) if memory else None,
                 "local_limit_gb": round(modelhub.LOCAL_SHARE * memory / 2**30, 1) if memory else None,
                 "subscription_note": "Claude and Codex don't tell Cerebra how much of your plan is left, so it isn't shown. Cerebra notices when a plan runs out and waits for it."}

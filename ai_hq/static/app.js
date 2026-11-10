@@ -1104,6 +1104,15 @@
       append(el("div", "proof-grid"), column("Before the change", proof.before), column("After the change", proof.after)),
       proof.newly_failing.length ? el("p", "row-meta", `Newly failing: ${proof.newly_failing.join(", ")}`) : null);
   }
+  // Tokens a task's AI runs used, as the providers reported them. The dollar figure is what the same work would cost at
+  // list prices; the owner's subscription isn't charged per run.
+  const tokens = count => count >= 1e6 ? `${(count / 1e6).toFixed(1)}M` : count >= 1e3 ? `${Math.round(count / 1e3)}k` : String(count);
+  function usageLine(usage) {
+    if (!usage || !usage.runs || !(usage.input_tokens || usage.output_tokens)) return null;
+    return append(el("div", "usage"), el("h2", "", "What it used"),
+      el("p", "", `${usage.runs} AI ${usage.runs === 1 ? "run" : "runs"}: ${tokens(usage.input_tokens + usage.cached_tokens)} tokens read, ${tokens(usage.output_tokens)} written.` +
+        (usage.list_cost ? ` At list prices that would be $${usage.list_cost.toFixed(2)}; your subscription covers it.` : "")));
+  }
   // Your verdict on a finished task: counted per coder model in Model intelligence, next to the test results.
   function feedbackBox(report) {
     if (!["COMPLETED", "FAILED", "CANCELLED"].includes(report.state)) return null;
@@ -1126,7 +1135,7 @@
       const saved = el("div", "saved"); report.saved.forEach(item => saved.append(append(el("div"), el("strong", "", item.what), el("p", "", item.explain), el("code", "", item.where))));
       append(holder.replaceChildren() || holder, hero, el("h2", "", "What you asked for"), el("div", "asked", report.asked), proofSection(report.evidence), el("h2", "", "Who helped"), helpers, el("h2", "", "What happened, step by step"), story,
         report.changed_files.length ? [el("h2", "", "Files that changed"), list(report.changed_files)] : null,
-        el("h2", "", "Where everything is saved"), saved, el("h2", "", "What happens next"), el("div", "next", report.next), feedbackBox(report));
+        el("h2", "", "Where everything is saved"), saved, el("h2", "", "What happens next"), el("div", "next", report.next), usageLine(report.usage), feedbackBox(report));
       if (!["COMPLETED", "FAILED", "CANCELLED"].includes(report.state)) pageTimer = setTimeout(() => { if (token === renderToken) load(); }, 4000);
     }
     load(); return holder;
@@ -1185,9 +1194,18 @@
         state.memory_gb ? hint(`This computer has ${state.memory_gb} GB of memory: local models larger than ${state.local_limit_gb} GB are never loaded, so it stays responsive.`) : null,
         el("h4", "", "Coding results by model"), append(el("div", "table-wrap"), coding),
         el("h4", "", "Do Prompt Architect specs help?"), specsTable(state.specs),
+        el("h4", "", "Use per project"), projectUsage(state.projects),
         el("h4", "", "Why recent tasks went where they did"), decisions, hint(state.subscription_note));
     })();
     return panel("Model intelligence", body(box));
+  }
+  function projectUsage(rows) {
+    if (!array(rows).length) return hint("No AI runs yet.");
+    return append(el("div"), append(el("div", "table-wrap"), append(el("table"), append(el("thead"), append(el("tr"), el("th", "", "Project"), el("th", "", "Tasks"), el("th", "", "AI runs"),
+      el("th", "", "Tokens read"), el("th", "", "Tokens written"), el("th", "", "At list prices"))),
+      append(el("tbody"), ...rows.map(item => append(el("tr"), el("td", "", item.project), el("td", "", String(item.tasks)), el("td", "", String(item.runs)),
+        el("td", "", tokens(item.input_tokens + item.cached_tokens)), el("td", "", tokens(item.output_tokens)), el("td", "", item.list_cost ? `$${item.list_cost.toFixed(2)}` : "Not reported")))))),
+      hint("Claude reports what each run would cost at list prices; your subscription covers it, so nothing is charged per run. Codex reports tokens only."));
   }
   function modelsView() {
     const root = el("div"), providersHolder = el("div", "grid cards"), token = renderToken;

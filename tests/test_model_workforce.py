@@ -205,3 +205,32 @@ def test_the_owner_rates_finished_work_and_it_counts_per_coder(client, tmp_path)
     coder = client.get("/api/models/intelligence").json()["coding"][0]
     assert coder["rated"] == 1 and coder["rated_good"] == 1
     assert client.post(f"/api/tasks/{task['id']}/feedback", json={"good": "yes"}).status_code == 400
+
+
+def test_tokens_come_from_the_providers_own_events_and_nothing_is_guessed():
+    from ai_hq.agents import usage_of
+    claude = {"type": "result", "subtype": "success", "total_cost_usd": 0.42,
+              "usage": {"input_tokens": 1200, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 5000, "output_tokens": 800}}
+    codex = [{"type": "turn.completed", "usage": {"input_tokens": 900, "cached_input_tokens": 100, "output_tokens": 50}},
+             {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}}]
+    assert usage_of([claude]) == {"input_tokens": 1500, "output_tokens": 800, "cached_tokens": 5000, "list_cost": 0.42}
+    assert usage_of(codex) == {"input_tokens": 910, "output_tokens": 55, "cached_tokens": 100, "list_cost": 0.0}
+    junk = [{"type": "result", "usage": {"input_tokens": "lots", "output_tokens": -4}, "total_cost_usd": True}, {"type": "message", "usage": {"input_tokens": 99}}, "text"]
+    assert usage_of(junk) == {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "list_cost": 0.0}
+
+
+def test_each_task_and_project_shows_what_its_runs_used(client, tmp_path):  # noqa: F811
+    from test_routing_access import calculator
+    from test_product_api import enable_agents
+    from ai_hq.models import Run
+    enable_agents(client)
+    repo = calculator(tmp_path / "calc")
+    project = client.post("/api/projects", json={"name": "Calc", "path": str(repo), "authorize": True, "test_commands": [["python", "-c", "pass"]]}).json()
+    task = client.post("/api/tasks", json={"project_id": project["id"], "description": "Fix calculator addition"}).json()
+    with client.app.state.db.Session.begin() as session:
+        session.add(Run(task_id=task["id"], agent="claude", role="implement", status="succeeded", input_tokens=2000, output_tokens=500, cached_tokens=1000, list_cost=0.3))
+        session.add(Run(task_id=task["id"], agent="codex", role="review", status="succeeded", input_tokens=700, output_tokens=100))
+    used = client.get(f"/api/reports/{task['id']}").json()["usage"]
+    assert used == {"runs": 2, "input_tokens": 2700, "output_tokens": 600, "cached_tokens": 1000, "list_cost": 0.3}
+    row = client.get("/api/models/intelligence").json()["projects"][0]
+    assert row["project"] == "Calc" and row["tasks"] == 1 and row["runs"] == 2 and row["input_tokens"] == 2700 and row["list_cost"] == 0.3

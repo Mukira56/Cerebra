@@ -61,6 +61,12 @@ class Run(Base):
     simulated: Mapped[bool] = mapped_column(Boolean, default=False)
     started_at: Mapped[str] = mapped_column(String, default=now)
     finished_at: Mapped[str] = mapped_column(String, default="")
+    # What the provider reported for this run (agents.usage_of). list_cost is the list-price equivalent Claude reports;
+    # on the owner's subscription nothing is billed per run.
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    list_cost: Mapped[float] = mapped_column(default=0.0)
 
 class Review(Base):
     __tablename__ = "reviews"

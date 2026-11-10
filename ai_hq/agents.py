@@ -35,6 +35,30 @@ class AgentResult:
     findings: list[dict] = field(default_factory=list)
     simulated: bool = False
     error: str | None = None
+    usage: dict = field(default_factory=dict)
+
+
+def _count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def usage_of(records):
+    """Tokens a run used, from the provider's own terminal events: Claude's result event (usage and total_cost_usd, the
+    list-price equivalent; a subscription isn't billed per call) and Codex's turn.completed events (usage, no price).
+    Missing or malformed numbers count as zero; nothing is estimated."""
+    total = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "list_cost": 0.0}
+    for record in records:
+        if not isinstance(record, dict) or record.get("type") not in {"result", "turn.completed"}:
+            continue
+        usage = record.get("usage") if isinstance(record.get("usage"), dict) else {}
+        total["input_tokens"] += _count(usage.get("input_tokens")) + _count(usage.get("cache_creation_input_tokens"))
+        total["output_tokens"] += _count(usage.get("output_tokens"))
+        total["cached_tokens"] += _count(usage.get("cache_read_input_tokens")) + _count(usage.get("cached_input_tokens"))
+        cost = record.get("total_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and 0 <= cost < 10000:
+            total["list_cost"] += float(cost)
+    total["list_cost"] = round(total["list_cost"], 6)
+    return total
 
 
 def _request_directory(request: AgentRequest) -> Path:
@@ -349,7 +373,7 @@ class _CliAdapter:
                 return AgentResult(False, output, error=redact("Agent stream ended without a provider terminal-success event. " + " ".join(diagnostics))[:2000])
             if review and not structured_review:
                 return AgentResult(False, output, error="Review omitted a valid structured findings array")
-            return AgentResult(True, output, findings)
+            return AgentResult(True, output, findings, usage=usage_of(records))
         except (OSError, ValueError, RuntimeError) as exc:
             return AgentResult(False, output, error=redact(str(exc)))
 

@@ -1272,6 +1272,9 @@ class Supervisor:
                 run = session.get(Run, run_id)
                 run.status = "succeeded" if result.success else "failed"
                 run.output, run.error, run.simulated, run.finished_at = redact(result.output), redact(result.error or ""), result.simulated, now()
+                usage = getattr(result, "usage", None) or {}
+                run.input_tokens, run.output_tokens = int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
+                run.cached_tokens, run.list_cost = int(usage.get("cached_tokens") or 0), float(usage.get("list_cost") or 0.0)
                 agent = session.get(Agent, name)
                 if agent is None:
                     agent = Agent(id=name, status={})
