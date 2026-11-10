@@ -53,9 +53,16 @@ def test_codex_catalog_comes_from_its_cache_and_tiers_models(home):
 
 
 def test_rules_match_model_strength_to_task_difficulty(home):
+    # Claude is the lead engineer by default; Codex reviews, so the review stays independent.
     hard = routing.route(routing.assess("Redesign the authentication architecture and fix the race condition"))
-    assert (hard["planner"]["model"], hard["implementer"]["model"], hard["reviewer"]["model"]) == ("opus", "gpt-frontier", "opus")
+    assert (hard["planner"]["model"], hard["implementer"]["provider"], hard["implementer"]["model"], hard["reviewer"]["provider"]) == ("opus", "claude", "opus", "codex")
+    assert "lead engineer" in hard["implementer"]["why"]
     easy = routing.route(routing.assess("Fix a typo in a label", allowed_paths=["src/app.js"]))
+    assert (easy["implementer"]["provider"], easy["reviewer"]["provider"]) == ("claude", "codex") and easy["implementer"]["model"] != "opus"
+    # The older split, when the owner sets the lead coder to automatic.
+    hard = routing.route(routing.assess("Redesign the authentication architecture and fix the race condition"), lead_coder="auto")
+    assert (hard["planner"]["model"], hard["implementer"]["model"], hard["reviewer"]["model"]) == ("opus", "gpt-frontier", "opus")
+    easy = routing.route(routing.assess("Fix a typo in a label", allowed_paths=["src/app.js"]), lead_coder="auto")
     assert (easy["implementer"]["provider"], easy["implementer"]["model"], easy["reviewer"]["provider"]) == ("codex", "gpt-quick", "claude")
     writing = routing.route(routing.assess("Write the user guide documentation for installing the app"))
     assert writing["implementer"]["provider"] == "claude" and writing["reviewer"]["provider"] == "codex"
@@ -104,8 +111,8 @@ def test_supervisor_model_choice_is_validated(client, tmp_path, answer, applied)
     assert (name, model) == ("claude", "opus") and "gpt-frontier" in prompt
     assert detail["results"]["routing"]["status"] == "done"
     assert (detail["results"]["routing"]["decided_by"] == "supervisor model") is applied
-    assert (detail["results"]["models"]["implementer"]["model"] == "sonnet") is applied
     if applied:
+        assert detail["results"]["models"]["implementer"]["model"] == "sonnet"
         assert detail["assigned_agent"] == "claude" and detail["reviewer"] == "codex"
         plan = next(row for row in detail["approvals"] if row["kind"] == "plan")
         assert plan["payload"]["models"]["implementer"]["model"] == "sonnet"

@@ -3,6 +3,15 @@ The owner's EstatePilot task ran out of repairs because only the output's tail w
 of one Node warning; the real cause (sign-up returning 503) was further up."""
 from ai_hq.evidence import failing_tests, what_failed
 from test_supervisor import WrongAgentRegistry, hq, ready  # noqa: F401  (hq is a fixture)
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def codex_codes_claude_reviews(monkeypatch):
+    """These tests were written for the split where Codex codes and Claude reviews; Claude-led coding is tested in
+    test_model_workforce.py. Pinning the older split keeps them on what they check (failover, review, retries)."""
+    from ai_hq import routing
+    monkeypatch.setitem(routing.DEFAULT, "lead_coder", "auto")
 
 WARNING = ("(node:16464) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n"
            "(Use `node --trace-warnings ...` to show where the warning was created)\n")

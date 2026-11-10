@@ -456,6 +456,16 @@
     [planner, implementer, reviewer].forEach(control => { control.addEventListener("change", () => { if (control === implementer && control.value !== "auto" && reviewer.value !== "auto") { const coder = control.value.split(":")[1] || profiles().find(item => item.id === control.value)?.provider; const checker = reviewer.value.split(":")[1] || profiles().find(item => item.id === reviewer.value)?.provider; if (coder && coder === checker) reviewer.value = "auto"; } }); });
     const project_info = el("div"); function describe() { const chosen = projectFor(project.value); project_info.replaceChildren(chosen && !array(chosen.test_commands).length ? hint("This project has no test commands, so Cerebra cannot verify the work. Add them on the Projects page first.", true) : hint(`Tests: ${array(chosen?.test_commands).map(command => command.join(" ")).join("  |  ") || "none"}`)); } project.addEventListener("change", describe); describe();
     append(form, field("Project", project), project_info, field("What do you want?", objective), team, field("Requirements", requirements), field("Acceptance criteria", criteria), field("Files the AI may change", allowed, "Comma-separated paths inside the project. Leave blank for the whole project."), !agentsOn() ? hint("AI agents are switched off. You can create the task now, but it will only run after you switch agents on in Settings.", true) : null);
+    const specNotes = el("div");
+    const architect = button("Ask the Prompt Architect", () => act(result => result.by === "template" ? "A short request: filled in from a template, no model needed." : `Spec written by ${result.model}. Check it before creating the plan.`,
+      () => mutate("/api/architect", {project_id: project.value, objective: objective.value.trim()}, "POST", 600000)).then(result => {
+        if (!result) return;
+        requirements.value = array(result.requirements).join("\n"); criteria.value = array(result.acceptance_criteria).join("\n");
+        const extra = [["Goal", [result.goal]], ["Constraints", result.constraints], ["Steps", result.steps], ["Open questions: decide these before you create the plan", result.open_questions],
+          ["Assumptions it made: not added to the requirements", result.assumptions]].filter(([, items]) => array(items).filter(Boolean).length);
+        specNotes.replaceChildren(...extra.map(([label, items]) => append(el("div", "hint"), el("strong", "", label), append(el("ul", "tips"), ...array(items).map(item => el("li", "", item))))));
+      }), "button");
+    form.insertBefore(append(el("div"), actionsRow(architect), hint("Turns your request into requirements and acceptance criteria for Claude, below. It never adds requirements on its own: what it had to assume is listed apart."), specNotes), form.children[3]);
     const submit = submitButton("Create plan"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
     wireForm(form, submit, async () => {
       const lines = value => value.split("\n").map(item => item.trim()).filter(Boolean);
@@ -1098,6 +1108,50 @@
   function activityView() { const events = array(data.events); return panel("Supervisor event log", activityList(events, 200), null, events.length); }
 
   // ---------- models & sign-in ----------
+  // ---------- model intelligence: who does what, how each model measures up, and why tasks were routed ----------
+  function intelligencePanel() {
+    const box = el("div"); box.append(el("p", "row-meta", "Loading…"));
+    (async () => {
+      let state; try { state = await api("/api/models/intelligence"); } catch (issue) { box.replaceChildren(hint(issue.message, true)); return; }
+      const policy = state.routing || {};
+      // 1. The lead engineer.
+      const lead = select([["claude", "Claude writes the code (Codex reviews)"], ["auto", "Automatic: Codex codes, Claude writes docs and reviews"]], policy.lead_coder || "claude");
+      const lock = check("Keep Claude as the coder: when Claude runs out of usage, the task waits for it instead of moving to another model (you can still switch a task yourself)", policy.lock_coder !== false);
+      const leadForm = el("form"), saveLead = submitButton("Save");
+      append(leadForm, field("Who writes the code", lead), lock.wrap, actionsRow(saveLead));
+      wireForm(leadForm, saveLead, async () => { await mutate("/api/routing", {mode: policy.mode || "rules", provider: policy.provider || "claude", model: policy.model || "opus", lead_coder: lead.value, lock_coder: lock.control.checked}, "PUT"); toast("Saved."); await refresh(true); });
+      // 2. Each kind of work: who does it, how the models measured, a daily limit.
+      const limits = {};
+      const table = el("table"), head = el("thead"), rows = el("tbody");
+      head.append(append(el("tr"), el("th", "", "Kind of work"), el("th", "", "Done by"), el("th", "", "Measured (last 30 days)"), el("th", "", "Today"), el("th", "", "Daily limit")));
+      array(state.work).forEach(item => {
+        const limit = input("0", item.daily_limit || 0, "number"); limit.min = 0; limit.max = 100000; limits[item.key] = limit;
+        const best = array(item.measured)[0];
+        const measured = best ? `${best.model}: ${best.success}% useful · ${best.seconds}s · ${best.calls} calls${array(item.measured).length > 1 ? ` (+${item.measured.length - 1} more)` : ""}` : "No calls yet";
+        rows.append(append(el("tr"), append(el("td"), el("strong", "", item.label), el("div", "row-meta", item.about)),
+          append(el("td"), el("div", "", item.in_use), item.in_use !== item.route ? el("div", "row-meta", `chosen on evidence (your choice: ${item.route})`) : null),
+          append(el("td"), el("div", "", measured), item.recommended ? el("div", "row-meta", `Suggested: ${item.recommended}. ${item.recommendation}`) : el("div", "row-meta", item.recommendation)),
+          el("td", "", String(item.today)), append(el("td"), limit)));
+      });
+      append(table, head, rows);
+      const adaptive = check(`Route by measured performance: switch a kind of work to the model that has clearly done it best (needs ${state.min_calls} calls of evidence; free models only, never your Claude account)`, state.adaptive === true);
+      const saveWork = button("Save limits", () => act("Saved.", () => mutate("/api/models/hub", {adaptive: adaptive.control.checked,
+        daily_calls: Object.fromEntries(Object.entries(limits).map(([key, control]) => [key, Number(control.value || 0)]))}, "PUT")), "button primary");
+      // 3. Coding results per model, and recent routing decisions in plain words.
+      const coding = array(state.coding).length ? append(el("table"), append(el("thead"), append(el("tr"), el("th", "", "Coder"), el("th", "", "Tasks"), el("th", "", "Completed"), el("th", "", "Failed"))),
+        append(el("tbody"), ...state.coding.map(item => append(el("tr"), el("td", "", item.model), el("td", "", String(item.tasks)), el("td", "", String(item.completed)), el("td", "", String(item.failed)))))) : hint("No coding tasks yet.");
+      const decisions = array(state.decisions).length ? append(el("ul", "tips"), ...state.decisions.slice(0, 8).map(item => el("li", "",
+        `${item.task}: ${Object.entries(item.roles).map(([role, pick]) => `${role} ${pick.label}${pick.why ? ` (${pick.why})` : ""}`).join("; ")}`))) : hint("No tasks routed yet.");
+      box.replaceChildren(
+        el("h4", "", "Lead engineer"), leadForm,
+        el("h4", "", "Specialists"), hint("Each kind of work goes to one model: your Claude account, a free model or one on this computer. Choose them under Free models and routes below. Numbers come from real calls: how often a model gave a usable answer, and how fast."),
+        append(el("div", "table-wrap"), table), adaptive.wrap, actionsRow(saveWork),
+        state.memory_gb ? hint(`This computer has ${state.memory_gb} GB of memory: local models larger than ${state.local_limit_gb} GB are never loaded, so it stays responsive.`) : null,
+        el("h4", "", "Coding results by model"), append(el("div", "table-wrap"), coding),
+        el("h4", "", "Why recent tasks went where they did"), decisions, hint(state.subscription_note));
+    })();
+    return panel("Model intelligence", body(box));
+  }
   function modelsView() {
     const root = el("div"), providersHolder = el("div", "grid cards"), token = renderToken;
     root.append(panel("Your AI accounts", body(hint("Sign in uses each tool's own login window. Cerebra never sees your passwords or keys; your plan (ChatGPT, Claude, Copilot…) pays for usage."), el("div", "", ""), providersHolder)));
@@ -1125,10 +1179,11 @@
     const how = el("form"), policy = data.routing || {}, mode = select([["rules", "Supervisor rules (instant, free)"], ["model", "Ask a supervisor model (uses your plan)"]], policy.mode || "rules");
     const brain = select(catalogModels().filter(item => item.model).map(item => [`${item.provider}:${item.model}`, item.label]), `${policy.provider || "claude"}:${policy.model || "opus"}`), brainField = field("Supervisor model", brain, "Reads the task and the model list, then picks planner, coder and reviewer. Its answer is checked: only listed models, and the reviewer must be from the other company.");
     const syncMode = () => brainField.classList.toggle("hidden", mode.value !== "model"); mode.addEventListener("change", syncMode); syncMode();
-    append(how, hint("When a role is set to Auto, the supervisor rates how hard the task is and picks a model: frontier models for hard work, balanced for everyday work, fast ones for small jobs. Claude plans and reviews; Codex codes (Claude writes docs). The reviewer always comes from the other company."), field("How the supervisor decides", mode), brainField);
+    append(how, hint("When a role is set to Auto, the supervisor rates how hard the task is and picks a model: frontier models for hard work, balanced for everyday work, fast ones for small jobs. Claude plans and codes (your lead engineer); Codex reviews, from another company. The reviewer always comes from the other company."), field("How the supervisor decides", mode), brainField);
     const saveHow = submitButton("Save"); how.append(actionsRow(saveHow));
     wireForm(how, saveHow, async () => { const [provider, model] = brain.value.split(":"); await mutate("/api/routing", {mode: mode.value, provider, model}, "PUT"); await refresh(true); toast(mode.value === "model" ? "The supervisor model will now pick the AI team." : "The supervisor's rules will pick the AI team."); });
     root.append(panel("Supervisor: who picks the models", body(how)));
+    root.append(intelligencePanel());
 
     const roles = el("form"), planner = profileSelect("planner"), implementer = profileSelect("implementer"), reviewer = profileSelect("reviewer");
     append(roles, el("div", "form-grid"), hint("New tasks start with these. You can still change them per task. The reviewer must use a different provider from the coder, so the review is truly independent."));

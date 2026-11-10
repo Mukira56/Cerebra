@@ -64,6 +64,10 @@ const path = require('node:path');
     await page.locator('dialog').getByRole('button', {name: 'Add model', exact: true}).click();
     await page.locator('table strong', {hasText: 'Claude Opus'}).waitFor();
     await page.getByText('Available models', {exact: true}).waitFor();
+    await page.locator('.panel-header h2', {hasText: 'Model intelligence'}).waitFor();
+    await page.getByText('Lead engineer', {exact: true}).waitFor();
+    assert.ok(await page.locator('select').filter({hasText: 'Claude writes the code (Codex reviews)'}).count() === 1, 'Claude leads the coding by default');
+    assert.ok(await page.getByText('Prompt Architect', {exact: true}).count() >= 1, 'The Prompt Architect is a kind of work');
     assert.ok(await page.locator('.model-row strong', {hasText: 'Claude Opus 5.5'}).count() >= 1, 'Claude catalog listed');
     assert.ok(await page.locator('.panel-header h2', {hasText: 'Supervisor: who picks the models'}).count() === 1);
     assert.equal(await page.locator('form select').filter({hasText: 'Auto: the supervisor picks'}).count(), 3, 'Each default role offers Auto');
@@ -73,6 +77,7 @@ const path = require('node:path');
     await page.locator('[data-page="tasks"]').click();
     await page.locator('#heading-actions').getByRole('button', {name: '+ New task'}).click();
     await page.locator('dialog textarea').first().fill('Add a booking calendar page with tests');
+    assert.ok(await page.locator('dialog').getByRole('button', {name: 'Ask the Prompt Architect'}).count() === 1, 'New task offers the Prompt Architect');
     await page.locator('dialog .form-grid select').nth(2).selectOption('claude-opus');
     await page.locator('dialog').getByRole('button', {name: 'Create plan', exact: true}).click();
     await page.locator('dialog').getByRole('button', {name: 'Approve plan', exact: true}).waitFor();
@@ -85,7 +90,8 @@ const path = require('node:path');
 
     // Plain report.
     await page.locator('[data-page="reports"]').click();
-    await page.locator('.row', {hasText: 'booking calendar'}).click();
+    await page.locator('#page-title', {hasText: 'Reports'}).waitFor();  // the Coding tasks row may still be on screen for a moment
+    await page.locator('#page-content .row', {hasText: 'booking calendar'}).click();
     await page.getByText('What you asked for', {exact: true}).waitFor();
     await page.getByText('Where everything is saved', {exact: true}).waitFor();
     assert.ok(await page.getByText('Claude Code (opus) checked the code.', {exact: true}).count());

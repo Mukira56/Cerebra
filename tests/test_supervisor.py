@@ -17,6 +17,14 @@ from ai_hq.processes import ProcessResult
 from fakes import FixtureRegistry
 
 
+@pytest.fixture(autouse=True)
+def codex_codes_claude_reviews(monkeypatch):
+    """These tests were written for the split where Codex codes and Claude reviews; Claude-led coding is tested in
+    test_model_workforce.py. Pinning the older split keeps them on what they check (failover, review, retries)."""
+    from ai_hq import routing
+    monkeypatch.setitem(routing.DEFAULT, "lead_coder", "auto")
+
+
 def git(directory, *args):
     result = subprocess.run(["git", "-C", str(directory), *args], capture_output=True, text=True, check=True)
     return result.stdout.strip()

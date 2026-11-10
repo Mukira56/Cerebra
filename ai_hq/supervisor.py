@@ -149,7 +149,7 @@ class Supervisor:
             assessment = routing.assess(objective, requirements or [], allowed_paths or ["."])
             policy = routing.load(session)
             if automatic:
-                picked = routing.route(assessment, fixed=chosen)
+                picked = routing.route(assessment, fixed=chosen, lead_coder=policy.get("lead_coder", "claude"))
                 for role in automatic:
                     chosen[role] = {"profile": AUTO, **picked[role]}
             ask_model = bool(automatic) and policy["mode"] == "model" and self.settings.live_enabled and self.settings.cli_confinement_accepted
@@ -1075,6 +1075,11 @@ class Supervisor:
         other = "claude" if failed == "codex" else "codex"
         if not self._usable(other):
             return None
+        if key == "implementer" and failed == "claude":
+            from . import routing
+            with self.db.Session() as session:
+                if routing.load(session).get("lock_coder", True):
+                    return None  # Claude is the owner's locked coder: the task waits for Claude, or the owner switches it
         with self._lock, self.db.Session.begin() as session:
             stored = self._get(session, task.id)
             models = {name: dict(value) for name, value in (stored.results.get("models") or {}).items()}

@@ -1,9 +1,11 @@
 """Automatic model routing: which model plans, codes and reviews a task.
 
 The supervisor always decides with transparent rules first: it rates how hard the task looks and what
-kind of work it is, then picks a model tier per role. Planning and review favour Claude; coding favours
-Codex, except for writing-heavy work. The reviewer always comes from the other provider, so the review
-stays independent. Optionally a "supervisor model" is asked for a second opinion. Its answer is only
+kind of work it is, then picks a model tier per role. Claude is the owner's lead engineer: it plans and writes the
+code (a frontier model for hard work, a balanced one otherwise, a fast one for small jobs). Codex, from another company,
+reviews it, so the review stays independent. With "lead_coder" set to "auto", the older split applies (Codex codes,
+Claude reviews). With "lock_coder" on, a task never moves its coding to another company on its own when Claude runs out
+of usage: it waits for Claude, and the owner can switch it. Optionally a "supervisor model" is asked for a second opinion. Its answer is only
 data: it is accepted only if every choice is a known model and the reviewer is still independent.
 """
 from __future__ import annotations
@@ -15,7 +17,7 @@ from .catalog import best, catalog as model_catalog
 from .models import Metadata
 
 KEY = "routing"
-DEFAULT = {"mode": "rules", "provider": "claude", "model": "opus"}
+DEFAULT = {"mode": "rules", "provider": "claude", "model": "opus", "lead_coder": "claude", "lock_coder": True}
 ROLES = ("planner", "implementer", "reviewer")
 HARD = ("architect", "redesign", "refactor", "migrat", "security", "authenticat", "authoriz", "concurren", "race condition",
         "performance", "optimi", "distributed", "schema", "encrypt", "payment", "from scratch", "full app", "entire",
@@ -30,13 +32,20 @@ def load(session):
     return {**DEFAULT, **(row.value if row else {})}
 
 
-def save(session, mode, provider="claude", model="opus"):
+def save(session, mode, provider="claude", model="opus", lead_coder=None, lock_coder=None):
     from .agents import valid_model
     if mode not in {"rules", "model"}:
         raise ValueError("Routing mode must be rules or model")
     if provider not in {"codex", "claude"}:
         raise ValueError("The supervisor model must be Codex or Claude")
-    value = {"mode": mode, "provider": provider, "model": valid_model(model)}
+    before = load(session)
+    lead = before["lead_coder"] if lead_coder is None else lead_coder
+    if lead not in {"claude", "auto"}:
+        raise ValueError("The lead coder is Claude, or automatic")
+    lock = before["lock_coder"] if lock_coder is None else lock_coder
+    if not isinstance(lock, bool):
+        raise ValueError("Keeping Claude as the coder must be on or off")
+    value = {"mode": mode, "provider": provider, "model": valid_model(model), "lead_coder": lead, "lock_coder": lock}
     row = session.get(Metadata, KEY)
     if row:
         row.value = value
@@ -68,7 +77,7 @@ def _pick(models, provider, tier, why):
     return {"provider": provider, "model": item["model"], "label": item["label"], "tier": item.get("tier") or tier, "why": why}
 
 
-def route(assessment, fixed=None, models=None):
+def route(assessment, fixed=None, models=None, lead_coder="claude"):
     """Rule-based choices for every role not fixed by the user. `fixed` maps role -> chosen dict."""
     models = models or model_catalog()
     fixed = dict(fixed or {})
@@ -79,10 +88,15 @@ def route(assessment, fixed=None, models=None):
         chosen["planner"] = _pick(models, "claude", "frontier" if level == "hard" else "balanced",
                                   f"Claude plans well; {'a frontier model for a hard task' if level == 'hard' else 'a balanced model is enough'}.")
     if "implementer" not in chosen:
-        provider = "claude" if kind == "writing" else "codex"
-        chosen["implementer"] = _pick(models, provider, tier,
-                                      ("Writing-heavy work goes to Claude" if provider == "claude" else "Codex is built for hands-on coding")
-                                      + f"; {level} task, so a {tier} model.")
+        if lead_coder == "claude" and chosen.get("reviewer", {}).get("provider") == "claude":
+            chosen["implementer"] = _pick(models, "codex", tier, f"You chose Claude to review, so Codex codes and the review stays independent; {level} task, so a {tier} model.")
+        elif lead_coder == "claude":
+            chosen["implementer"] = _pick(models, "claude", tier, f"Claude is your lead engineer; {level} task, so a {tier} model.")
+        else:
+            provider = "claude" if kind == "writing" else "codex"
+            chosen["implementer"] = _pick(models, provider, tier,
+                                          ("Writing-heavy work goes to Claude" if provider == "claude" else "Codex is built for hands-on coding")
+                                          + f"; {level} task, so a {tier} model.")
     if "reviewer" not in chosen:
         other = "codex" if chosen["implementer"]["provider"] == "claude" else "claude"
         review_tier = "frontier" if level == "hard" else "balanced"

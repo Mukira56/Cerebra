@@ -810,7 +810,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def routing_update(payload: RoutingUpdate):
         from . import routing
         with db.Session.begin() as session:
-            value = routing.save(session, payload.mode, payload.provider, payload.model)
+            value = routing.save(session, payload.mode, payload.provider, payload.model, payload.lead_coder, payload.lock_coder)
             session.add(Event(kind="settings_changed", message="Supervisor now picks models with rules" if payload.mode == "rules" else f"Supervisor now asks {payload.provider} {payload.model or ''} to pick models".replace("  ", " ")))
             return value
 
@@ -2180,8 +2180,60 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     @app.put("/api/models/hub")
     def models_hub_save(payload: dict):
         with db.Session.begin() as session:
-            value = modelhub.save_settings(session, {key: payload[key] for key in ("api_key", "routes", "enabled") if key in payload})
+            value = modelhub.save_settings(session, {key: payload[key] for key in ("api_key", "routes", "enabled", "daily_calls", "adaptive") if key in payload})
             return modelhub.public(value, modelhub.spent_this_month(session))
+
+    @app.post("/api/architect")
+    def prompt_architect(payload: dict):
+        """The Prompt Architect's spec for a request: requirements and acceptance criteria for the owner to edit, with the
+        open questions and assumptions kept apart (ai_hq/architect.py)."""
+        from . import architect
+        project = {}
+        if payload.get("project_id"):
+            with db.Session() as session:
+                row = session.get(Project, payload["project_id"])
+                if row is None:
+                    raise HTTPException(404, "Project not found")
+                project = {"name": row.name, "path": row.path, "test_commands": row.test_commands}
+        workdir = settings.data_dir / "chat-workspace"
+        workdir.mkdir(parents=True, exist_ok=True)
+
+        def run(prompt):
+            return modelhub.chat_for(hub, "architect", chat_registry, {"provider": "claude"}, prompt, workdir)
+        spec = architect.write_spec(payload.get("objective"), project, run)
+        return {**spec, "model": "template" if spec.get("by") == "template" else hub.route("architect")}
+
+    @app.get("/api/models/intelligence")
+    def model_intelligence():
+        """Who does what, how each model has measured up per kind of work, coding results per model, and why tasks were routed."""
+        from . import routing
+        with db.Session() as session:
+            value, measured, policy = modelhub.settings(session), modelhub.performance(session), routing.load(session)
+            today = {key: modelhub.calls_today(session, key) for key in modelhub.CATEGORIES}
+            recent = list(session.scalars(select(Task).order_by(Task.created_at.desc()).limit(200)))
+        work = []
+        for key, (label, about, default) in modelhub.CATEGORIES.items():
+            current = value["routes"].get(key) or default
+            better, why = modelhub.recommend(measured, key, current)
+            work.append({"key": key, "label": label, "about": about, "route": current, "in_use": hub.route(key), "measured": measured.get(key, []),
+                         "recommended": better, "recommendation": why, "today": today[key], "daily_limit": value["daily_calls"].get(key, 0)})
+        coding = {}
+        for task in recent:
+            models = (task.results or {}).get("models") or {}
+            label = (models.get("implementer") or {}).get("label") or task.assigned_agent
+            entry = coding.setdefault(label, {"model": label, "tasks": 0, "completed": 0, "failed": 0})
+            entry["tasks"] += 1
+            entry["completed"] += task.state == "COMPLETED"
+            entry["failed"] += task.state == "FAILED"
+        decisions = [{"task": task.description[:120], "at": task.created_at,
+                      "roles": {role: {"label": (pick or {}).get("label", ""), "why": (pick or {}).get("why", "")}
+                                for role, pick in ((task.results or {}).get("models") or {}).items()},
+                      "handoffs": (task.results or {}).get("handoffs", [])} for task in recent[:15]]
+        memory = modelhub.memory_bytes()
+        return {"work": work, "coding": sorted(coding.values(), key=lambda item: -item["tasks"]), "decisions": decisions, "routing": policy,
+                "adaptive": value["adaptive"], "min_calls": modelhub.MIN_CALLS, "memory_gb": round(memory / 2**30, 1) if memory else None,
+                "local_limit_gb": round(modelhub.LOCAL_SHARE * memory / 2**30, 1) if memory else None,
+                "subscription_note": "Claude and Codex don't tell Cerebra how much of your plan is left, so it isn't shown. Cerebra notices when a plan runs out and waits for it."}
 
     @app.post("/api/models/hub/test")
     def models_hub_test(payload: dict):

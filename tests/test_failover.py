@@ -10,6 +10,14 @@ from fakes import FixtureRegistry
 import pytest
 from test_supervisor import StagnantAgentRegistry, consent, git, hq, pending_approval, proposed, ready  # noqa: F401  (hq is a fixture)
 
+
+@pytest.fixture(autouse=True)
+def codex_codes_claude_reviews(monkeypatch):
+    """These tests were written for the split where Codex codes and Claude reviews; Claude-led coding is tested in
+    test_model_workforce.py. Pinning the older split keeps them on what they check (failover, review, retries)."""
+    from ai_hq import routing
+    monkeypatch.setitem(routing.DEFAULT, "lead_coder", "auto")
+
 LIMIT = "rate_limited: agent exited with code 1: You've hit your usage limit. Try again later."
 
 

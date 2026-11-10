@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 
 from . import vault
 from .agents import AgentResult
@@ -41,12 +41,20 @@ CATEGORIES = {
     "coding": ("Code questions", "Explaining and reviewing code outside a task", "poolside/laguna-s-2.1:free"),
     "verify": ("Checking", "Cross-checking claims against their sources", "google/gemma-4-31b-it:free"),
     "verify_second": ("Second check", "Another company's model, for disputed claims", "nvidia/nemotron-3.5-super-vl:free"),
+    "architect": ("Prompt Architect", "Turns your request into a clear spec for Claude: goal, requirements, acceptance criteria, open questions",
+                  "openrouter/free"),
+    "reasoning": ("Reasoning and maths", "Algorithms, tricky bugs, alternative approaches (a free DeepSeek model suits this)", "openrouter/free"),
+    "long_context": ("Large documents", "Long files and documentation read and compared (a free Gemini model suits this)", "openrouter/free"),
 }
+# Measured performance: a model needs this many calls in a kind of work before its numbers count, and must beat the
+# current choice by this many points of success rate before performance-based routing switches to it.
+MIN_CALLS, BETTER_BY = 20, 10
+LOCAL_SHARE = 0.6  # a local model larger than this share of the computer's memory is never loaded
 FALLBACK = "openrouter/free"  # OpenRouter's own free router: picks any free model that is up
 OLLAMA = "http://127.0.0.1:11434"  # local models on the owner's own computer: free, no daily limit; only this loopback address
 LOCAL_TTL = 30  # seconds the list of local models is remembered
 LOCAL = "local:"  # a route to one of those local models, e.g. "local:qwen3:14b"
-DEFAULTS = {"api_key": "", "routes": {}, "enabled": True}
+DEFAULTS = {"api_key": "", "routes": {}, "enabled": True, "daily_calls": {}, "adaptive": False}
 
 
 def settings(session):
@@ -58,6 +66,7 @@ def settings(session):
 
 def public(value, spent=0.0):
     return {"connected": bool(value["api_key"]), "enabled": value["enabled"], "spent_this_month": round(spent, 4), "free_only": True,
+            "daily_calls": value["daily_calls"], "adaptive": value["adaptive"],
             "routes": value["routes"], "accounts": ACCOUNTS, "categories": [{"key": key, "label": label, "about": about, "default": model}
                                                                             for key, (label, about, model) in CATEGORIES.items()]}
 
@@ -71,6 +80,24 @@ def save_settings(session, fields):
         value["api_key"] = vault.protect(key) if key else ""
     if "enabled" in fields:
         value["enabled"] = bool(fields["enabled"])
+    if "adaptive" in fields:
+        if not isinstance(fields["adaptive"], bool):
+            raise ValueError("Performance-based routing must be on or off")
+        value["adaptive"] = fields["adaptive"]
+    if "daily_calls" in fields:
+        limits = {}
+        for category, number in (fields["daily_calls"] or {}).items():
+            if category not in CATEGORIES:
+                continue
+            try:
+                number = int(number or 0)
+            except (TypeError, ValueError):
+                raise ValueError("A daily limit must be a whole number (0 for none)") from None
+            if not 0 <= number <= 100000:
+                raise ValueError("A daily limit must be between 0 (none) and 100,000")
+            if number:
+                limits[category] = number
+        value["daily_calls"] = limits
     if "routes" in fields:
         for category, model in (fields["routes"] or {}).items():
             model = str(model or "").strip()
@@ -96,6 +123,71 @@ def month_start(now=None):
 
 def spent_this_month(session, now=None):
     return float(session.scalar(select(func.coalesce(func.sum(ModelUsage.cost), 0.0)).where(ModelUsage.at >= month_start(now))) or 0.0)
+
+
+def day_start(now=None):
+    now = now or datetime.now(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
+def calls_today(session, category, now=None):
+    return int(session.scalar(select(func.count()).select_from(ModelUsage).where(ModelUsage.category == category, ModelUsage.at >= day_start(now))) or 0)
+
+
+def over_limit(session, category):
+    """The reason this kind of work has used its daily calls, or "" while there is room."""
+    limit = settings(session)["daily_calls"].get(category, 0)
+    if limit and calls_today(session, category) >= limit:
+        return f"Today's limit of {limit} calls for {CATEGORIES[category][0]} is used; it resets at midnight UTC, or raise it on the Models page"
+    return ""
+
+
+def performance(session, days=30):
+    """Measured results per kind of work and model: calls, share that answered usefully, average seconds and tokens."""
+    since = (datetime.now(timezone.utc).replace(microsecond=0) - __import__("datetime").timedelta(days=days)).isoformat()
+    rows = session.execute(select(ModelUsage.category, ModelUsage.model, func.count(), func.sum(func.cast(ModelUsage.ok, Integer)),
+                                  func.avg(ModelUsage.seconds), func.avg(ModelUsage.prompt_tokens + ModelUsage.completion_tokens))
+                           .where(ModelUsage.at >= since).group_by(ModelUsage.category, ModelUsage.model)).all()
+    result = {}
+    for category, model, calls, ok, seconds, tokens in rows:
+        result.setdefault(category, []).append({"model": model, "calls": int(calls), "success": round(100 * int(ok or 0) / int(calls)) if calls else 0,
+                                                "seconds": round(float(seconds or 0), 1), "tokens": int(tokens or 0), "enough": int(calls) >= MIN_CALLS})
+    for items in result.values():
+        items.sort(key=lambda item: (-item["enough"], -item["success"], item["seconds"]))
+    return result
+
+
+def recommend(measured, category, current):
+    """The measured best model for a kind of work, when the evidence is strong enough to prefer it over the current one."""
+    candidates = [item for item in measured.get(category, []) if item["enough"]]
+    if not candidates:
+        return None, f"Not enough evidence yet: a model needs {MIN_CALLS} calls in this kind of work before its numbers count."
+    best_item = candidates[0]
+    now_item = next((item for item in candidates if item["model"] == current), None)
+    if best_item["model"] == current:
+        return None, f"The current choice is the best measured ({best_item['success']}% useful answers over {best_item['calls']} calls)."
+    if now_item and best_item["success"] < now_item["success"] + BETTER_BY:
+        return None, f"{best_item['model']} isn't clearly better than the current choice yet."
+    return best_item["model"], f"{best_item['model']} gave useful answers {best_item['success']}% of the time over {best_item['calls']} calls."
+
+
+def memory_bytes():
+    """This computer's total memory, or 0 when it can't be read."""
+    import os
+    import sys
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong),
+                            ("page_total", ctypes.c_ulonglong), ("page_free", ctypes.c_ulonglong), ("virtual_total", ctypes.c_ulonglong),
+                            ("virtual_free", ctypes.c_ulonglong), ("extended", ctypes.c_ulonglong)]
+            status = Status(); status.length = ctypes.sizeof(Status)
+            return int(status.total) if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)) else 0
+        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+    except (OSError, ValueError, AttributeError):
+        return 0
 
 
 def usage_summary(session, now=None):
@@ -185,15 +277,30 @@ class Hub:
         try:
             response = self.client.get(f"{OLLAMA}/api/tags", timeout=httpx.Timeout(3, connect=0.5))
             response.raise_for_status()
-            names = sorted(item.get("name", "") for item in response.json().get("models", []) if item.get("name"))
+            listed = [item for item in response.json().get("models", []) if item.get("name")]
+            names = sorted(item["name"] for item in listed)
+            self._local_sizes = {item["name"]: int(item.get("size") or 0) for item in listed}
         except (httpx.HTTPError, ValueError):
             names = []
         self._local = (time.monotonic(), names)
         return list(names)
 
+    def too_big(self, name):
+        """Why a local model shouldn't be loaded on this computer, or "" when it fits."""
+        size, memory = getattr(self, "_local_sizes", {}).get(name, 0), memory_bytes()
+        if size and memory and size > LOCAL_SHARE * memory:
+            return (f"{name} needs about {size / 2**30:.0f} GB, more than this computer can spare ({memory / 2**30:.0f} GB in all): "
+                    "Cerebra won't load it, so the computer stays responsive. Choose a smaller local model.")
+        return ""
+
     def chat_local(self, category, model, prompt, max_tokens=4000):
         """One turn with a model on this computer, through Ollama (free; as fast as the computer allows)."""
         name = model[len(LOCAL):]
+        if not hasattr(self, "_local_sizes"):
+            self.local_models()
+        refused = self.too_big(name)
+        if refused:
+            return AgentResult(False, "", error=refused)
         started = time.monotonic()
         try:
             response = self.client.post(f"{OLLAMA}/api/chat", timeout=900, json={"model": name, "messages": [{"role": "user", "content": prompt}],
@@ -217,14 +324,23 @@ class Hub:
 
     def route(self, category):
         with self.db.Session() as session:
-            return settings(session)["routes"].get(category) or CATEGORIES[category][2]
+            value = settings(session)
+            chosen = value["routes"].get(category) or CATEGORIES[category][2]
+            if value["adaptive"] and chosen not in ACCOUNTS:
+                better, _ = recommend(performance(session), category, chosen)
+                if better and (better.startswith(LOCAL) or better.endswith(":free")):
+                    return better
+            return chosen
 
     def chat(self, category, prompt, max_tokens=4000, model=None):
         """One turn with a free model. Anything with a price is refused: the owner pays only for Claude and Codex."""
         with self.db.Session() as session:
             value = settings(session)
-            model = model or value["routes"].get(category) or CATEGORIES.get(category, ("", "", FALLBACK))[2]
+            limited = over_limit(session, category) if category in CATEGORIES else ""
+            model = model or (self.route(category) if category in CATEGORIES else "") or CATEGORIES.get(category, ("", "", FALLBACK))[2]
             key = vault.unprotect(value["api_key"]) if value["api_key"] else ""
+        if limited:
+            return AgentResult(False, "", error=limited)
         if model.startswith(LOCAL):
             return self.chat_local(category, model, prompt, max_tokens)
         if not key:
@@ -269,9 +385,16 @@ def chat_for(hub, category, registry_source, selected, prompt, workdir):
     model through the hub. Without the hub (no key), it is the owner's chosen account, as before."""
     route = hub.route(category) if hub is not None and category in CATEGORIES else ""
     if route in ACCOUNTS:
+        with hub.db.Session() as session:
+            limited = over_limit(session, category)
+        if limited:
+            return AgentResult(False, "", error=limited)
         provider = route.split(":", 1)[1]
         model = selected.get("model", "") if selected.get("provider") == provider else ""
-        return registry_source().chat(provider, prompt, str(workdir), model)
+        started = time.monotonic()
+        result = registry_source().chat(provider, prompt, str(workdir), model)
+        hub._record(category, route, {}, 0.0, bool(result.success and (result.output or "").strip()), time.monotonic() - started)
+        return result
     if route.startswith(LOCAL) or (route and hub.ready()):
         return hub.chat(category, prompt)
     return registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))
