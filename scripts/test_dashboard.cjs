@@ -19,7 +19,7 @@ const path = require('node:path');
     // The simple menu shows the everyday pages; the rest are one click away.
     assert.equal(await page.locator('[data-page="projects"]').isVisible(), false, 'Coding pages wait behind Show all pages');
     await page.getByText('What would you like to do today?', {exact: true}).waitFor();
-    assert.equal(await page.locator('.home-tile').count(), 8, 'Home has a big button for each everyday job');
+    assert.equal(await page.locator('.home-tile').count(), 9, 'Home has a shortcut for each everyday job');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light', 'Light colours by default');
     assert.equal(await page.locator('[data-comfort]').count(), 0, 'Text size and colours are in Settings, not the menu');
     await page.locator('[data-page="settings"]').click();
@@ -319,7 +319,7 @@ const path = require('node:path');
     const wide = await phone.evaluate(() => [...document.querySelectorAll('body *')].filter(node => node.getBoundingClientRect().right > 392).slice(0, 8).map(node => `${node.tagName}.${node.className} ${Math.round(node.getBoundingClientRect().right)}`));
     assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= 400), 'No horizontal page overflow on a phone: ' + wide.join(' | '));
     // No page prints a stray "null" (an empty value handed to the browser's append).
-    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'books', 'etsy', 'chief', 'prospects', 'partners', 'funding', 'freelance', 'marketing', 'council', 'chat', 'system']) {
+    for (const name of ['overview', 'tasks', 'projects', 'approvals', 'reports', 'activity', 'settings', 'models', 'toolchain', 'github', 'connections', 'business', 'money', 'books', 'etsy', 'chief', 'prospects', 'partners', 'jobs', 'funding', 'freelance', 'marketing', 'council', 'chat', 'system']) {
       await page.evaluate(view => { location.hash = view; }, name); await page.waitForTimeout(600);
       assert.ok(!/(^|\s)null(\s|$)/.test(await page.locator('body').innerText()), `"null" is printed on the ${name} page`);
     }
@@ -327,6 +327,9 @@ const path = require('node:path');
     await page.getByRole('button', {name: 'Find companies and their emails'}).waitFor();
     assert.ok(await page.getByRole('button', {name: 'Offered me something (0)'}).count() && await page.getByRole('button', {name: 'Not offered (0)'}).count(), 'Pitch companies can show offers and the rest');
     assert.ok(await page.getByRole('button', {name: 'Find companies and their emails'}).count() && await page.locator('.panel-header h2', {hasText: 'Your pitch'}).count(), 'Company pitches shows the pitch and the find button');
+    await page.evaluate(() => { location.hash = 'jobs'; });
+    await page.getByRole('button', {name: 'Find jobs now'}).waitFor();
+    assert.ok(await page.locator('.panel-header h2', {hasText: 'Your CV and the jobs you want'}).count() && await page.getByRole('button', {name: 'Review ready applications (0)'}).count(), 'Apply for jobs shows the CV and the jobs');
     await page.evaluate(() => { location.hash = 'money'; }); await page.waitForTimeout(800);
     assert.ok(await page.getByText('Earned this month').count() && await page.getByRole('button', {name: '+ New quote'}).count(), 'The Money page shows earnings and can start a quote');
     assert.ok(await page.getByText(/Start earning · \d of 6 done/).count(), 'A new owner sees the Start earning checklist');

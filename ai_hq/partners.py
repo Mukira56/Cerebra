@@ -35,15 +35,17 @@ from . import deliverability
 from .models import Event, Metadata, PartnerCompany, now
 
 KEY = "partner_settings"
-MAX_PER_DAY, PER_RUN, RESEARCH_PER_RUN, PAGES_PER_COMPANY = 30, 3, 4, 4
+# No daily number of Cerebra's own: Gmail's limit (about 500 a day on a personal account, 2,000 on Google Workspace) is the
+# only one. When Gmail refuses, sending waits for the next run. PER_RUN keeps one run from holding Gmail for long.
+MAX_PER_DAY, PER_RUN, RESEARCH_PER_RUN, PAGES_PER_COMPANY = 2000, 40, 4, 4
 SECONDS_PER_COMPANY = 40  # a slow site gets what was read by then, so one company never holds up the rest
 CONTACT_GUESSES = ("/contact", "/contact-us")  # read when the home page links no contact page
 PAUSE_BOUNCES, BOUNCE_WINDOW = 3, 30
 PLACEHOLDERS = ("{company}", "{website}", "{personal}")
-DEFAULTS = {"enabled": False, "mode": "send", "per_day": 10, "follow_up_days": 6, "offer": "", "subject": "", "body": "", "follow_up": "",
+DEFAULTS = {"enabled": False, "mode": "send", "per_day": 500, "industries": ["ai"], "follow_up_days": 6, "offer": "", "subject": "", "body": "", "follow_up": "",
             "personalize": True, "big_subject": "", "big_body": ""}
 BIG_TECH_KIND = "big_tech"
-RESEARCH_CHARS, PERSONAL_CHARS = 2400, 700
+RESEARCH_CHARS, PERSONAL_CHARS = 2400, 900
 RESEARCH_COMPANIES, RESEARCH_PAGES, RESEARCH_ANALYSES = 6, 4, 4  # each run: companies read, pages each, dossiers written
 DRAFTS_AHEAD, DRAFTS_PER_RUN = 30, 5  # tailored emails kept ready for review, and how many are written per run
 MODES = ("send", "review")
@@ -103,6 +105,19 @@ AI_FIELDS = {"Q11660", "Q2539", "Q2878974"}  # artificial intelligence, machine 
 QUERY = ("SELECT ?item ?itemLabel ?site ?field WHERE { VALUES ?field { " + " ".join(f"wd:{key}" for key in sorted(LANGUAGE_FIELDS | AI_FIELDS)) + " } "
          "?item wdt:P452 ?field; wdt:P856 ?site. FILTER NOT EXISTS { ?item wdt:P576 ?ended } "
          'SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } }')
+# Kinds of companies to find, beyond AI and language companies: Wikidata industries, matched by their English name.
+INDUSTRIES = {"ai": "AI and language technology", "software": "Software", "it": "IT services", "fintech": "Fintech", "ecommerce": "E-commerce",
+              "telecom": "Telecoms", "internet": "Internet companies", "games": "Video games", "media": "Media", "advertising": "Advertising and marketing",
+              "health": "Health care", "education": "Education", "banking": "Banking", "consulting": "Consulting", "logistics": "Logistics",
+              "retail": "Retail", "energy": "Energy"}
+INDUSTRY_LABELS = {"software": ["software industry"], "it": ["information technology", "IT service management"], "fintech": ["financial technology"],
+                   "ecommerce": ["e-commerce"], "telecom": ["telecommunications", "telecommunications industry"], "internet": ["Internet", "online service"],
+                   "games": ["video game industry"], "media": ["mass media", "media industry"], "advertising": ["advertising", "marketing"],
+                   "health": ["health care", "healthcare industry"], "education": ["education", "educational technology"], "banking": ["banking", "financial services"],
+                   "consulting": ["consulting", "management consulting"], "logistics": ["logistics"], "retail": ["retail"], "energy": ["energy industry"]}
+LABEL_QUERY = ("SELECT ?item ?itemLabel ?site ?field WHERE { VALUES ?label { %s } ?field rdfs:label ?label . "
+               "?item wdt:P452 ?field; wdt:P856 ?site. FILTER NOT EXISTS { ?item wdt:P576 ?ended } "
+               'SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } } LIMIT 4000')
 NOT_A_HOME = re.compile(r"(^|\.)(wikipedia\.org|wikidata\.org|facebook\.com|twitter\.com|x\.com|linkedin\.com|github\.com|youtube\.com|instagram\.com|medium\.com)$")
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -169,7 +184,7 @@ def save_settings(session, changes):
         except (TypeError, ValueError):
             raise ValueError("Emails a day must be a number") from None
         if not 1 <= number <= MAX_PER_DAY:
-            raise ValueError(f"Send between 1 and {MAX_PER_DAY} a day: more than that risks your Gmail account being limited")
+            raise ValueError(f"Send between 1 and {MAX_PER_DAY} a day: that is the most Gmail itself allows (Google Workspace)")
         value["per_day"] = number
     if "follow_up_days" in changes:
         try:
@@ -182,6 +197,11 @@ def save_settings(session, changes):
     for key, limit in (("offer", 600), ("subject", 150), ("body", 4000), ("follow_up", 2000), ("big_subject", 150), ("big_body", 4000)):
         if key in changes:
             value[key] = str(changes[key] or "").replace("\r\n", "\n").strip()[:limit]
+    if "industries" in changes:
+        chosen = [key for key in changes["industries"] or [] if key in INDUSTRIES]
+        if not chosen:
+            raise ValueError("Choose at least one kind of company to find")
+        value["industries"] = chosen
     if "personalize" in changes:
         if not isinstance(changes["personalize"], bool):
             raise ValueError("Tailoring each email must be on or off")
@@ -466,11 +486,20 @@ class Partners:
                 added += self.add(session, name, website, "starter list", 0) is not None
             for name, website in self.big_tech:
                 added += self.add(session, name, website, "big tech and AI labs", 0) is not None
-        response = self.client.get(WIKIDATA, params={"query": QUERY, "format": "json"})
-        if response.status_code != 200:
-            raise ValueError(f"Wikidata didn't answer ({response.status_code}); the starter list is ready, try finding more later")
+        with self.db.Session() as session:
+            chosen = settings(session).get("industries") or ["ai"]
+        queries = [QUERY] if "ai" in chosen else []
+        labels = [label for key in chosen if key != "ai" for label in INDUSTRY_LABELS.get(key, [])]
+        if labels:
+            queries.append(LABEL_QUERY % " ".join('"' + label.replace('"', "") + '"@en' for label in labels))
+        bindings = []
+        for query in queries:
+            response = self.client.get(WIKIDATA, params={"query": query, "format": "json"})
+            if response.status_code != 200:
+                raise ValueError(f"Wikidata didn't answer ({response.status_code}); the starter list is ready, try finding more later")
+            bindings += response.json().get("results", {}).get("bindings", [])
         best = {}
-        for item in response.json().get("results", {}).get("bindings", []):
+        for item in bindings:
             name, site = item.get("itemLabel", {}).get("value", ""), item.get("site", {}).get("value", "")
             field = item.get("field", {}).get("value", "").rsplit("/", 1)[-1]
             if not name or re.fullmatch(r"Q\d+", name) or not site:
@@ -658,7 +687,7 @@ class Partners:
         rules = settings(session)
         firsts = [row.sent[0]["at"] for row in session.scalars(select(PartnerCompany).where(PartnerCompany.status.in_(SENT_STAGES))).all() if row.sent]
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(min(firsts))).days if firsts else 0
-        return next((min(rules["per_day"], cap) for days, cap in deliverability.RAMP if age < days), rules["per_day"])
+        return rules["per_day"]  # no warm-up cap of Cerebra's own; Gmail's limit is the only one
 
     def health(self, session):
         rows = sorted((row for row in session.scalars(select(PartnerCompany).where(PartnerCompany.status.in_(SENT_STAGES))).all() if row.sent),
@@ -1108,7 +1137,7 @@ class Partners:
         sample = next((row for row in rows if row.status == "ready" and row.personal), None) or next((row for row in rows if row.status == "ready"), None)
         pitch = template(rules, sample) if sample else ("", "")
         preview = compose(session, sample, pitch[1], pitch[0]) if sample and pitch[1] else None
-        return {"settings": {key: value for key, value in rules.items() if key != "cleared_at"}, "counts": counts, "total": len(rows),
+        return {"settings": {key: value for key, value in rules.items() if key != "cleared_at"}, "industries": INDUSTRIES, "counts": counts, "total": len(rows),
                 "companies": [public(row) for row in rows[:600]], "ready": self.ready(session), "sent_today": self.sent_today(session),
                 "limit": self.limit(session), "max_per_day": MAX_PER_DAY, "health": self.health(session), "status": self.status,
                 "search": dict(self.search), "signature": footer(session)[0], "default_follow_up": DEFAULT_FOLLOW_UP,

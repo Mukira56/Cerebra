@@ -1889,6 +1889,86 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             raise ValueError("Send the ticked emails as a list")
         return partners.send_drafts(payload["ids"])
 
+    # ---- job applications: tech jobs worldwide, a letter for each from the owner's CV (ai_hq/jobs.py) ----
+    from . import jobs as jobs_module
+    jobs = jobs_module.Jobs(db, mailbox, notifier, research=partners.research)
+    jobs.write = partner_write
+    app.state.jobs = jobs
+    registry.add("jobs", "Job applications", "Finds tech jobs on public job boards, studies each employer's website, writes an application for each job "
+                 "from your CV, and sends the ones that give an address (or waits for you, as you chose); reads replies.", jobs.tick, 20, outward=True)
+
+    def jobs_call(work):
+        try:
+            return work()
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+
+    @app.get("/api/jobs")
+    def jobs_overview():
+        with db.Session() as session:
+            return jobs.overview(session)
+
+    @app.put("/api/jobs")
+    def jobs_save(payload: dict):
+        with db.Session.begin() as session:
+            before = jobs_module.settings(session)
+            saved = jobs_module.save_settings(session, payload)
+            chief.sync_feature_schedule(session, registry, "jobs", before["enabled"], saved["enabled"])
+            return saved
+
+    @app.post("/api/jobs/find")
+    def jobs_find():
+        return jobs.find()
+
+    @app.post("/api/jobs/run")
+    def jobs_run():
+        return jobs.tick()
+
+    @app.post("/api/jobs/write")
+    def jobs_write(payload: dict):
+        return jobs.write_ahead(payload.get("count") or 10)
+
+    @app.post("/api/jobs/send")
+    def jobs_send_many(payload: dict):
+        if not isinstance(payload.get("ids"), list) or not payload["ids"]:
+            raise ValueError("Tick the applications you want to send")
+        return jobs.send_many(payload["ids"])
+
+    @app.post("/api/jobs/{job_id}/letter")
+    def jobs_letter(job_id: str, payload: dict):
+        return jobs_call(lambda: jobs.letter(job_id, again=payload.get("again") is True))
+
+    @app.post("/api/jobs/{job_id}/send")
+    def jobs_send(job_id: str, payload: dict):
+        return jobs_call(lambda: jobs.send(job_id, payload.get("subject"), payload.get("body")))
+
+    @app.patch("/api/jobs/{job_id}")
+    def jobs_update(job_id: str, payload: dict):
+        return jobs_call(lambda: jobs.update(job_id, payload))
+
+    @app.post("/api/jobs/{job_id}/open")
+    def jobs_open(job_id: str):
+        """Opens the job's own posting in the owner's browser (only the address the job board gave)."""
+        import webbrowser
+        from .models import JobPosting
+        with db.Session() as session:
+            job = session.get(JobPosting, job_id)
+            if job is None:
+                raise HTTPException(404, "Job not found")
+            url = job.url
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("This job has no web address")
+        webbrowser.open(url)
+        return {"opened": url}
+
+    @app.post("/api/jobs/{job_id}/read-reply")
+    def jobs_read_reply(job_id: str, payload: dict):
+        return jobs_call(lambda: jobs.read_reply(job_id, again=payload.get("again") is True))
+
+    @app.post("/api/jobs/{job_id}/answer")
+    def jobs_answer(job_id: str, payload: dict):
+        return jobs_call(lambda: jobs.answer(job_id, payload.get("text")))
+
     @app.post("/api/partners/read-replies")
     def partners_read_replies():
         """Reads every reply not read yet: an offer or not, and a drafted answer to each offer."""

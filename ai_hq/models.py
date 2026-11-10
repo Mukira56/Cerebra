@@ -571,6 +571,34 @@ class PartnerCompany(Base):
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
 
+class JobPosting(Base):
+    """A tech job the owner can apply for (ai_hq/jobs.py), its employer's research record, the letter written for it, and
+    what was sent and answered. status: ready (email given) | form (apply on their site) | sent | followed_up | replied |
+    declined | bounced | applied (the owner applied on the site) | dropped."""
+    __tablename__ = "job_postings"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    source: Mapped[str] = mapped_column(String, default="", index=True)
+    native_id: Mapped[str] = mapped_column(String, default="", index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    company: Mapped[str] = mapped_column(String, default="")
+    company_id: Mapped[str] = mapped_column(String, default="", index=True)  # its research record in partner_companies
+    location: Mapped[str] = mapped_column(String, default="")
+    mode: Mapped[str] = mapped_column(String, default="remote")  # remote | hybrid | onsite
+    url: Mapped[str] = mapped_column(String, default="")
+    apply_email: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    posted_at: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="ready", index=True)
+    letter: Mapped[dict] = mapped_column(JSON, default=dict)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    thread_id: Mapped[str] = mapped_column(String, default="")
+    sent: Mapped[list] = mapped_column(JSON, default=list)
+    next_at: Mapped[str] = mapped_column(String, default="")
+    reply: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now, index=True)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class CompanyPage(Base):
     """One page of a pitched company's own website, kept for its research (ai_hq/dossier.py). kind: home | about | products | ..."""
     __tablename__ = "company_pages"

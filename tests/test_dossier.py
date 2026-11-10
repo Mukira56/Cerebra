@@ -95,11 +95,15 @@ def test_the_dossier_keeps_only_facts_from_pages_in_the_database(client):  # noq
     assert research.analyse_some() == 0  # nothing new to analyse
 
 
+EXAMPLE_FACTS = [{"fact": "Kiswahili speakers", "figure": "over 100 million", "source": "An example language survey"},
+                 {"fact": "Languages in the region", "figure": "more than 2,000", "source": "An example atlas"}]  # made-up test figures
+
+
 def test_every_figure_in_a_pitch_must_come_from_the_research_or_a_sourced_market_fact():
-    facts = dossier.facts_text(dossier.STARTING_FACTS)
+    facts = dossier.facts_text(EXAMPLE_FACTS)
     research = "Fact: Its Voice API supports 18 languages\nFact: Used by 300 call centres"
     assert dossier.figures_are_sourced("Your Voice API covers 18 languages, while Kiswahili alone has over 100 million speakers.", research, facts)
-    assert dossier.figures_are_sourced("Africa has more than 2,000 languages.", research, facts)
+    assert dossier.figures_are_sourced("The region has more than 2,000 languages.", research, facts)
     assert not dossier.figures_are_sourced("This could save you $2 million a year.", research, facts)
     assert not dossier.figures_are_sourced("A 40% faster launch.", research, "")
 
@@ -108,6 +112,7 @@ def test_the_pitch_uses_the_dossier_and_rejects_an_invented_figure(client):  # n
     state, robot = prepared(client, pitch=False)
     client.put("/api/partners", json={"subject": "Language data for {company}", "personalize": True,
                                        "body": "Hello {company} team,\n\nI lead native speakers who build African-language data for AI.\n\nCould we talk?"}).raise_for_status()
+    client.put("/api/partners/market-facts", json={"facts": EXAMPLE_FACTS}).raise_for_status()
     company = setup_company(client)
     honest = Model("Your Voice API supports 18 languages and your blog says you are entering Kenya and Tanzania this year; Kiswahili "
                    "alone has over 100 million speakers. I have mapped where a first pilot would prove the most, and would be glad to walk you through it.")
@@ -127,7 +132,7 @@ def test_the_pitch_uses_the_dossier_and_rejects_an_invented_figure(client):  # n
     body = robot.gmail.sent[0]["body"]
     assert "entering Kenya and Tanzania" in body and "over 100 million speakers" in body
     prompt = honest.prompts[-1]
-    assert "Its Voice API supports 18 languages" in prompt and "UNESCO" in prompt and "at most two figures" in prompt
+    assert "Its Voice API supports 18 languages" in prompt and "An example language survey" in prompt and "at most two figures" in prompt
 
 
 def test_a_company_still_being_researched_waits_and_the_rest_go_on(client):  # noqa: F811
@@ -143,11 +148,10 @@ def test_a_company_still_being_researched_waits_and_the_rest_go_on(client):  # n
 
 
 def test_market_facts_need_a_source_and_can_be_edited(client):  # noqa: F811
-    facts = client.get("/api/partners/market-facts").json()["facts"]
-    assert any("Kiswahili" in item["fact"] for item in facts)
+    assert client.get("/api/partners/market-facts").json()["facts"] == []  # nothing about any market is built in
     refused = client.put("/api/partners/market-facts", json={"facts": [{"fact": "Mobile users", "figure": "500 million", "source": ""}]})
     assert refused.status_code == 400 and "source" in refused.json()["detail"]
-    saved = client.put("/api/partners/market-facts", json={"facts": [{"fact": "Mobile users in Africa", "figure": "500 million", "source": "A report"}]})
+    saved = client.put("/api/partners/market-facts", json={"facts": [{"fact": "Mobile users in the region", "figure": "500 million", "source": "A report"}]})
     assert saved.status_code == 200 and client.get("/api/partners/market-facts").json()["facts"][0]["source"] == "A report"
 
 

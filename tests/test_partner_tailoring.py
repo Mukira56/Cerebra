@@ -40,6 +40,7 @@ def company(client, name, domain, research=RESEARCH, kind=""):  # noqa: F811
 def ready(client, extra=None):  # noqa: F811
     state, robot = prepared(client, pitch=False)
     client.put("/api/partners", json={**PITCH, **(extra or {})}).raise_for_status()
+    client.put("/api/partners/market-facts", json={"facts": [{"fact": "Kiswahili speakers", "figure": "over 100 million", "source": "An example survey"}]}).raise_for_status()
     return state, robot
 
 

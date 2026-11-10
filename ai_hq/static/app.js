@@ -20,6 +20,7 @@
     funding: ["EARN", "Grants & credits", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
     etsy: ["EARN", "Sell on Etsy", "Find what sells on Etsy and how crowded it is, from Etsy's own public listings: demand, competition, prices and the tags top sellers use. Nothing is written to Etsy."],
     books: ["EARN", "Write books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
+    jobs: ["EARN", "Apply for jobs", "Tech jobs worldwide (remote, hybrid or on-site): each employer studied from its own website, and an application written around that job and that employer's interests, from your CV. You review and send, or let it send."],
     freelance: ["EARN", "Find work", "Paid work found for you on public job sources and scored against what you sell. Cerebra can bid for you on Freelancer.com; elsewhere you apply in your own name."],
     money: ["EARN", "Money & invoices", "Quotes, invoices and what your business has earned and is owed. You send every document; Cerebra never takes payments."],
     business: ["BUILD", "Client work", "Turn a client brief into original, reviewed deliverables saved on this laptop."],
@@ -84,9 +85,10 @@
     chip: [["rect", 4, 4, 8, 8], ["path", "M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"]],
     branch: [["circle", 4.5, 3.5, 1.5], ["circle", 4.5, 12.5, 1.5], ["circle", 11.5, 5, 1.5], ["path", "M4.5 5v6M11.5 6.5c0 3-7 2.2-7 4.5"]],
     tool: [["path", "M10.2 2.4a3 3 0 0 0-3 3.9L2.5 11l2.5 2.5 4.7-4.7a3 3 0 0 0 3.9-3l-2 2-2-.6-.6-2z"]],
+    idcard: [["rect", 1.5, 3, 13, 10], ["circle", 5.5, 7.5, 1.6], ["path", "M3.3 11a2.4 2.4 0 0 1 4.4 0M9.5 6.5h3M9.5 9h3"]],
     gear: [["circle", 8, 8, 2.2], ["path", "M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"]],
   };
-  const PAGE_ICON = {overview: "home", approvals: "check", chat: "help", chief: "target", partners: "mail", freelance: "search", money: "money", books: "book",
+  const PAGE_ICON = {overview: "home", approvals: "check", chat: "help", chief: "target", partners: "mail", jobs: "idcard", freelance: "search", money: "money", books: "book",
     etsy: "shop", prospects: "pin", marketing: "megaphone", funding: "grant", business: "briefcase", tasks: "code", projects: "folder", council: "chat",
     reports: "report", activity: "clock", system: "pulse", connections: "link", models: "chip", github: "branch", toolchain: "tool", settings: "gear"};
   function icon(name) {
@@ -237,7 +239,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, jobs: jobsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
   }
@@ -353,6 +355,7 @@
     const tiles = [
       ["waiting", "check", "Waiting for my OK", waiting ? "Things to look at and approve" : "Nothing is waiting for you", "approvals", waiting],
       ["outreach", "mail", "Pitch companies", "Email companies about your services", "partners"],
+      ["earn", "idcard", "Apply for jobs", "Tech jobs worldwide, a letter for each", "jobs"],
       ["earn", "search", "Find work", "Paid jobs that match your skills", "freelance"],
       ["earn", "money", "Money & invoices", "Quotes, invoices and what you've earned", "money"],
       ["earn", "book", "Write books", "Books for Amazon KDP", "books"],
@@ -1507,19 +1510,22 @@
       const bigSubject = input("Subject for big tech, e.g. Kiswahili and African-language training data for {company}'s AI", rules.big_subject || ""),
         bigText = textarea("Your email to big tech companies and AI labs (Google, Microsoft, Meta, OpenAI, Anthropic…). Leave empty to send them the pitch above.", rules.big_body || "");
       bigSubject.maxLength = 150; bigText.rows = 8;
-      const on = check("Work on its own: read company websites and send my pitch within my daily number", rules.enabled === true),
+      const kinds = Object.entries(state.industries || {}).map(([key, label]) => { const box = check(label, array(rules.industries || ["ai"]).includes(key)); box.control.value = key; return box; });
+      const on = check("Work on its own: find and study companies, and send my pitch", rules.enabled === true),
         mode = select([["send", "Send each pitch automatically"], ["review", "Only when I press Send (follow-ups wait too)"]], rules.mode || "send");
       append(form, field("Subject", subject, "{company} becomes each company's name, {website} its web address."),
         field("Your email", text, "Put {personal} where each company's own paragraph should go; without it, the paragraph goes after your greeting."), tailor.wrap,
         field("Big tech and AI labs: subject", bigSubject), field("Big tech and AI labs: your email", bigText, "Used for the big tech companies and AI labs in your list. {personal} works here too."),
         field("Follow-up (sent once, in the same thread, if nobody answers)", followUp),
-        append(el("div", "form-grid"), field("Pitches a day", perDay, `Up to ${state.max_per_day}. The first week stays at 10 a day or fewer, to protect your Gmail.`),
+        append(el("div"), el("strong", "", "Kinds of companies to find"), append(el("div", "check-list"), ...kinds.map(box => box.wrap))),
+        append(el("div", "form-grid"), field("Pitches a day", perDay, "Gmail's own limit applies: about 500 a day on a personal Gmail, 2,000 on Google Workspace."),
           field("Follow up after (days, 0 for none)", days), field("Sending", mode)),
         on.wrap, Object.assign(hint(`Added under every email (US law needs your postal address and an opt-out):\n${state.signature || ""}`), {style: "white-space: pre-line"}), actionsRow(save,
           button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/partners/run", {}, "POST", 600000)).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/partners", {subject: subject.value, body: text.value, follow_up: followUp.value, per_day: Number(perDay.value || 10), follow_up_days: Number(days.value || 0),
-          mode: mode.value, enabled: on.control.checked, personalize: tailor.control.checked, big_subject: bigSubject.value, big_body: bigText.value}, "PUT");
+          mode: mode.value, enabled: on.control.checked, personalize: tailor.control.checked, big_subject: bigSubject.value, big_body: bigText.value,
+          industries: kinds.filter(box => box.control.checked).map(box => box.control.value)}, "PUT");
         toast(on.control.checked ? "Saved. Company pitches are on." : "Saved."); render();
       });
       const before = array(state.ready).length ? panel("Before a pitch can go out", body(append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))),
@@ -1687,6 +1693,143 @@
           actionsRow(writeIt, keep), field("Subject", subject), field("Your email", text, "Your name, postal address and an opt-out line are added under it."), actionsRow(send)),
       field("Notes", notes), actionsRow(button("Mark as applied", () => mark("applied"), "button"), !sentAlready ? button("Drop it", () => mark("dropped"), "button ghost") : null,
         ["dropped", "applied"].includes(item.status) && !sentAlready ? button("Put back in line", () => mark("ready"), "button ghost") : null)));
+  }
+
+  // ---------- job applications: tech jobs worldwide, each employer studied, a letter for each job (ai_hq/jobs.py) ----------
+  const JOB_STAGE = {ready: ["ready to email", "blue"], form: ["apply on their site", "amber"], sent: ["applied", "green"], followed_up: ["followed up", "green"],
+    replied: ["replied", "green"], declined: ["said no", "muted"], bounced: ["bounced", "red"], applied: ["you applied", "green"], dropped: ["dropped", "muted"]};
+  let jobFilter = "ready";
+  function jobBadge(item) {
+    if (item.status === "replied" && item.reply?.verdict === "offered") return badge("interview or offer", "green");
+    const [label, style] = JOB_STAGE[item.status] || [item.status, "muted"]; return badge(label, style);
+  }
+  function jobsView() {
+    const root = el("div"), token = renderToken;
+    root.append(body(el("p", "", "Loading…")));
+    (async () => {
+      let state; try { state = await api("/api/jobs"); } catch (issue) { root.replaceChildren(body(empty("Job applications unavailable", issue.message))); return; }
+      if (token !== renderToken) return;
+      const counts = state.counts || {}, rules = state.settings || {}, all = array(state.jobs);
+      const stats = el("div", "grid stats");
+      [["Jobs found", state.total || 0, "tech jobs, worldwide", ""], ["Ready to email", counts.ready || 0, `${state.letters_ready || 0} letters written`, "blue"],
+       ["Apply on their site", counts.form || 0, "your letter, ready to paste", "amber"], ["Applied", (counts.sent || 0) + (counts.followed_up || 0) + (counts.applied || 0), "by email or on their site", "green"],
+       ["Interviews and offers", state.offered || 0, "a reply is drafted for each", "green"]]
+        .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
+      const before = array(state.ready).length ? panel("Before applications can go out", body(append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))),
+        actionsRow(link("Connected accounts →", "connections")))) : null;
+      const status = state.status?.message ? hint(`Last run ${state.status.at ? date(state.status.at) : ""}: ${state.status.message}`, state.status.state === "error") : null;
+      // 1. your CV and what you want
+      const form = el("form"), save = submitButton("Save");
+      const cv = textarea("Paste your CV here: your experience, projects, skills, education and results. Applications use only what it says.", rules.cv || "");
+      const signature = textarea("Your sign-off: name, phone or WhatsApp, email, LinkedIn or GitHub", rules.signature || "");
+      const wantedWords = input("Words a job should mention, e.g. Python, React, security (optional)", rules.wanted || "");
+      const avoidWords = input("Words to skip, e.g. senior, 10+ years, unpaid (optional)", rules.avoid || "");
+      const days = input("7", rules.follow_up_days ?? 7, "number");
+      cv.rows = 12; signature.rows = 3; days.min = 0; days.max = 30;
+      const modes = Object.entries(state.work_modes || {}).map(([key, label]) => { const box = check(label, array(rules.work_modes).includes(key)); box.control.value = key; return box; });
+      const boards = Object.entries(state.sources || {}).map(([key, label]) => { const box = check(label, array(rules.sources).includes(key)); box.control.value = key; return box; });
+      const on = check("Work on its own: find jobs, study each employer and write the applications", rules.enabled === true);
+      const mode = select([["review", "I review each one and press Send"], ["send", "Send each application automatically"]], rules.mode || "review");
+      append(form, field("Your CV", cv, "The only source of facts about you: nothing that isn't here is ever claimed."), field("Signature", signature),
+        append(el("div"), el("strong", "", "Kinds of work"), append(el("div", "check-list"), ...modes.map(box => box.wrap))),
+        append(el("div", "form-grid"), field("Must mention", wantedWords), field("Skip jobs that mention", avoidWords)),
+        append(el("div"), el("strong", "", "Job boards"), append(el("div", "check-list"), ...boards.map(box => box.wrap))),
+        append(el("div", "form-grid"), field("Sending", mode), field("Follow up after (days, 0 for none)", days)), on.wrap,
+        hint("No daily number in Cerebra: Gmail's own limit applies (about 500 a day on a personal Gmail, 2,000 on Google Workspace). When Gmail refuses, sending waits for the next day."),
+        actionsRow(save, button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/jobs/run", {}, "POST", 900000)).then(() => render()), "button ghost")));
+      wireForm(form, save, async () => {
+        await mutate("/api/jobs", {cv: cv.value, signature: signature.value, wanted: wantedWords.value, avoid: avoidWords.value, follow_up_days: Number(days.value || 0),
+          mode: mode.value, enabled: on.control.checked, work_modes: modes.filter(box => box.control.checked).map(box => box.control.value),
+          sources: boards.filter(box => box.control.checked).map(box => box.control.value)}, "PUT");
+        toast(on.control.checked ? "Saved. Job applications are on." : "Saved."); render();
+      });
+      // 2. the jobs
+      const review = button(`Review ready applications (${state.letters_ready || 0})`, () => jobLettersDialog(), state.letters_ready ? "button primary" : "button");
+      const offers = button(`Interviews and offers (${state.offered || 0})`, () => { jobFilter = "offered"; render(); }, jobFilter === "offered" ? "button primary" : "button");
+      const findNow = button("Find jobs now", () => act(result => `Found ${result.added} new job(s).` + (array(result.failed).length ? ` Couldn't reach: ${result.failed.join(", ")}.` : ""),
+        () => mutate("/api/jobs/find", {}, "POST", 600000)).then(() => render()), "button");
+      const writeMore = button("Write the next 10 letters", () => act(result => `${result.written} letter(s) written.` + (array(result.problems).length ? ` Not written: ${result.problems.slice(0, 2).join("; ")}` : ""),
+        () => mutate("/api/jobs/write", {count: 10}, "POST", 1800000)).then(() => render()), "button ghost");
+      const filters = {ready: `Ready to email (${counts.ready || 0})`, form: `Apply on their site (${counts.form || 0})`, offered: `Interviews and offers (${state.offered || 0})`,
+        applied: "Applied", replied: "Replied or said no", all: "Everything"};
+      const pick = select(Object.entries(filters), jobFilter); pick.addEventListener("change", () => { jobFilter = pick.value; render(); });
+      const groups = {applied: ["sent", "followed_up", "applied"], replied: ["replied", "declined", "bounced"]};
+      const shown = all.filter(item => jobFilter === "all" ? true : jobFilter === "offered" ? item.status === "replied" && item.reply?.verdict === "offered"
+        : (groups[jobFilter] || [jobFilter]).includes(item.status));
+      const list = el("div", "row-list");
+      shown.slice(0, 300).forEach(item => {
+        const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.title),
+          el("div", "row-meta", [item.company, item.location, ({remote: "Remote", hybrid: "Hybrid", onsite: "On-site"})[item.mode], item.source_label].filter(Boolean).join(" · ")),
+          el("div", "row-meta", item.apply_email ? `✉ ${item.apply_email}${item.letter?.body ? " · letter written" : ""}` : item.letter?.body ? "Letter ready to paste on their site" : "Apply on their site"),
+          item.notes ? el("div", "row-meta", item.notes) : null), jobBadge(item));
+        row.addEventListener("click", () => jobDialog(item)); list.append(row);
+      });
+      root.replaceChildren(stats, before, status,
+        append(el("div", "grid two"),
+          panel("Jobs", append(el("div"), body(append(el("div", "actions"), review, offers, findNow, writeMore, pick),
+            hint("Every employer is studied from its own website before its letter is written. Each letter is built around that job's requirements and the employer's interests, from your CV only, and every figure in it is checked.")),
+            shown.length ? list : body(empty(state.total ? "Nothing here" : "No jobs yet", "Paste your CV, choose the kinds of work you want, then press Find jobs now.", null, "◎"))), null, shown.length),
+          panel("Your CV and the jobs you want", body(form))));
+    })();
+    return root;
+  }
+  function jobDialog(item) {
+    const letter = item.letter || {}, subject = input("Subject", letter.subject || ""), text = textarea("Your letter", letter.body || ""), to = input("Their email", item.apply_email || "");
+    text.rows = 14;
+    const refill = result => { subject.value = result.subject || ""; text.value = result.body || ""; };
+    const write = button(letter.body ? "Write it again" : "Research them and write it", () => act("Written.", () => mutate(`/api/jobs/${item.id}/letter`, {again: !!letter.body}, "POST", 600000)).then(result => { if (result) refill(result); }), "button");
+    const keep = button("Save my edits", () => act("Saved.", () => mutate(`/api/jobs/${item.id}`, {letter: {subject: subject.value, body: text.value}, apply_email: to.value.trim()}, "PATCH")), "button ghost");
+    const send = button("Send by email", () => act(result => result.message, () => mutate(`/api/jobs/${item.id}`, {apply_email: to.value.trim()}, "PATCH")
+      .then(() => mutate(`/api/jobs/${item.id}/send`, {subject: subject.value, body: text.value}, "POST", 120000))).then(result => { if (result) { closeDialog(); render(); } }), "button primary");
+    const copy = button("Copy the letter", () => { navigator.clipboard?.writeText(text.value).then(() => toast("Copied. Paste it into their application form."), () => toast("Select the letter and copy it.", true)); }, "button");
+    const open = button("Open the job", () => act("Opened in your browser.", () => mutate(`/api/jobs/${item.id}/open`, {})), "button");
+    const mark = status => act("Saved.", () => mutate(`/api/jobs/${item.id}`, {status}, "PATCH")).then(result => { if (result) { closeDialog(); render(); } });
+    const applied = ["sent", "followed_up", "replied", "declined", "bounced"].includes(item.status);
+    showDialog(item.title, append(el("div"),
+      el("div", "row-meta", [item.company, item.location, ({remote: "Remote", hybrid: "Hybrid", onsite: "On-site"})[item.mode], item.source_label].filter(Boolean).join(" · ")), jobBadge(item),
+      actionsRow(open), item.company_id ? append(el("div"), el("h4", "", "What Cerebra has learned about the employer"), researchBlock({id: item.company_id})) : hint("No employer website in this posting: the letter uses what the posting says."),
+      append(el("details", "draft-text"), el("summary", "", "The job posting"), el("pre", "code-block", item.description || "")),
+      applied ? append(el("div"), el("h4", "", "What you sent"), ...array(item.sent).map(mail => append(el("div"), el("div", "row-meta", `${date(mail.at)}${mail.follow_up ? " · follow-up" : ""}: ${mail.subject}`), el("pre", "code-block", mail.body))),
+        item.reply?.snippet ? replyBlockFor(item, `/api/jobs/${item.id}`) : null)
+        : append(el("div"), el("h4", "", "Your application"), field("To", to, item.apply_email ? "The address the posting gives for applying." : "This job takes applications on its own site: copy the letter and paste it there, or type an address it gives."),
+          field("Subject", subject), field("Letter", text, "Built from your CV, the posting and the employer's research. Read it and change anything before sending."),
+          actionsRow(write, keep, item.apply_email ? send : copy)),
+      actionsRow(button("Mark as applied", () => mark("applied"), "button"), !applied ? button("Drop it", () => mark("dropped"), "button ghost") : null)));
+  }
+  function replyBlockFor(item, base) {
+    const reply = item.reply || {}, box = el("div");
+    const verdict = {offered: ["An interview or offer", "green"], declined: ["They said no: nothing more is sent", "muted"], unclear: ["No offer in it", "amber"]}[reply.verdict];
+    append(box, el("h4", "", "Their reply"), verdict ? badge(verdict[0], verdict[1]) : hint("Not read yet."), reply.summary ? el("p", "", reply.summary) : null,
+      el("pre", "code-block", reply.body || reply.snippet || ""),
+      actionsRow(button(reply.verdict ? "Read it again" : "Read their reply", () => act("Read.", () => mutate(`${base}/read-reply`, {again: !!reply.verdict}, "POST", 300000)).then(result => { if (result) { closeDialog(); render(); } }), "button small")));
+    if (reply.answered_at) append(box, hint(`You answered on ${date(reply.answered_at)}.`), el("pre", "code-block", reply.answer || ""));
+    else if (reply.verdict === "offered") {
+      const text = textarea("Your reply", reply.draft || ""); text.rows = 8;
+      append(box, field("Your reply (drafted for you: read and change it before sending)", text, "Nothing is sent until you press Send."),
+        actionsRow(button("Send my reply from Gmail", () => act(result => result.message, () => mutate(`${base}/answer`, {text: text.value}, "POST", 120000)).then(result => { if (result) { closeDialog(); render(); } }), "button primary")));
+    }
+    return box;
+  }
+  function jobLettersDialog() {
+    const box = el("div"); box.append(el("p", "", "Loading the applications ready to go…"));
+    showDialog("Ready applications", box);
+    (async () => {
+      let state; try { state = await api("/api/jobs"); } catch (issue) { box.replaceChildren(hint(issue.message, true)); return; }
+      const ready = array(state.jobs).filter(item => item.status === "ready" && item.letter?.body), ticks = [];
+      const list = el("div", "row-list");
+      ready.forEach(item => {
+        const tick = el("input"); tick.type = "checkbox"; tick.checked = true; tick.value = item.id; ticks.push(tick);
+        const head = append(el("label", "draft-head"), tick, append(el("span"), el("strong", "", item.title), el("span", "row-meta", ` · ${item.company} · to ${item.apply_email}`)));
+        const text = el("details", "draft-text"); append(text, el("summary", "", `Subject: ${item.letter.subject}`), el("pre", "code-block", item.letter.body));
+        list.append(append(el("div", "row draft-row"), append(el("div", "row-main"), head, text)));
+      });
+      const send = button("", () => act(result => result.message, () => mutate("/api/jobs/send", {ids: ticks.filter(tick => tick.checked).map(tick => tick.value)}, "POST", 1800000))
+        .then(result => { if (result) { closeDialog(); render(); } }), "button primary");
+      const label = () => { const n = ticks.filter(tick => tick.checked).length; send.textContent = n ? `Send all ${n} selected` : "Nothing selected"; send.disabled = !n; };
+      ticks.forEach(tick => tick.addEventListener("change", label)); label();
+      box.replaceChildren(el("p", "", ready.length ? `${ready.length} application(s) ready. Open any one to read it in full; untick the ones you don't want to send.` : "No applications are written yet: press Write the next 10 letters."),
+        ready.length ? list : null, ready.length ? actionsRow(send) : null);
+    })();
   }
 
   // ---------- prospects: US local businesses that could use what you sell ----------

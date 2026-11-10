@@ -88,7 +88,7 @@ def test_the_pitch_must_be_ready_to_send_as_written(client):  # noqa: F811
     bad = client.put("/api/partners", json={"subject": "Hi {name}", "body": PITCH["body"] + " Regards, [Your name]"})
     assert bad.status_code == 400 and "{name} isn't filled in" in bad.json()["detail"] and "Replace [Your name]" in bad.json()["detail"]
     assert client.put("/api/partners", json={"subject": "Hi", "body": "Too short"}).status_code == 400
-    assert client.put("/api/partners", json={"per_day": 500}).status_code == 400
+    assert client.put("/api/partners", json={"per_day": 2001}).status_code == 400  # past what Gmail itself allows
     saved = client.put("/api/partners", json={**PITCH, "per_day": 5}).json()
     assert saved["subject"] == PITCH["subject"] and saved["per_day"] == 5 and saved["enabled"] is False
 
@@ -319,3 +319,25 @@ def test_a_gmail_sign_in_google_ended_is_remembered_and_named_before_anything_is
     with db.Session() as session:
         assert gmail_module.public(gmail_module.load(session))["expired"] is True
     assert any("Google ended your Gmail sign-in" in item for item in client.get("/api/partners").json()["ready"])
+
+
+def test_any_kind_of_company_can_be_found(client):  # noqa: F811
+    state, robot = prepared(client)
+    queries = []
+
+    def wikidata_any(request):
+        queries.append(request.url.params["query"])
+        return httpx.Response(200, json={"results": {"bindings": []}})
+    robot.client = httpx.Client(transport=httpx.MockTransport(wikidata_any))
+    assert client.put("/api/partners", json={"industries": ["software", "fintech"]}).status_code == 200
+    robot.discover()
+    assert len(queries) == 1 and '"software industry"@en' in queries[0] and '"financial technology"@en' in queries[0]
+    assert client.put("/api/partners", json={"industries": []}).status_code == 400
+    assert set(client.get("/api/partners").json()["industries"]) >= {"ai", "software", "fintech", "ecommerce"}
+
+
+def test_no_warm_up_cap_of_cerebra_s_own(client):  # noqa: F811
+    state, robot = found(client)
+    client.put("/api/partners", json={"per_day": 500}).raise_for_status()
+    with client.app.state.db.Session() as session:
+        assert robot.limit(session) == 500  # only Gmail's own limit applies
