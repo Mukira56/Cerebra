@@ -1490,28 +1490,38 @@
       const more = button("Read 40 more websites", () => act(result => result.message, () => mutate("/api/partners/find", {find: false})).then(() => render()), "button");
       const next = button(`Send to the next ${Math.min(5, counts.ready || 0) || 5} now`, () => act(result => result.message, () => mutate("/api/partners/send-next", {count: 5}, "POST", 600000)).then(() => render()), "button");
       find.disabled = more.disabled = !!search.running; next.disabled = !(counts.ready > 0);
+      const review = button(`Review ready emails (${state.drafts_ready || 0})`, () => draftsDialog(), "button primary");
+      const showOffered = button(`Offered me something (${state.offered || 0})`, () => { partnerFilter = "offered"; render(); }, partnerFilter === "offered" ? "button primary" : "button");
+      const showNotOffered = button(`Not offered (${state.not_offered || 0})`, () => { partnerFilter = "not_offered"; render(); }, partnerFilter === "not_offered" ? "button primary" : "button");
+      const readAll = button("Read the replies", () => act(result => result.read ? `Read ${result.read} repl${result.read === 1 ? "y" : "ies"}.` : "No new replies to read.", () => mutate("/api/partners/read-replies", {}, "POST", 600000)).then(() => render()), "button ghost");
       const addForm = el("form"), addGo = submitButton("Add"), addName = input("Company name"), addSite = input("Website, e.g. example.com");
       addName.required = addSite.required = true;
       append(addForm, append(el("div", "form-grid"), field("Company", addName), field("Website", addSite)), actionsRow(addGo));
       wireForm(addForm, addGo, async () => { await mutate("/api/partners/add", {name: addName.value, website: addSite.value}); toast("Added. Its website is read on the next run, or press Read 40 more websites."); render(); });
-      const filters = {ready: `Ready to pitch (${counts.ready || 0})`, forms: `Apply on their site (${counts.forms || 0})`, pitched: "Pitched", replied: "Replied or said no", applied: "You applied",
+      const filters = {offered: `Offered me something (${state.offered || 0})`, not_offered: `Not offered (${state.not_offered || 0})`, ready: `Ready to pitch (${counts.ready || 0})`, forms: `Apply on their site (${counts.forms || 0})`, pitched: "Pitched", replied: "Replied or said no", applied: "You applied",
         new: `Not read yet (${counts.new || 0})`, none: "No contact found", all: "Everything"};
       const pick = select(Object.entries(filters), partnerFilter); pick.addEventListener("change", () => { partnerFilter = pick.value; render(); });
       const groups = {pitched: ["sent", "followed_up"], none: ["none", "unreadable", "skipped", "dropped"], replied: ["replied", "opted_out", "bounced"]};
-      const shown = array(state.companies).filter(item => partnerFilter === "all" || (groups[partnerFilter] || [partnerFilter]).includes(item.status));
+      const offered = item => item.status === "replied" && item.reply?.verdict === "offered";
+      const pitchedStages = ["sent", "followed_up", "replied", "opted_out", "bounced"];
+      const shown = array(state.companies).filter(item => partnerFilter === "all" ? true : partnerFilter === "offered" ? offered(item)
+        : partnerFilter === "not_offered" ? pitchedStages.includes(item.status) && !offered(item) : (groups[partnerFilter] || [partnerFilter]).includes(item.status));
       const list = el("div", "row-list");
       shown.slice(0, 300).forEach(item => {
         const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name), el("div", "row-meta", [item.domain, item.source, item.kind === "big_tech" ? "big tech" : "", item.personal ? "tailored" : ""].filter(Boolean).join(" · ")),
           (item.summary || item.about) ? el("div", "row-meta", (item.summary || item.about).slice(0, 160)) : null,
           el("div", "row-meta", item.email ? `✉ ${item.email}` : array(item.pages).length ? `${item.pages.length} application page(s): ${item.pages.map(page => page.label).slice(0, 3).join(", ")}` :
             item.notes || (item.status === "new" ? "Its website is read next" : "No public role address")),
-          item.reply?.snippet ? el("div", "row-meta", `↩ ${item.reply.snippet.slice(0, 160)}`) : null), partnerBadge(item.status));
+          item.reply?.snippet ? el("div", "row-meta", `↩ ${(item.reply.summary || item.reply.snippet).slice(0, 160)}`) : null),
+          item.reply?.verdict === "offered" ? badge("offer", "green") : item.reply?.verdict === "declined" ? badge("said no", "muted") : partnerBadge(item.status));
         row.addEventListener("click", () => partnerDialog(item, state)); list.append(row);
       });
       root.replaceChildren(stats, before, paused, status,
         append(el("div", "grid two"),
           append(el("div"),
-            panel("Companies", append(el("div"), body(append(el("div", "actions"), find, more, next, pick),
+            panel("Companies", append(el("div"), body(append(el("div", "actions"), review, showOffered, showNotOffered, readAll),
+              hint("Every company that replies is never pitched again. Offers get a reply drafted for you to read and send; a no stops there."),
+              append(el("div", "actions"), find, more, next, pick),
               search.message ? hint(search.running ? `${search.message} This page refreshes itself.` : search.message) : null),
               shown.length ? list : body(empty(state.total ? "Nothing here" : "No companies yet", "Press Find companies: Cerebra lists AI, language-data and translation companies (a starter list, then Wikidata), then reads each one's own website for a public role address such as partnerships@ or vendors@, and for its pages for vendors, linguists and contributors.", null, "✉"))), null, shown.length),
             panel("Add a company you know", body(addForm))),
@@ -1556,6 +1566,54 @@
     }).catch(issue => box.replaceChildren(hint(issue.message, true)));
     return box;
   }
+  // Every ready email written out in full: untick any you don't want, then send the rest with one click.
+  function draftsDialog() {
+    const box = el("div"); box.append(el("p", "", "Loading the emails ready to go…"));
+    showDialog("Ready emails", box);
+    const draw = async () => {
+      let state; try { state = await api("/api/partners/drafts"); } catch (issue) { box.replaceChildren(hint(issue.message, true)); return; }
+      const drafts = array(state.drafts), ticks = [];
+      const prepare = button("Write the next 5", () => act(result => result.message, () => mutate("/api/partners/prepare", {count: 5}, "POST", 900000)).then(draw), "button");
+      const list = el("div", "row-list");
+      drafts.forEach(item => {
+        const tick = el("input"); tick.type = "checkbox"; tick.checked = true; tick.value = item.id; ticks.push(tick);
+        const head = append(el("label", "draft-head"), tick, append(el("span"), el("strong", "", item.name), el("span", "row-meta", ` · to ${item.to}${item.big_tech ? " · big tech pitch" : ""}`)));
+        const text = el("details", "draft-text"); append(text, el("summary", "", `Subject: ${item.subject}`), el("pre", "code-block", item.body));
+        list.append(append(el("div", "row draft-row"), append(el("div", "row-main"), head, text)));
+      });
+      const count = () => ticks.filter(tick => tick.checked).length;
+      const send = button("", () => {
+        const ids = ticks.filter(tick => tick.checked).map(tick => tick.value);
+        act(result => result.message, () => mutate("/api/partners/send-drafts", {ids}, "POST", 900000)).then(result => { if (result) { closeDialog(); render(); } });
+      }, "button primary");
+      const label = () => { const n = count(); send.textContent = n ? `Send all ${n} selected` : "Nothing selected"; send.disabled = !n; };
+      ticks.forEach(tick => tick.addEventListener("change", label)); label();
+      const all = button("Select all", () => { ticks.forEach(tick => { tick.checked = true; }); label(); }, "button small ghost");
+      const none = button("Select none", () => { ticks.forEach(tick => { tick.checked = false; }); label(); }, "button small ghost");
+      box.replaceChildren(
+        el("p", "", drafts.length ? `${drafts.length} email(s) ready. Open any one to read it in full; untick the ones you don't want to send.` : "No emails are written yet."),
+        hint(`Today you can still send ${state.room_today}. Anything over that waits for tomorrow, to protect your Gmail.` +
+          (state.waiting_to_be_written ? ` ${state.waiting_to_be_written} more companies are in line: press Write the next 5 to prepare their emails.` : "")),
+        drafts.length ? actionsRow(all, none) : null, drafts.length ? list : null, actionsRow(prepare, drafts.length ? send : null));
+    };
+    draw();
+  }
+  function replyBlock(item) {
+    const reply = item.reply || {}, box = el("div");
+    const verdict = {offered: ["They made you an offer", "green"], declined: ["They said no: nothing more is sent", "muted"], unclear: ["No offer in it", "amber"]}[reply.verdict];
+    const readIt = button(reply.verdict ? "Read it again" : "Read their reply", () => act("Read.", () => mutate(`/api/partners/${item.id}/read-reply`, {again: !!reply.verdict}, "POST", 300000))
+      .then(result => { if (result) { item.reply = result; box.replaceChildren(...replyBlock(item).childNodes); } }), "button small");
+    append(box, el("h4", "", "Their reply"), verdict ? badge(verdict[0], verdict[1]) : hint("Not read yet: press Read their reply."),
+      reply.summary ? el("p", "", reply.summary) : null, el("pre", "code-block", reply.body || reply.snippet || ""), actionsRow(readIt));
+    if (reply.answered_at) append(box, hint(`You answered on ${date(reply.answered_at)}.`), el("pre", "code-block", reply.answer || ""));
+    else if (reply.verdict === "offered") {
+      const text = textarea("Your reply", reply.draft || ""); text.rows = 8;
+      const send = button("Send my reply from Gmail", () => act(result => result.message, () => mutate(`/api/partners/${item.id}/answer`, {text: text.value}, "POST", 120000))
+        .then(result => { if (result) { closeDialog(); render(); } }), "button primary");
+      append(box, field("Your reply (drafted for you: read and change it before sending)", text, reply.draft ? "Nothing is sent until you press Send." : "Write your answer here."), actionsRow(send));
+    }
+    return box;
+  }
   function partnerDialog(item, state) {
     const rules = state.settings || {}, fill = value => String(value || "").replaceAll("{company}", item.name).replaceAll("{website}", item.domain || item.website);
     const big = item.kind === "big_tech" && rules.big_subject && rules.big_body;
@@ -1579,7 +1637,7 @@
       el("h4", "", "Their website and application pages"), pages,
       array(item.emails).length > 1 ? hint(`Other role addresses on their site: ${item.emails.filter(value => value !== item.email).join(", ")}`) : null,
       sentAlready ? append(el("div"), el("h4", "", "What was sent"), ...array(item.sent).map(mail => append(el("div"), el("div", "row-meta", `${date(mail.at)}${mail.follow_up ? " · follow-up" : ""}: ${mail.subject}`), el("pre", "code-block", mail.body))),
-        item.reply?.snippet ? hint(`Their reply: ${item.reply.snippet}`) : null) :
+        item.reply?.snippet ? replyBlock(item) : null) :
         append(el("div"), el("h4", "", "Email them"), field("To", to, item.email ? "Their public role address, from their own website." : "No role address on their site: type one you know, or apply on their page above."),
           field(`Tailored to ${item.name}`, personal, item.personal ? "Written from what their own website says. Edit it if you like, then press Use my edit." : "Not written yet: it's written from their website just before an automatic send, or press the button now."),
           actionsRow(writeIt, keep), field("Subject", subject), field("Your email", text, "Your name, postal address and an opt-out line are added under it."), actionsRow(send)),

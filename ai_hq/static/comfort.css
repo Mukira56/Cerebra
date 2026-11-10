@@ -4,9 +4,9 @@
    What happened teal, Settings slate. The factory floor and code blocks keep their own dark canvas in both themes. */
 
 /* ---------- text size (both themes): every size in style.css is in rem, so it all follows the choice ---------- */
-:root { --base: 16px; font-size: var(--base); --code: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace; --mono: var(--sans); }
-:root[data-size="large"] { --base: 18px; }
-:root[data-size="huge"] { --base: 20px; }
+:root { --base: 15px; font-size: var(--base); --code: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace; --mono: var(--sans); }
+:root[data-size="large"] { --base: 17px; }
+:root[data-size="huge"] { --base: 19px; }
 body { font: 1rem/1.6 var(--sans); }
 /* The typewriter font is kept for code and logs only. */
 code, pre, kbd, .code-block, .trace, .bubble pre, .bubble code, .saved code, .test-commands code, .mono { font-family: var(--code); }
@@ -46,7 +46,7 @@ body[data-section="setup"] { --accent: #4a5a70; --accent-soft: #eceff4; --accent
 /* ---------- plain, readable type: no typewriter font outside code ---------- */
 .brand strong { font: 700 1.2em/1.1 var(--sans); letter-spacing: 0; }
 .brand small { font: .72em/1.4 var(--sans); letter-spacing: .02em; }
-.nav-caption { font: 700 .78em/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; margin: 18px 10px 6px; }
+.nav-caption { font: 700 .74em/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; margin: 14px 10px 4px; }
 .panel-header h2 { font: 700 1.05em/1.3 var(--sans); letter-spacing: 0; }
 .pill, .badge, .nav-count, .count { font-family: var(--sans); }
 .pill { font-size: .85em; padding: 6px 12px; }
@@ -63,24 +63,24 @@ body[data-section="setup"] { --accent: #4a5a70; --accent-soft: #eceff4; --accent
 .hint, .row-meta { font-size: .93em; }
 
 /* ---------- big, easy targets ---------- */
-.button { min-height: 44px; padding: 10px 18px; font-size: .95em; border-radius: 10px; }
-.button.small { min-height: 36px; padding: 7px 13px; font-size: .88em; }
+.button { min-height: 38px; padding: 8px 16px; font-size: .93em; border-radius: 9px; }
+.button.small { min-height: 32px; padding: 5px 11px; font-size: .86em; }
 .button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .button.primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
 :root[data-theme="dark"] .button.primary { color: #0a0e13; }
 :root[data-theme="dark"] .button.primary:hover { background: var(--accent-ink); }
 input[type=text], input[type=password], input[type=number], input[type=email], input[type=date], input[type=datetime-local], input:not([type]), select, textarea {
-  font-size: 1em; padding: 11px 13px; min-height: 44px; border-radius: 9px; }
-input[type=checkbox], input[type=radio] { width: 20px; height: 20px; accent-color: var(--accent); }
+  font-size: 1em; padding: 9px 12px; min-height: 40px; border-radius: 8px; }
+input[type=checkbox], input[type=radio] { width: 17px; height: 17px; accent-color: var(--accent); }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .text-link, .text-button, a { color: var(--accent); }
 .text-link, .text-button { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- menu ---------- */
-.shell { grid-template-columns: 272px 1fr; }
-.nav-link { padding: 10px 12px; gap: 12px; font-size: 1em; border-radius: 10px; }
-.nav-icon { width: 24px; font: 1.1em/1 var(--sans); }
-.nav-link.active { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; box-shadow: inset 4px 0 0 var(--accent); font-weight: 700; }
+.shell { grid-template-columns: 252px 1fr; }
+.nav-link { padding: 7px 10px; gap: 10px; font-size: .97em; border-radius: 8px; }
+.nav-icon { width: 20px; font: 1em/1 var(--sans); }
+.nav-link.active { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
 .nav-link.active .nav-icon { color: var(--accent); }
 body.simple-menu .nav-link.advanced:not(.active), body.simple-menu .nav-caption.advanced { display: none; }
 .menu-switch { margin: 14px 4px 4px; width: calc(100% - 8px); }
@@ -93,19 +93,19 @@ body.simple-menu .nav-link.advanced:not(.active), body.simple-menu .nav-caption.
 .sidebar-bottom { font: .8em/1.5 var(--sans); }
 
 /* ---------- each page opens with its colour ---------- */
-.page-heading { background: var(--accent-soft); border-radius: 14px; padding: 20px 22px; border-left: 6px solid var(--accent); align-items: center; }
-.page-heading h1 { font: 700 1.9em/1.2 var(--sans); color: var(--text); }
-.page-heading p { font-size: 1.02em; color: var(--soft); max-width: 75ch; }
+.page-heading { background: var(--accent-soft); border-radius: 10px; padding: 14px 18px; border-left: 4px solid var(--accent); align-items: center; }
+.page-heading h1 { font: 700 1.55em/1.2 var(--sans); color: var(--text); }
+.page-heading p { font-size: .97em; color: var(--soft); max-width: 80ch; }
 .topbar { padding: 12px 24px; }
 
 /* ---------- home: what would you like to do? ---------- */
-.home-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin-bottom: 18px; }
-.home-tile { display: flex; gap: 14px; align-items: center; padding: 18px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel);
-  color: var(--text); cursor: pointer; text-align: left; font: inherit; min-height: 92px; box-shadow: 0 1px 3px rgba(23,32,44,.06); }
+.home-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.home-tile { display: flex; gap: 12px; align-items: center; padding: 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--text); cursor: pointer; text-align: left; font: inherit; min-height: 74px; box-shadow: 0 1px 3px rgba(23,32,44,.06); }
 .home-tile:hover { border-color: var(--tile); text-decoration: none; box-shadow: 0 4px 14px rgba(23,32,44,.12); }
-.home-tile .tile-icon { width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 12px; font-size: 1.6em; background: var(--tile-soft); color: var(--tile); }
-.home-tile strong { display: block; font-size: 1.08em; }
-.home-tile span.tile-note { display: block; color: var(--soft); font-size: .9em; margin-top: 2px; }
+.home-tile .tile-icon { width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 10px; font-size: 1.3em; background: var(--tile-soft); color: var(--tile); }
+.home-tile strong { display: block; font-size: 1em; }
+.home-tile span.tile-note { display: block; color: var(--soft); font-size: .87em; margin-top: 1px; }
 .home-tile .tile-count { margin-left: auto; min-width: 30px; padding: 4px 9px; border-radius: 99px; background: var(--tile); color: #fff; font-weight: 700; text-align: center; }
 .home-tile.earn { --tile: #17803a; --tile-soft: #e5f4ea; } .home-tile.home { --tile: #1b5fd0; --tile-soft: #e8effc; }
 .home-tile.build { --tile: #6b3fbf; --tile-soft: #efe9fa; } .home-tile.setup { --tile: #4a5a70; --tile-soft: #eceff4; }
@@ -122,7 +122,7 @@ body.simple-menu .nav-link.advanced:not(.active), body.simple-menu .nav-caption.
 }
 @media (prefers-reduced-motion: reduce) { .home-tile { transition: none; } }
 .comfort-row .size-large { font-size: 1.15em; } .comfort-row .size-huge { font-size: 1.3em; }
-.home-question { font: 700 1.3em/1.3 var(--sans); margin: 4px 0 12px; }
+.home-question { font: 700 1.15em/1.3 var(--sans); margin: 2px 0 10px; }
 
 /* ---------- light theme: forms, code and menus on white ---------- */
 :root[data-theme="light"] input[type=text], :root[data-theme="light"] input[type=password], :root[data-theme="light"] input[type=number],
@@ -134,3 +134,10 @@ body.simple-menu .nav-link.advanced:not(.active), body.simple-menu .nav-caption.
 :root[data-theme="light"] .bubble code { background: #eef1f5; }
 :root[data-theme="light"] .saved code { color: var(--accent-ink); }
 :root[data-theme="light"] .context-menu { background: #ffffff; }
+
+/* ---------- ready emails: review, untick, send ---------- */
+.draft-row { align-items: flex-start; }
+.draft-head { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+.draft-text { margin-top: 6px; }
+.draft-text summary { cursor: pointer; color: var(--accent); }
+.draft-text .code-block { white-space: pre-wrap; max-height: 320px; }

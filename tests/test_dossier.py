@@ -161,3 +161,41 @@ def test_research_is_shown_for_each_company(client):  # noqa: F811
     assert shown["dossier"]["products"] == ["Voice API"] and len(shown["pages"]) == 5
     assert all(set(page) >= {"url", "kind", "fetched_at", "words"} for page in shown["pages"])
     assert partners.public  # the list itself stays light: pages are only sent when one company is opened
+
+
+def test_research_and_drafts_happen_by_themselves_on_each_run(client):  # noqa: F811
+    """No button needed: once a company is in line, each run reads its site, writes its research, then its email."""
+    state, robot = prepared(client, pitch=False)
+    client.put("/api/partners", json={"subject": "Language data for {company}", "personalize": True, "mode": "review",
+                                       "body": "Hello {company} team,\n\nI lead native speakers who build African-language data for AI.\n\nCould we talk?"}).raise_for_status()
+    with client.app.state.db.Session.begin() as session:
+        from ai_hq import partners as partners_module
+        partners_module.save_settings(session, {"enabled": True})
+    company = setup_company(client)
+    model = Model("Your Voice API supports 18 languages, and you are entering Kenya and Tanzania; I have a first pilot in mind for that launch.")
+    site = Site()
+    robot.research = dossier.Research(client.app.state.db, lambda: site, model, pause=0)
+    robot.write = model
+    for _ in range(2):
+        robot.tick()
+    with client.app.state.db.Session() as session:
+        row = session.get(PartnerCompany, company)
+        assert row.dossier["markets"] == ["Kenya", "Tanzania"] and row.personal.startswith("Your Voice API")
+    drafts = client.get("/api/partners/drafts").json()["drafts"]
+    assert [item["name"] for item in drafts] == ["Voice Co"] and robot.gmail.sent == []  # ready to review; nothing sent in review mode
+
+
+def test_a_sending_problem_does_not_hold_up_research(client):  # noqa: F811
+    state, robot = prepared(client, pitch=False)
+    client.put("/api/partners", json={"subject": "Data for {company}", "personalize": True,
+                                       "body": "Hello {company} team,\n\nI lead native speakers who build African-language data for AI.\n\nThanks."}).raise_for_status()
+    with client.app.state.db.Session.begin() as session:
+        from ai_hq import partners as partners_module
+        partners_module.save_settings(session, {"enabled": True})
+    setup_company(client)
+    site = Site()
+    robot.research = dossier.Research(client.app.state.db, lambda: site, Model(), pause=0)
+    robot.ready = lambda session: ["Connect Gmail in Business connections"]  # as if Gmail's sign-in had ended
+    result = robot.tick()
+    assert "Waiting for you" in result["message"] and "research and drafts carry on" in result["message"]
+    assert len(site.read) >= 3  # its website was still read

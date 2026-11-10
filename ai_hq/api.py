@@ -1869,6 +1869,38 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         paragraph = pitched(lambda: partners.tailor(company_id, force=payload.get("again") is True, research_now=True))
         return {"personal": paragraph}
 
+    @app.get("/api/partners/drafts")
+    def partners_drafts():
+        """Every email ready to go, written out in full, for the owner to read before sending."""
+        with db.Session() as session:
+            return partners.drafts(session)
+
+    @app.post("/api/partners/prepare")
+    def partners_prepare(payload: dict):
+        """Writes the next researched companies' emails so they can be reviewed."""
+        return partners.prepare(payload.get("count") or 5)
+
+    @app.post("/api/partners/send-drafts")
+    def partners_send_drafts(payload: dict):
+        """The owner's one click: send the reviewed emails they kept."""
+        if not isinstance(payload.get("ids"), list):
+            raise ValueError("Send the ticked emails as a list")
+        return partners.send_drafts(payload["ids"])
+
+    @app.post("/api/partners/read-replies")
+    def partners_read_replies():
+        """Reads every reply not read yet: an offer or not, and a drafted answer to each offer."""
+        return {"read": partners.read_replies(limit=50)}
+
+    @app.post("/api/partners/{company_id}/read-reply")
+    def partners_read_reply(company_id: str, payload: dict):
+        return pitched(lambda: partners.read_reply(company_id, again=payload.get("again") is True))
+
+    @app.post("/api/partners/{company_id}/answer")
+    def partners_answer(company_id: str, payload: dict):
+        """The owner's answer to a company's reply, sent only when they press Send."""
+        return pitched(lambda: partners.answer(company_id, payload.get("text")))
+
     @app.get("/api/partners/market-facts")
     def partners_market_facts():
         """The owner's market figures, each with its source: the only figures (besides a company's own) a pitch may use."""
