@@ -1952,11 +1952,25 @@
       actionsRow(open), item.company_id ? append(el("div"), el("h4", "", "What Cerebra has learned about the employer"), researchBlock({id: item.company_id})) : hint("No employer website in this posting: the letter uses what the posting says."),
       append(el("details", "draft-text"), el("summary", "", "The job posting"), el("pre", "code-block", item.description || "")),
       applied ? append(el("div"), el("h4", "", "What you sent"), ...array(item.sent).map(mail => append(el("div"), el("div", "row-meta", `${date(mail.at)}${mail.follow_up ? " · follow-up" : ""}: ${mail.subject}`), el("pre", "code-block", mail.body))),
-        item.reply?.snippet ? replyBlockFor(item, `/api/jobs/${item.id}`) : null)
+        item.reply?.snippet ? replyBlockFor(item, `/api/jobs/${item.id}`) : null, interviewPrep(item))
         : append(el("div"), el("h4", "", "Your application"), field("To", to, item.apply_email ? "The address the posting gives for applying." : "This job takes applications on its own site: copy the letter and paste it there, or type an address it gives."),
           field("Subject", subject), field("Letter", text, "Built from your CV, the posting and the employer's research. Read it and change anything before sending."),
           actionsRow(write, keep, item.apply_email ? send : copy)),
       actionsRow(button("Mark as applied", () => mark("applied"), "button"), !applied ? button("Drop it", () => mark("dropped"), "button ghost") : null)));
+  }
+  // Interview notes, built from the CV, the posting and the employer's research when an employer invites the owner.
+  function interviewPrep(item) {
+    const reply = item.reply || {}, prep = reply.prep;
+    if (reply.verdict !== "offered" && !prep) return null;
+    const make = button(prep ? "Write the notes again" : "Prepare for the interview", () => act("Your interview notes are ready.",
+      () => mutate(`/api/jobs/${item.id}/prepare`, {again: !!prep}, "POST", 300000)).then(result => { if (result) { closeDialog(); render(); } }), prep ? "button small" : "button primary");
+    if (!prep) return append(el("div"), el("h4", "", "Prepare for the interview"), hint("Likely questions with what your CV says for each, questions to ask them, and anything the posting asks for that your CV doesn't show."), actionsRow(make));
+    return append(el("div", "interview-prep"), el("h4", "", "Prepare for the interview"), prep.about ? el("p", "", prep.about) : null,
+      el("strong", "", "Questions they're likely to ask"),
+      append(el("ol", "tips"), ...array(prep.questions).map(item => append(el("li"), el("div", "", item.question), el("div", "row-meta", item.evidence)))),
+      array(prep.ask_them).length ? append(el("div"), el("strong", "", "Questions to ask them"), append(el("ul", "tips"), ...prep.ask_them.map(text => el("li", "", text)))) : null,
+      array(prep.gaps).length ? append(el("div"), el("strong", "", "Be ready for"), append(el("ul", "tips"), ...prep.gaps.map(text => el("li", "", text)))) : null,
+      hint("Built only from your CV, the job posting, the employer's website and their reply: nothing about you is invented."), actionsRow(make));
   }
   function replyBlockFor(item, base) {
     const reply = item.reply || {}, box = el("div");

@@ -132,7 +132,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Remaining**
 - Tailored CV documents
-- Interview preparation
+- ~~Interview preparation~~ Done after 0.74.37: an interview invitation comes with notes (`Jobs.prepare`): likely questions with the CV's evidence for each, questions to ask them, and gaps to be ready for, built only from the CV, posting, employer research and their reply; a figure from anywhere else is refused.
 - A general research-report workflow
 
 ## Phase 8: Computer automation

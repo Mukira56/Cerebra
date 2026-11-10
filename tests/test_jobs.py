@@ -174,3 +174,46 @@ def test_reading_postings():
     assert jobs.site_of({"apply_email": "someone@gmail.com", "url": "https://boards.greenhouse.io/x"}) == ""
     assert jobs.site_of({"url": "https://careers.example.org/jobs/7"}) == "https://careers.example.org"
     assert isinstance(httpx.Client, type)
+
+
+PREP = {"about": "Shop Example sells checkout software to online shops; the role builds its Django backend.",
+        "questions": [{"question": "Tell us about a Django system you built.", "evidence": "The booking platform in Django and React used by 3 clinics."},
+                      {"question": "How do you keep payment systems secure?", "evidence": "Linux security hardening, from the CV."}],
+        "ask_them": ["How do the 400 shops report checkout problems?"], "gaps": ["PostgreSQL tuning isn't shown in the CV: say what you have done with it."]}
+
+
+def test_an_interview_invitation_comes_with_notes_built_from_the_cv(client):  # noqa: F811
+    state, robot = ready(client)
+    robot.find()
+    studied(client)
+    backend = listed(client)["Backend Python Developer"]
+    robot.send(backend["id"])
+    robot.gmail.threads["t1"] = [{"id": "r", "from": "Hiring <jobs@shop.example>", "subject": "Re: Application", "snippet": "Can you do a call on Friday?", "labels": ["INBOX"]}]
+    prompts = []
+
+    def write(prompt):
+        prompts.append(prompt)
+        if "preparing for a job interview" in prompt or "prepare for a job interview" in prompt:
+            return PREP
+        return {"verdict": "offered", "summary": "They invite you to a call on Friday.", "reply": "Thank you, Friday works well for me.\n\nJane Example"}
+    robot.write = write
+    robot.check_replies()
+    prep = listed(client)["Backend Python Developer"]["reply"]["prep"]
+    assert prep["questions"][0]["evidence"].startswith("The booking platform") and prep["ask_them"] and prep["gaps"]
+    assert CV.splitlines()[1] in prompts[-1] and "Can you do a call on Friday?" in prompts[-1]  # the CV and their reply are the sources
+    assert client.post(f"/api/jobs/{backend['id']}/prepare", json={}).json()["questions"] == prep["questions"]  # kept, not rewritten
+
+
+def test_interview_notes_never_keep_an_invented_figure(client):  # noqa: F811
+    state, robot = ready(client)
+    robot.find()
+    studied(client)
+    backend = listed(client)["Backend Python Developer"]
+    robot.send(backend["id"])
+    robot.write = lambda prompt: {**PREP, "questions": [{"question": "Your biggest win?", "evidence": "Cut costs by 75% at a bank."}]}
+    refused = client.post(f"/api/jobs/{backend['id']}/prepare", json={"again": True})
+    assert refused.status_code == 400 and "figure" in refused.json()["detail"]
+    robot.write = lambda prompt: {"about": "x", "questions": []}
+    assert client.post(f"/api/jobs/{backend['id']}/prepare", json={"again": True}).status_code == 400
+    form = listed(client)["Frontend React Engineer"]
+    assert "applied to" in client.post(f"/api/jobs/{form['id']}/prepare", json={}).json()["detail"]

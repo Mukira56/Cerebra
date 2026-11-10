@@ -2035,6 +2035,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def jobs_read_reply(job_id: str, payload: dict):
         return jobs_call(lambda: jobs.read_reply(job_id, again=payload.get("again") is True))
 
+    @app.post("/api/jobs/{job_id}/prepare")
+    def jobs_prepare(job_id: str, payload: dict | None = None):
+        """Interview notes for an invitation: likely questions with the CV's evidence, questions to ask, and gaps."""
+        return jobs_call(lambda: jobs.prepare(job_id, again=(payload or {}).get("again") is True))
+
     @app.post("/api/jobs/{job_id}/answer")
     def jobs_answer(job_id: str, payload: dict):
         return jobs_call(lambda: jobs.answer(job_id, payload.get("text")))
