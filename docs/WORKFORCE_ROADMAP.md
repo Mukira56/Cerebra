@@ -110,7 +110,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Remaining**
 - Retrieve only the files that matter when context is needed.
-- Cache repeated questions.
+- ~~Cache repeated questions~~ Done after 0.74.35: an exact repeat of a research, checking, sorting or large-document question within 24 hours gets the saved answer instead of another call against a free allowance (`answer_cache`, keyed by a SHA-256 of kind, model and prompt; the prompt isn't stored). Writing, plans, specs and code questions are never cached, and the Models page's Test button always asks for real.
 - ~~Show cost per task and per project~~ Done after 0.74.35: every coding run records the tokens and list-price equivalent its provider reported (Claude's result event, Codex's turn events; nothing estimated). Each task report shows "What it used", and Model intelligence has "Use per project" from one grouped query.
 - ~~Continue non-coding work while Claude is used up~~ Done in 0.74.35: a writing turn routed to the owner's Claude account moves to a free model when Claude's plan is used up, and only then. Coding tasks still wait for Claude.
 

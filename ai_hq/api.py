@@ -2296,7 +2296,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         category = str(payload.get("category") or "bulk")
         if category not in modelhub.CATEGORIES:
             raise HTTPException(404, "Unknown kind of work")
-        result = hub.chat(category, "Reply with exactly: ready", max_tokens=20)
+        result = hub.chat(category, "Reply with exactly: ready", max_tokens=20, fresh=True)  # a test always asks for real
         if not result.success:
             raise HTTPException(400, result.error or "The model didn't answer")
         return {"ok": True, "answer": result.output.strip()[:200]}

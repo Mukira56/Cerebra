@@ -631,6 +631,17 @@ class ModelUsage(Base):
     ok: Mapped[bool] = mapped_column(Boolean, default=True)
     seconds: Mapped[float] = mapped_column(default=0.0)
 
+class AnswerCache(Base):
+    """A free model's answer to an exact question, kept for a day so the same question isn't asked twice (modelhub.CACHED).
+    The key is a SHA-256 of the kind of work, the model and the prompt; the prompt itself isn't stored."""
+    __tablename__ = "answer_cache"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    category: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    answer: Mapped[str] = mapped_column(Text, default="")
+    at: Mapped[str] = mapped_column(String, default=now, index=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+
 class Metadata(Base):
     __tablename__ = "configuration_metadata"
     key: Mapped[str] = mapped_column(String, primary_key=True)

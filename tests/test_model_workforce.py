@@ -234,3 +234,33 @@ def test_each_task_and_project_shows_what_its_runs_used(client, tmp_path):  # no
     assert used == {"runs": 2, "input_tokens": 2700, "output_tokens": 600, "cached_tokens": 1000, "list_cost": 0.3}
     row = client.get("/api/models/intelligence").json()["projects"][0]
     assert row["project"] == "Calc" and row["tasks"] == 1 and row["runs"] == 2 and row["input_tokens"] == 2700 and row["list_cost"] == 0.3
+
+
+def test_the_same_reading_question_within_a_day_is_answered_from_the_saved_answer(client):  # noqa: F811
+    from ai_hq.models import AnswerCache
+    site = connect(client)
+    hub = client.app.state.hub
+    first = hub.chat("research", "What does the page say about prices?")
+    calls = len(site.bodies)
+    again = hub.chat("research", "What does the page say about prices?")
+    assert first.success and again.success and again.output == first.output and len(site.bodies) == calls  # no second call
+    hub.chat("research", "A different question")
+    assert len(site.bodies) == calls + 1
+    with client.app.state.db.Session.begin() as session:
+        rows = session.query(AnswerCache).all()
+        assert all("prices" not in row.answer + row.key for row in rows if row.answer != first.output)  # the prompt isn't stored
+        for row in rows:
+            row.at = "2000-01-01T00:00:00+00:00"  # older than a day
+    hub.chat("research", "What does the page say about prices?")
+    assert len(site.bodies) == calls + 2
+    # Writing is never cached: asking again gives a fresh draft.
+    hub.chat("writing", "Draft an opener", model="openrouter/free")
+    hub.chat("writing", "Draft an opener", model="openrouter/free")
+    assert len(site.bodies) == calls + 4
+
+
+def test_the_test_button_always_asks_the_model_for_real(client):  # noqa: F811
+    site = connect(client)
+    client.post("/api/models/hub/test", json={"category": "research"})
+    calls = len(site.bodies)
+    assert client.post("/api/models/hub/test", json={"category": "research"}).json()["ok"] and len(site.bodies) == calls + 1

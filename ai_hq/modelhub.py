@@ -13,16 +13,17 @@ When no key is saved, every writer falls back to those accounts, as before.
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import Integer, func, select
 
 from . import vault
 from .agents import AgentResult
-from .models import Metadata, ModelUsage
+from .models import AnswerCache, Metadata, ModelUsage
 from .network import LazyClient
 from .security import redact
 
@@ -52,6 +53,11 @@ CATEGORIES = {
 # current choice by this many points of success rate before performance-based routing switches to it.
 MIN_CALLS, BETTER_BY = 20, 10
 LOCAL_SHARE = 0.6  # a local model larger than this share of the computer's memory is never loaded
+# Kinds of work whose answer depends only on the question: reading, checking, sorting. The same question within a day gets
+# the saved answer instead of another call against a free daily allowance. Writing, plans, specs and code questions are
+# never cached: a second ask should give a fresh draft, and they read the live project.
+CACHED = {"research", "verify", "verify_second", "bulk", "long_context"}
+CACHE_HOURS = 24
 FALLBACK = "openrouter/free"  # OpenRouter's own free router: picks any free model that is up
 OLLAMA = "http://127.0.0.1:11434"  # local models on the owner's own computer: free, no daily limit; only this loopback address
 LOCAL_TTL = 30  # seconds the list of local models is remembered
@@ -204,6 +210,32 @@ class Hub:
         self.client = client or LazyClient(timeout=180, headers={"X-Title": "Cerebra"})
         self._catalog, self._catalog_at, self._lock = [], 0.0, threading.Lock()
 
+    @staticmethod
+    def _cache_key(category, model, prompt):
+        return hashlib.sha256(f"{category}\0{model}\0{prompt}".encode("utf-8")).hexdigest()
+
+    def cached(self, category, model, prompt):
+        """The saved answer to this exact question, if one is under a day old."""
+        if category not in CACHED:
+            return None
+        oldest = (datetime.now(timezone.utc) - timedelta(hours=CACHE_HOURS)).isoformat()
+        with self.db.Session.begin() as session:
+            row = session.get(AnswerCache, self._cache_key(category, model, prompt))
+            if row is None or row.at < oldest:
+                return None
+            row.hits += 1
+            return AgentResult(True, row.answer)
+
+    def remember(self, category, model, prompt, result):
+        """Keep a usable answer for a day, and clear out answers older than that."""
+        if category not in CACHED or not result.success or not (result.output or "").strip():
+            return
+        oldest = (datetime.now(timezone.utc) - timedelta(hours=CACHE_HOURS)).isoformat()
+        with self.db.Session.begin() as session:
+            session.query(AnswerCache).filter(AnswerCache.at < oldest).delete(synchronize_session=False)
+            session.merge(AnswerCache(key=self._cache_key(category, model, prompt), category=category, model=model,
+                                      answer=result.output, at=datetime.now(timezone.utc).isoformat(), hits=0))
+
     def ready(self):
         with self.db.Session() as session:
             value = settings(session)
@@ -334,8 +366,19 @@ class Hub:
                     return better
             return chosen
 
-    def chat(self, category, prompt, max_tokens=4000, model=None):
-        """One turn with a free model. Anything with a price is refused: the owner pays only for Claude and Codex."""
+    def chat(self, category, prompt, max_tokens=4000, model=None, fresh=False):
+        """One turn with a free model. Anything with a price is refused: the owner pays only for Claude and Codex. An exact
+        repeat of a reading or checking question within a day gets the saved answer (CACHED)."""
+        chosen = model or (self.route(category) if category in CATEGORIES else "")
+        saved = self.cached(category, chosen, prompt) if chosen and not fresh else None
+        if saved is not None:
+            return saved
+        result = self._chat(category, prompt, max_tokens, model)
+        if chosen:
+            self.remember(category, chosen, prompt, result)
+        return result
+
+    def _chat(self, category, prompt, max_tokens=4000, model=None):
         with self.db.Session() as session:
             value = settings(session)
             limited = over_limit(session, category) if category in CATEGORIES else ""
@@ -405,8 +448,12 @@ def chat_for(hub, category, registry_source, selected, prompt, workdir):
             limited = over_limit(session, category)
         if limited:
             return AgentResult(False, "", error=limited)
+        saved = hub.cached(category, route, prompt)
+        if saved is not None:
+            return saved
         result = hub.chat_signed_in(category, route, prompt, workdir)
         if result.success:
+            hub.remember(category, route, prompt, result)
             return result
         # Not installed, not signed in, or today's allowance used: the owner's own account does this turn instead.
         fallback = registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))
