@@ -152,7 +152,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Remaining**
 - Repeatable evaluation sets.
-- Regression alerts.
+- ~~Regression alerts~~ Done after 0.74.36: Model intelligence warns when a model's usable-answer rate in a kind of work this week is 20 points or more below its own previous four weeks (at least 10 calls this week and 20 before), and says what to do.
 
 ## Phase 10: Multi-project management
 

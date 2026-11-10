@@ -1208,6 +1208,7 @@
       const decisions = array(state.decisions).length ? append(el("ul", "tips"), ...state.decisions.slice(0, 8).map(item => el("li", "",
         `${item.task}: ${Object.entries(item.roles).map(([role, pick]) => `${role} ${pick.label}${pick.why ? ` (${pick.why})` : ""}`).join("; ")}`))) : hint("No tasks routed yet.");
       box.replaceChildren(
+        ...array(state.regressions).map(item => hint(`Getting worse: ${item.message}`, true)),
         el("h4", "", "Lead engineer"), leadForm,
         el("h4", "", "Specialists"), hint("Each kind of work goes to one model: your Claude account, a free model or one on this computer. Choose them under Free models and routes below. Numbers come from real calls: how often a model gave a usable answer, and how fast."),
         append(el("div", "table-wrap"), table), adaptive.wrap, actionsRow(saveWork, signedIn),

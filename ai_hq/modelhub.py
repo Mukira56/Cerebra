@@ -165,6 +165,39 @@ def performance(session, days=30):
     return result
 
 
+RECENT_DAYS, BASELINE_DAYS = 7, 30  # this week against the four weeks before it
+DROP_BY = 20  # percentage points of usable answers lost before Cerebra warns
+MIN_RECENT = 10  # calls this week before a drop counts
+
+
+def regressions(session, now=None):
+    """Kinds of work where a model has got clearly worse: its share of usable answers this week is DROP_BY points or more
+    below its own previous four weeks, with enough calls in both. Each alert says what changed and what to do."""
+    now = now or datetime.now(timezone.utc)
+    recent_from = (now - timedelta(days=RECENT_DAYS)).isoformat()
+    baseline_from = (now - timedelta(days=RECENT_DAYS + BASELINE_DAYS)).isoformat()
+
+    def rates(start, end):
+        rows = session.execute(select(ModelUsage.category, ModelUsage.model, func.count(), func.sum(func.cast(ModelUsage.ok, Integer)))
+                               .where(ModelUsage.at >= start, ModelUsage.at < end).group_by(ModelUsage.category, ModelUsage.model)).all()
+        return {(category, model): (int(calls), int(ok or 0)) for category, model, calls, ok in rows}
+
+    recent, before = rates(recent_from, now.isoformat()), rates(baseline_from, recent_from)
+    alerts = []
+    for key, (calls, ok) in recent.items():
+        past_calls, past_ok = before.get(key, (0, 0))
+        if calls < MIN_RECENT or past_calls < MIN_CALLS:
+            continue
+        now_rate, past_rate = round(100 * ok / calls), round(100 * past_ok / past_calls)
+        if past_rate - now_rate >= DROP_BY:
+            category, model = key
+            label = CATEGORIES.get(category, (category,))[0]
+            alerts.append({"category": category, "model": model, "was": past_rate, "now": now_rate, "calls": calls,
+                           "message": f"{label}: {model} gave usable answers {now_rate}% of the time this week, down from {past_rate}%. "
+                                      "Test it on the Models page, or choose another model for this kind of work."})
+    return sorted(alerts, key=lambda item: item["now"] - item["was"])
+
+
 def recommend(measured, category, current):
     """The measured best model for a kind of work, when the evidence is strong enough to prefer it over the current one."""
     candidates = [item for item in measured.get(category, []) if item["enough"]]

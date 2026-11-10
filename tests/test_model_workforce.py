@@ -301,3 +301,19 @@ def test_the_architect_points_at_the_files_whose_names_match_the_request(tmp_pat
     shown = architect.outline({"name": "Shop", "path": str(root)}, "Fix the cart totals")
     assert "likely_relevant_files" in shown and "private contents" not in shown
     assert "likely_relevant_files" not in architect.outline({"name": "Shop", "path": str(root)}) and architect.relevant_files(tmp_path / "missing", "cart") == []
+
+
+def test_a_model_that_has_got_clearly_worse_is_flagged(client):  # noqa: F811
+    from datetime import timedelta
+    from ai_hq.models import ModelUsage
+    now = datetime.now(timezone.utc)
+    with client.app.state.db.Session.begin() as session:
+        for days, ok, count in ((20, True, 25), (3, True, 3), (3, False, 9)):  # 100% before, 25% this week
+            for _ in range(count):
+                session.add(ModelUsage(category="research", model="account:gemini", ok=ok, at=(now - timedelta(days=days)).isoformat()))
+        for days, ok, count in ((20, True, 25), (3, True, 2)):  # steady, but too few calls this week to judge
+            for _ in range(count):
+                session.add(ModelUsage(category="verify", model="account:qwen", ok=ok, at=(now - timedelta(days=days)).isoformat()))
+    alerts = client.get("/api/models/intelligence").json()["regressions"]
+    assert [(item["category"], item["was"], item["now"]) for item in alerts] == [("research", 100, 25)]
+    assert "down from 100%" in alerts[0]["message"]
