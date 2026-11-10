@@ -17,6 +17,9 @@ class Project(Base):
     mode: Mapped[str] = mapped_column(String, default="live")  # "mock" only on pre-0.5 demo rows
     protected_branches: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[str] = mapped_column(String, default=now)
+    # Which project's queued tasks start first when several are waiting: 1 high, 0 normal, -1 low. Within a priority,
+    # the oldest task starts first.
+    priority: Mapped[int] = mapped_column(Integer, default=0)
 
 class Task(Base):
     __tablename__ = "tasks"

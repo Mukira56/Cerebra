@@ -160,7 +160,9 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Done after 0.74.35:** **All projects at a glance** on the Projects page (`GET /api/projects/summary`): per project, the approvals waiting for the owner, tasks working, queued, stuck, done and failed, tokens used and last activity, from grouped queries over every task. Projects needing the owner come first; a name opens Tasks filtered to that project.
 
-**Remaining:** priorities across projects (which project's queue runs first), and a weekly progress summary per project.
+**Done after 0.74.36:** project priorities (high, normal, low) on the at-a-glance table; queued tasks from high-priority projects start first, oldest first within a priority (`supervisor.by_priority`).
+
+**Remaining:** a weekly progress summary per project.
 
 ## Phase 11: Hardening
 

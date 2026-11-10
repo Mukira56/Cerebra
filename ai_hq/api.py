@@ -332,6 +332,21 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         task["test_results"] = [{key: result.get(key) for key in ("command", "passed", "exit_code")} for result in (task.get("test_results") or [])[-10:]]
         return task
 
+    @app.put("/api/projects/{project_id}/priority")
+    def project_priority(project_id: str, payload: dict):
+        """High, normal or low: which project's queued tasks start first."""
+        levels = {"high": 1, "normal": 0, "low": -1}
+        level = str(payload.get("priority") or "")
+        if level not in levels:
+            raise ValueError("Choose high, normal or low")
+        with db.Session.begin() as session:
+            project = session.get(Project, project_id)
+            if project is None:
+                raise HTTPException(404, "Project not found")
+            project.priority = levels[level]
+            session.add(Event(kind="project_priority", task_id=None, message=f"{project.name} now has {level} priority", data={"project_id": project_id}))
+            return {"priority": level}
+
     @app.get("/api/projects/summary")
     def projects_summary():
         """Every project at a glance: tasks working, waiting for the owner, queued, done and failed; the last activity;
@@ -342,6 +357,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                   "stuck": {"BLOCKED"}, "done": {"COMPLETED"}, "failed": {"FAILED"}}
         with db.Session() as session:
             rows = {project.id: {"id": project.id, "name": project.name, "tasks": 0, "last_activity": project.created_at,
+                                 "priority": {1: "high", -1: "low"}.get(project.priority or 0, "normal"),
                                  **{key: 0 for key in groups}, "approvals": 0, "runs": 0, "tokens": 0, "list_cost": 0.0}
                     for project in session.scalars(select(Project).order_by(Project.name))}
             for project_id, state, count, latest in session.execute(select(Task.project_id, Task.state, func.count(), func.max(Task.updated_at))

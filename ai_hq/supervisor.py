@@ -31,6 +31,12 @@ def _clean(value):
 
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
+
+
+def by_priority(tasks, ranks):
+    """Tasks in the order they may start: high-priority projects first, then normal, then low; the given order (oldest
+    first) within each. ranks maps a project id to 1, 0 or -1."""
+    return sorted(tasks, key=lambda task: -(ranks.get(task.project_id) or 0))
 # Words providers use when a plan's usage, quota or sign-in has run out. Such a failure is not the task's
 # fault: another provider can take the step over, or the task waits until usage is available again.
 OUT_OF_USAGE = ("rate_limited:", "rate limit", "usage limit", "insufficient_quota", "exceeded your current quota", "credit balance is too low",
@@ -570,6 +576,9 @@ class Supervisor:
         try:
             with self._lock, self.db.Session.begin() as session:
                 candidates = session.scalars(select(Task).where(Task.state.in_(["READY", "NEEDS_CHANGES", "BLOCKED"])).order_by(Task.created_at)).all()
+                # High-priority projects' tasks start first; within a priority, the oldest first (the sort is stable).
+                ranks = {project.id: project.priority or 0 for project in session.scalars(select(Project)).all()}
+                candidates = by_priority(candidates, ranks)
                 for task in candidates:
                     retry = (task.results or {}).get("retry_after")
                     waiting = task.results.get("blocked_reason")

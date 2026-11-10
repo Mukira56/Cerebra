@@ -737,12 +737,16 @@
         const name = el("td"), open = el("a", "", item.name);
         open.href = "#tasks"; open.addEventListener("click", () => { taskProjectFilter = item.id; });
         name.append(open);
-        return append(el("tr"), name, cell(item.approvals, "attention"), cell(item.working), cell(item.queued), cell(item.stuck, "attention"),
+        const level = select([["high", "High"], ["normal", "Normal"], ["low", "Low"]], item.priority || "normal");
+        level.setAttribute("aria-label", `Priority for ${item.name}`);
+        level.addEventListener("change", () => act(`${item.name}: ${level.value} priority. Its queued tasks start ${level.value === "high" ? "before" : level.value === "low" ? "after" : "alongside"} the others.`,
+          () => mutate(`/api/projects/${encodeURIComponent(item.id)}/priority`, {priority: level.value}, "PUT")));
+        return append(el("tr"), name, append(el("td"), level), cell(item.approvals, "attention"), cell(item.working), cell(item.queued), cell(item.stuck, "attention"),
           cell(item.done), cell(item.failed, "attention"), el("td", "", item.tokens ? tokens(item.tokens) : "—"), el("td", "muted", relative(item.last_activity)));
       });
       holder.replaceChildren(panel("All projects at a glance", body(
         hint(`${t.working} working, ${t.approvals} ${t.approvals === 1 ? "approval" : "approvals"} waiting for you, ${t.done} done and ${t.failed} failed across ${summary.projects.length} projects.`),
-        append(el("div", "table-wrap"), append(el("table", "glance"), append(el("thead"), append(el("tr"), el("th", "", "Project"), el("th", "", "Needs you"), el("th", "", "Working"),
+        append(el("div", "table-wrap"), append(el("table", "glance"), append(el("thead"), append(el("tr"), el("th", "", "Project"), el("th", "", "Priority"), el("th", "", "Needs you"), el("th", "", "Working"),
           el("th", "", "Queued"), el("th", "", "Stuck"), el("th", "", "Done"), el("th", "", "Failed"), el("th", "", "Tokens"), el("th", "", "Last activity"))), append(el("tbody"), ...rows))))));
     }).catch(() => {});
   }

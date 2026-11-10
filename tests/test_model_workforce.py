@@ -337,3 +337,21 @@ def test_the_check_set_scores_each_kind_of_work_by_its_own_rules(client, monkeyp
     rows = {item["category"]: item for item in client.get("/api/models/intelligence").json()["checks"]}
     assert rows["research"]["score"] == 100 and rows["research"]["previous"] == 100 and rows["reasoning"]["previous"] is None
     assert evals._has_number("23")("The total is $23.00") is False and evals._has_number("23")("Total: 23") and evals._first_word("no")("No, it doesn't")
+
+
+def test_a_high_priority_project_s_queued_tasks_start_first(client, tmp_path):  # noqa: F811
+    from types import SimpleNamespace
+    from test_routing_access import calculator
+    from test_product_api import enable_agents
+    from ai_hq.supervisor import by_priority
+    queue = [SimpleNamespace(id=name, project_id=project) for name, project in (("old-a", "a"), ("old-b", "b"), ("new-a", "a"), ("new-c", "c"))]
+    assert [task.id for task in by_priority(queue, {"b": 1, "c": -1})] == ["old-b", "old-a", "new-a", "new-c"]
+    enable_agents(client)
+    for name in ("Shop", "Blog"):
+        client.post("/api/projects", json={"name": name, "path": str(calculator(tmp_path / name)), "authorize": True, "test_commands": [["python", "-c", "pass"]]})
+    blog = next(item for item in client.get("/api/projects/summary").json()["projects"] if item["name"] == "Blog")
+    assert blog["priority"] == "normal"
+    assert client.put(f"/api/projects/{blog['id']}/priority", json={"priority": "high"}).json() == {"priority": "high"}
+    assert next(item for item in client.get("/api/projects/summary").json()["projects"] if item["name"] == "Blog")["priority"] == "high"
+    assert client.put(f"/api/projects/{blog['id']}/priority", json={"priority": "urgent"}).status_code == 400
+    assert client.put("/api/projects/missing/priority", json={"priority": "low"}).status_code == 404
