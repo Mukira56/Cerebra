@@ -25,7 +25,7 @@ const path = require('node:path');
     await page.locator('[data-page="settings"]').click();
     await page.getByText('How Cerebra looks', {exact: true}).waitFor();
     await page.getByRole('button', {name: 'Largest', exact: true}).click();
-    assert.equal(await page.evaluate(() => getComputedStyle(document.body).fontSize), '19px', 'The largest text size applies');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).fontSize), '18px', 'The largest text size applies');
     await page.getByRole('button', {name: 'Normal', exact: true}).click();
     await page.getByRole('button', {name: 'Dark', exact: true}).click();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark', 'Dark colours on request');

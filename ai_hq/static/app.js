@@ -13,10 +13,10 @@
     overview: ["WORKSPACE", "Home", "Everything happening in Cerebra, at a glance."],
     chat: ["WORKSPACE", "Ask for help", "Ask about a project or task, or have Cerebra plan, create and start the work."],
     council: ["BUILD", "AI discussion", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
-    marketing: ["EARN", "Social media posts", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
+    marketing: ["OUTREACH", "Social media posts", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Goals & helpers", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
-    prospects: ["EARN", "Local customers", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
-    partners: ["EARN", "Pitch companies", "Offer your service to companies by email from your Gmail: Cerebra finds AI and language companies, reads each one's own website for its public role address and application pages, and sends your pitch within your daily number. Forms are yours to fill in."],
+    prospects: ["OUTREACH", "Local customers", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
+    partners: ["OUTREACH", "Pitch companies", "Offer your service to companies by email from your Gmail: Cerebra finds AI and language companies, reads each one's own website for its public role address and application pages, and sends your pitch within your daily number. Forms are yours to fill in."],
     funding: ["EARN", "Grants & credits", "Free cloud credits, grants and accelerators you could apply to, and what each still needs from you. You apply; Cerebra keeps track."],
     etsy: ["EARN", "Sell on Etsy", "Find what sells on Etsy and how crowded it is, from Etsy's own public listings: demand, competition, prices and the tags top sellers use. Nothing is written to Etsy."],
     books: ["EARN", "Write books", "Short nonfiction books for Amazon KDP: find a niche people pay for, plan and write the book, and see what each format earns. You upload and publish."],
@@ -37,9 +37,9 @@
     toolchain: ["SETUP", "Install tools", "The tools a software engineer needs, checked and installable in one place."],
     settings: ["SETUP", "Settings", "Agent permissions, limits, and where your data lives."]
   };
-  // Each kind of work has its own section name and colour (comfort.css): Home blue, Make money green, Build purple,
-  // What happened teal, Settings slate.
-  const SECTIONS = {WORKSPACE: ["home", "HOME"], EARN: ["earn", "MAKE MONEY"], BUILD: ["build", "BUILD SOFTWARE"], INSIGHT: ["insight", "WHAT HAPPENED"], SETUP: ["setup", "SETTINGS & ACCOUNTS"]};
+  // Each kind of work has its own section name and symbolic colour (style.css): Home indigo, Make money green,
+  // Pitching and outreach amber, Build violet, What happened teal, Settings slate.
+  const SECTIONS = {WORKSPACE: ["home", "HOME"], EARN: ["earn", "MAKE MONEY"], OUTREACH: ["outreach", "PITCHING & OUTREACH"], BUILD: ["build", "BUILD SOFTWARE"], INSIGHT: ["insight", "WHAT HAPPENED"], SETUP: ["setup", "SETTINGS & ACCOUNTS"]};
   // Comfort settings for this viewer: theme, text size and the simple menu (kept in this browser only).
   const comfort = {theme: "light", size: "normal", simple: true};
   try { Object.assign(comfort, JSON.parse(localStorage.getItem("cerebra-comfort") || "{}")); } catch { /* private window: the defaults */ }
@@ -59,6 +59,50 @@
   applyComfort();
   document.querySelectorAll("[data-comfort]").forEach(node => node.addEventListener("click", () => { const [key, value] = node.dataset.comfort.split(":"); setComfort(key, value); }));
   document.getElementById("menu-switch")?.addEventListener("click", () => setComfort("simple", comfort.simple === false));
+  // Cerebra's own line icons: 16-unit grid, 1.4 stroke, square-ish geometry. Built with the DOM, never as HTML text.
+  const ICONS = {
+    home: [["path", "M2.5 7.5 8 3l5.5 4.5V13.5h-3.5V10h-4v3.5H2.5z"]],
+    check: [["path", "M3 8.5l3 3 7-7"]],
+    help: [["circle", 8, 8, 6], ["path", "M6.4 6.3a1.7 1.7 0 1 1 2.4 1.6c-.5.3-.8.6-.8 1.3"], ["path", "M8 11.2v.3"]],
+    target: [["circle", 8, 8, 6], ["circle", 8, 8, 3], ["path", "M8 8h.01"]],
+    mail: [["rect", 2, 3.5, 12, 9], ["path", "M2.5 4.5 8 9l5.5-4.5"]],
+    search: [["circle", 7, 7, 4.5], ["path", "M10.4 10.4 14 14"]],
+    money: [["rect", 1.5, 4, 13, 8], ["circle", 8, 8, 2], ["path", "M4 6.5v3M12 6.5v3"]],
+    book: [["path", "M3 3.5A1.5 1.5 0 0 1 4.5 2H13v10H4.5A1.5 1.5 0 0 0 3 13.5z"], ["path", "M3 13.5A1.5 1.5 0 0 0 4.5 15H13v-3"]],
+    shop: [["path", "M2.5 6h11l-1 8h-9z"], ["path", "M5.5 6V4.5a2.5 2.5 0 0 1 5 0V6"]],
+    pin: [["path", "M8 14.5s4.5-4.3 4.5-8a4.5 4.5 0 0 0-9 0c0 3.7 4.5 8 4.5 8z"], ["circle", 8, 6.5, 1.6]],
+    megaphone: [["path", "M2.5 6.5v3h2l5.5 3v-9l-5.5 3z"], ["path", "M12.5 6a3 3 0 0 1 0 4"]],
+    grant: [["rect", 2.5, 6, 11, 8], ["path", "M2 3.5h12V6H2zM8 3.5V14"]],
+    briefcase: [["rect", 2, 5, 12, 8.5], ["path", "M5.5 5V3h5v2M2 9h12"]],
+    code: [["path", "M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"]],
+    folder: [["path", "M2 4h4.2l1.5 1.6H14v7.9H2z"]],
+    chat: [["path", "M2.5 3h11v7.5h-6L4.5 13v-2.5h-2z"]],
+    report: [["rect", 3, 2, 10, 12], ["path", "M5.5 5.5h5M5.5 8h5M5.5 10.5h3"]],
+    clock: [["circle", 8, 8, 6], ["path", "M8 4.5V8l2.5 1.5"]],
+    pulse: [["path", "M1.5 8.5h3l1.5-4 3 8 1.5-4h4"]],
+    link: [["path", "M6.5 9.5l3-3"], ["path", "M7.3 4.3l1-1a2.6 2.6 0 0 1 3.7 3.7l-1 1"], ["path", "M8.7 11.7l-1 1A2.6 2.6 0 0 1 4 9l1-1"]],
+    chip: [["rect", 4, 4, 8, 8], ["path", "M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2"]],
+    branch: [["circle", 4.5, 3.5, 1.5], ["circle", 4.5, 12.5, 1.5], ["circle", 11.5, 5, 1.5], ["path", "M4.5 5v6M11.5 6.5c0 3-7 2.2-7 4.5"]],
+    tool: [["path", "M10.2 2.4a3 3 0 0 0-3 3.9L2.5 11l2.5 2.5 4.7-4.7a3 3 0 0 0 3.9-3l-2 2-2-.6-.6-2z"]],
+    gear: [["circle", 8, 8, 2.2], ["path", "M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"]],
+  };
+  const PAGE_ICON = {overview: "home", approvals: "check", chat: "help", chief: "target", partners: "mail", freelance: "search", money: "money", books: "book",
+    etsy: "shop", prospects: "pin", marketing: "megaphone", funding: "grant", business: "briefcase", tasks: "code", projects: "folder", council: "chat",
+    reports: "report", activity: "clock", system: "pulse", connections: "link", models: "chip", github: "branch", toolchain: "tool", settings: "gear"};
+  function icon(name) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 16 16"); svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.4"); svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round"); svg.setAttribute("aria-hidden", "true");
+    (ICONS[name] || []).forEach(([kind, ...values]) => {
+      const shape = document.createElementNS("http://www.w3.org/2000/svg", kind);
+      const names = {path: ["d"], circle: ["cx", "cy", "r"], rect: ["x", "y", "width", "height"]}[kind];
+      names.forEach((attribute, index) => shape.setAttribute(attribute, values[index]));
+      if (kind === "rect") shape.setAttribute("rx", "1");
+      svg.append(shape);
+    });
+    return svg;
+  }
+  document.querySelectorAll(".nav-link[data-page]").forEach(node => { const spot = node.querySelector(".nav-icon"); const name = PAGE_ICON[node.dataset.page]; if (spot && name) spot.replaceChildren(icon(name)); });
   const PROVIDER_ICON = {codex: "◇", claude: "✳", copilot: "⧉", gemini: "✦"};
   const ACTIVE = ["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"];
   let csrf = "", data = null, page = "overview", param = "", lastFingerprint = "", fetching = null, toastTimer = 0;
@@ -307,19 +351,19 @@
   function homeTiles() {
     const waiting = pendingApprovals().length + finishedTasks().length;
     const tiles = [
-      ["waiting", "✓", "Waiting for my OK", waiting ? "Things to look at and approve" : "Nothing is waiting for you", "approvals", waiting],
-      ["earn", "✉", "Pitch companies", "Email companies about your services", "partners"],
-      ["earn", "⌕", "Find work", "Paid jobs that match your skills", "freelance"],
-      ["earn", "$", "Money & invoices", "Quotes, invoices and what you've earned", "money"],
-      ["earn", "▤", "Write books", "Books for Amazon KDP", "books"],
-      ["earn", "✿", "Sell on Etsy", "What sells, and listings to make", "etsy"],
-      ["home", "?", "Ask for help", "Ask Cerebra anything in plain words", "chat"],
-      ["setup", "⚙", "Settings", "Accounts, text size and updates", "settings"],
+      ["waiting", "check", "Waiting for my OK", waiting ? "Things to look at and approve" : "Nothing is waiting for you", "approvals", waiting],
+      ["outreach", "mail", "Pitch companies", "Email companies about your services", "partners"],
+      ["earn", "search", "Find work", "Paid jobs that match your skills", "freelance"],
+      ["earn", "money", "Money & invoices", "Quotes, invoices and what you've earned", "money"],
+      ["earn", "book", "Write books", "Books for Amazon KDP", "books"],
+      ["earn", "shop", "Sell on Etsy", "What sells, and listings to make", "etsy"],
+      ["home", "help", "Ask for help", "Ask Cerebra anything in plain words", "chat"],
+      ["setup", "gear", "Settings", "Accounts, text size and updates", "settings"],
     ];
     const box = el("div", "home-tiles");
-    tiles.forEach(([kind, icon, title, note, destination, count]) => {
+    tiles.forEach(([kind, glyph, title, note, destination, count]) => {
       const tile = link("", destination, `home-tile ${kind}`);
-      append(tile, el("span", "tile-icon", icon), append(el("span"), el("strong", "", title), el("span", "tile-note", note)), count ? el("span", "tile-count", count) : null);
+      append(tile, append(el("span", "tile-icon"), icon(glyph)), append(el("span"), el("strong", "", title), el("span", "tile-note", note)), count ? el("span", "tile-count", count) : null);
       tile.setAttribute("aria-label", `${title}: ${note}`);
       box.append(tile);
     });
@@ -1490,7 +1534,7 @@
       const more = button("Read 40 more websites", () => act(result => result.message, () => mutate("/api/partners/find", {find: false})).then(() => render()), "button");
       const next = button(`Send to the next ${Math.min(5, counts.ready || 0) || 5} now`, () => act(result => result.message, () => mutate("/api/partners/send-next", {count: 5}, "POST", 600000)).then(() => render()), "button");
       find.disabled = more.disabled = !!search.running; next.disabled = !(counts.ready > 0);
-      const review = button(`Review ready emails (${state.drafts_ready || 0})`, () => draftsDialog(), "button primary");
+      const review = button(`Review ready emails (${state.drafts_ready || 0})`, () => draftsDialog(), state.drafts_ready ? "button primary" : "button");
       const showOffered = button(`Offered me something (${state.offered || 0})`, () => { partnerFilter = "offered"; render(); }, partnerFilter === "offered" ? "button primary" : "button");
       const showNotOffered = button(`Not offered (${state.not_offered || 0})`, () => { partnerFilter = "not_offered"; render(); }, partnerFilter === "not_offered" ? "button primary" : "button");
       const readAll = button("Read the replies", () => act(result => result.read ? `Read ${result.read} repl${result.read === 1 ? "y" : "ies"}.` : "No new replies to read.", () => mutate("/api/partners/read-replies", {}, "POST", 600000)).then(() => render()), "button ghost");
@@ -3554,16 +3598,16 @@
   // Text size, colours and the menu, the same switches as the side menu, where anyone looks for them first.
   function appearancePanel() {
     const choice = (label, key, value) => {
-      const node = button(label, () => { setComfort(key, value); render(); }, "button");
+      const node = button(label, () => { setComfort(key, value); render(); }, "segment");
       node.setAttribute("aria-pressed", String(String(comfort[key]) === String(value)));
-      if (String(comfort[key]) === String(value)) node.classList.add("primary");
       return node;
     };
+    const setting = (label, note, ...choices) => append(el("div", "setting-row"), append(el("div"), el("strong", "", label), el("small", "", note)),
+      append(el("div", "segmented"), ...choices));
     return panel("How Cerebra looks", body(
-      el("p", "", "Make the writing bigger, or choose light or dark colours. Your choice is remembered."),
-      el("h4", "", "Text size"), actionsRow(choice("Normal", "size", "normal"), choice("Large", "size", "large"), choice("Largest", "size", "huge")),
-      el("h4", "", "Colours"), actionsRow(choice("Light", "theme", "light"), choice("Dark", "theme", "dark")),
-      el("h4", "", "Menu"), actionsRow(choice("Everyday pages only", "simple", true), choice("All pages, including coding tools", "simple", false))));
+      setting("Text size", "Every page follows it.", choice("Normal", "size", "normal"), choice("Large", "size", "large"), choice("Largest", "size", "huge")),
+      setting("Colours", "Remembered on this computer.", choice("Light", "theme", "light"), choice("Dark", "theme", "dark")),
+      setting("Menu", "The coding pages are hidden until you need them.", choice("Everyday pages", "simple", true), choice("All pages", "simple", false))));
   }
   function settingsView() {
     const values = data.settings || {}, root = el("div");
