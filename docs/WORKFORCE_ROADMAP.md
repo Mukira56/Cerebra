@@ -151,7 +151,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 **Done in 0.74.35:** "Was this result good?" on every finished task's report. Ratings are counted per coder model in Model intelligence, next to the test results.
 
 **Remaining**
-- Repeatable evaluation sets.
+- ~~Repeatable evaluation sets~~ Done after 0.74.36: a fixed check set (`ai_hq/evals.py`) of short questions with known answers for each kind of work the hub runs, checked by Cerebra's own rules (a number, a word, valid JSON), never another model's opinion. The owner runs it from Model intelligence; scores are kept with their date and model, next to the previous run. Claude and Codex account routes aren't checked there.
 - ~~Regression alerts~~ Done after 0.74.36: Model intelligence warns when a model's usable-answer rate in a kind of work this week is 20 points or more below its own previous four weeks (at least 10 calls this week and 20 before), and says what to do.
 
 ## Phase 10: Multi-project management
@@ -170,6 +170,6 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Also fixed in 0.74.35:** three invisible control characters in Company pitches' page finder (since it was added) kept translator, interpreter and "become a…" pages from being recognised. A source check (`tests/test_source_hygiene.py`) now fails on any control character.
 
-**Next priority:** Phase 9's evaluation sets and regression alerts. Then Phase 10's cross-project priorities.
+**Next priority:** Phase 10's cross-project priorities, then Phase 3's templates for research and business tasks.
 
 **Previous priority:** Phase 3, measuring downstream success. Record when a task started from an architect spec, then compare completion and first-review pass rates per architect model in Model intelligence.

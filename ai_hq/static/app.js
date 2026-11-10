@@ -1217,9 +1217,24 @@
         el("h4", "", "Coding results by model"), append(el("div", "table-wrap"), coding),
         el("h4", "", "Do Prompt Architect specs help?"), specsTable(state.specs),
         el("h4", "", "Use per project"), projectUsage(state.projects),
+        el("h4", "", "Check set"), checksPanel(state),
         el("h4", "", "Why recent tasks went where they did"), decisions, hint(state.subscription_note));
     })();
     return panel("Model intelligence", body(box));
+  }
+  // The fixed check set: questions with known answers per kind of work, run only when the owner presses the button.
+  function checksPanel(state) {
+    const label = key => (array(state.work).find(item => item.key === key) || {}).label || key;
+    const rows = array(state.checks);
+    const table = rows.length ? append(el("div", "table-wrap"), append(el("table"), append(el("thead"), append(el("tr"), el("th", "", "Kind of work"), el("th", "", "Model"),
+      el("th", "", "Right answers"), el("th", "", "Last time"), el("th", "", "Checked"))),
+      append(el("tbody"), ...rows.map(item => append(el("tr"), el("td", "", label(item.category)), el("td", "", item.route), el("td", "", `${item.score}%`),
+        el("td", "", item.previous === null ? "—" : `${item.previous}%${item.previous_route !== item.route ? ` (${item.previous_route})` : ""}`), el("td", "muted", relative(item.at))))))) : hint("Not run yet.");
+    const run = button("Run the check set", () => act(result => {
+      const done = Object.values(result.results).filter(item => "score" in item);
+      return `Checked ${done.length} kinds of work: ${done.reduce((sum, item) => sum + item.passed, 0)} of ${done.reduce((sum, item) => sum + item.total, 0)} answers right.`;
+    }, () => mutate("/api/models/checks", {}, "POST", 600000)).then(result => { if (result) render(); }), "button");
+    return append(el("div"), hint("Short questions with known answers, checked by Cerebra's own rules. Run it after changing a model to see whether the new one does better. It uses about 12 calls from your free allowances and runs only when you press the button."), table, actionsRow(run));
   }
   function projectUsage(rows) {
     if (!array(rows).length) return hint("No AI runs yet.");

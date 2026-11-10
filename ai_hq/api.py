@@ -2276,6 +2276,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             value, measured, policy = modelhub.settings(session), modelhub.performance(session), routing.load(session)
             alerts = modelhub.regressions(session)
+            from . import evals
+            checks = evals.summary(session)
             today = {key: modelhub.calls_today(session, key) for key in modelhub.CATEGORIES}
             recent = list(session.scalars(select(Task).order_by(Task.created_at.desc()).limit(200)))
             # Use per project: one grouped query over every run, not a query per task.
@@ -2324,10 +2326,17 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                       "handoffs": (task.results or {}).get("handoffs", [])} for task in recent[:15]]
         memory = modelhub.memory_bytes()
         return {"work": work, "coding": sorted(coding.values(), key=lambda item: -item["tasks"]), "decisions": decisions, "routing": policy,
-                "specs": sorted(specs.values(), key=lambda item: -item["tasks"]), "projects": projects, "regressions": alerts,
+                "specs": sorted(specs.values(), key=lambda item: -item["tasks"]), "projects": projects, "regressions": alerts, "checks": checks,
                 "adaptive": value["adaptive"], "min_calls": modelhub.MIN_CALLS, "memory_gb": round(memory / 2**30, 1) if memory else None,
                 "local_limit_gb": round(modelhub.LOCAL_SHARE * memory / 2**30, 1) if memory else None,
                 "subscription_note": "Claude and Codex don't tell Cerebra how much of your plan is left, so it isn't shown. Cerebra notices when a plan runs out and waits for it."}
+
+    @app.post("/api/models/checks")
+    def models_checks(payload: dict | None = None):
+        """Run the fixed check set (evals.CHECKS) now, on the owner's request: questions with known answers per kind of work."""
+        from . import evals
+        wanted = [item for item in (payload or {}).get("categories") or [] if item in evals.CHECKS] or None
+        return {"results": evals.run(hub, wanted)}
 
     @app.post("/api/models/hub/test")
     def models_hub_test(payload: dict):

@@ -317,3 +317,23 @@ def test_a_model_that_has_got_clearly_worse_is_flagged(client):  # noqa: F811
     alerts = client.get("/api/models/intelligence").json()["regressions"]
     assert [(item["category"], item["was"], item["now"]) for item in alerts] == [("research", 100, 25)]
     assert "down from 100%" in alerts[0]["message"]
+
+
+def test_the_check_set_scores_each_kind_of_work_by_its_own_rules(client, monkeypatch):  # noqa: F811
+    from ai_hq import evals
+    hub = client.app.state.hub
+    asked = []
+
+    def fixture(category, prompt, max_tokens=4000, model=None, fresh=False):
+        asked.append((category, fresh))
+        right = {"research": "19" if "Starter" in prompt else "Founded in 2014.", "verify": "No." if "Mexico" in prompt else "Yes",
+                 "reasoning": "391"}  # 17 * 23 - 40 is 351: a wrong answer
+        return AgentResult(True, right.get(category, "I'm not sure"))
+    monkeypatch.setattr(hub, "chat", fixture)
+    first = client.post("/api/models/checks", json={"categories": ["research", "verify", "reasoning"]}).json()["results"]
+    assert first["research"]["score"] == 100 and first["verify"]["score"] == 100 and first["reasoning"]["passed"] == 0
+    assert all(fresh for _, fresh in asked)  # never the saved answers
+    client.post("/api/models/checks", json={"categories": ["research"]})
+    rows = {item["category"]: item for item in client.get("/api/models/intelligence").json()["checks"]}
+    assert rows["research"]["score"] == 100 and rows["research"]["previous"] == 100 and rows["reasoning"]["previous"] is None
+    assert evals._has_number("23")("The total is $23.00") is False and evals._has_number("23")("Total: 23") and evals._first_word("no")("No, it doesn't")
