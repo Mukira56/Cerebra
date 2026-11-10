@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import html as html_module
 import re
+import hashlib
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -43,7 +44,8 @@ CONTACT_GUESSES = ("/contact", "/contact-us")  # read when the home page links n
 PAUSE_BOUNCES, BOUNCE_WINDOW = 3, 30
 PLACEHOLDERS = ("{company}", "{website}", "{personal}")
 DEFAULTS = {"enabled": False, "mode": "send", "per_day": 500, "industries": ["ai"], "follow_up_days": 6, "offer": "", "subject": "", "body": "", "follow_up": "",
-            "personalize": True, "big_subject": "", "big_body": ""}
+            "personalize": True, "big_subject": "", "big_body": "", "subject_b": ""}
+SUBJECT_TEST_MIN = 30  # pitches per subject line before Cerebra names a winner
 BIG_TECH_KIND = "big_tech"
 RESEARCH_CHARS, PERSONAL_CHARS = 2400, 900
 RESEARCH_COMPANIES, RESEARCH_PAGES, RESEARCH_ANALYSES = 6, 4, 4  # each run: companies read, pages each, dossiers written
@@ -195,7 +197,7 @@ def save_settings(session, changes):
         if days and not 3 <= days <= 30:
             raise ValueError("Follow up after 3 to 30 days, or 0 for no follow-up")
         value["follow_up_days"] = days
-    for key, limit in (("offer", 600), ("subject", 150), ("body", 4000), ("follow_up", 2000), ("big_subject", 150), ("big_body", 4000)):
+    for key, limit in (("offer", 600), ("subject", 150), ("body", 4000), ("follow_up", 2000), ("big_subject", 150), ("big_body", 4000), ("subject_b", 150)):
         if key in changes:
             value[key] = str(changes[key] or "").replace("\r\n", "\n").strip()[:limit]
     if "industries" in changes:
@@ -212,6 +214,10 @@ def save_settings(session, changes):
     problems = check_template(value["subject"], value["body"], value["follow_up"]) if value["subject"] or value["body"] else []
     if value["big_subject"] or value["big_body"]:
         problems += [f"Big tech pitch: {item}" for item in check_template(value["big_subject"], value["big_body"])]
+    if value.get("subject_b"):
+        problems += [f"Second subject line: {item}" for item in check_template(value["subject_b"], value["body"]) if "subject" in item.lower() or "{" in item or "[" in item]
+        if value["subject_b"].strip().lower() == value["subject"].strip().lower():
+            problems.append("The second subject line is the same as the first: write a different one to test")
     if problems:
         raise ValueError("; ".join(problems))
     row = session.get(Metadata, KEY)
@@ -376,11 +382,48 @@ def with_personal(text, personal):
     return f"{head}\n\n{personal}\n\n{rest}" if separator else f"{personal}\n\n{head}"
 
 
+def variant(rules, company):
+    """"A" or "B" when the owner is testing a second subject line, else "". Each company always gets the same one (from
+    its id), so the email reviewed is the email sent. Big tech has its own pitch and isn't part of the test."""
+    if not rules.get("subject_b") or (getattr(company, "kind", "") == BIG_TECH_KIND and rules.get("big_body") and rules.get("big_subject")):
+        return ""
+    return "AB"[int(hashlib.sha256(str(company.id).encode()).hexdigest(), 16) % 2]
+
+
 def template(rules, company):
-    """Which pitch a company gets: the big tech one for big tech companies and AI labs, when the owner wrote one."""
+    """Which pitch a company gets: the big tech one for big tech companies and AI labs, when the owner wrote one; with a
+    subject test on, half the companies get the second subject line."""
     if getattr(company, "kind", "") == BIG_TECH_KIND and rules.get("big_body") and rules.get("big_subject"):
         return rules["big_subject"], rules["big_body"]
-    return rules["subject"], rules["body"]
+    return (rules["subject_b"] if variant(rules, company) == "B" else rules["subject"]), rules["body"]
+
+
+def subject_test(session, rules=None):
+    """How each subject line has done: pitches sent, replies, and offers (read replies marked offered). Names a winner only
+    once both have SUBJECT_TEST_MIN pitches and one has a clearly higher reply rate."""
+    rules = rules or settings(session)
+    counts = {key: {"variant": key, "subject": rules["subject"] if key == "A" else rules.get("subject_b", ""), "sent": 0, "replies": 0, "offers": 0} for key in "AB"}
+    for row in session.scalars(select(PartnerCompany).where(PartnerCompany.status.in_(SENT_STAGES))).all():
+        key = ((row.sent or [{}])[0]).get("variant")
+        if key not in counts:
+            continue
+        entry = counts[key]
+        entry["sent"] += 1
+        entry["replies"] += row.status in {"replied", "opted_out"} or bool((row.reply or {}).get("verdict"))
+        entry["offers"] += (row.reply or {}).get("verdict") == "offered"
+    for entry in counts.values():
+        entry["reply_rate"] = round(100 * entry["replies"] / entry["sent"], 1) if entry["sent"] else 0.0
+    a, b = counts["A"], counts["B"]
+    if min(a["sent"], b["sent"]) < SUBJECT_TEST_MIN:
+        verdict = f"Not enough yet: each subject line needs {SUBJECT_TEST_MIN} pitches before the numbers mean much."
+        winner = ""
+    else:
+        better, worse = (a, b) if a["reply_rate"] >= b["reply_rate"] else (b, a)
+        clear = better["replies"] - worse["replies"] * better["sent"] / max(1, worse["sent"]) >= 3 and better["reply_rate"] >= worse["reply_rate"] * 1.5
+        winner = better["variant"] if clear else ""
+        verdict = (f"Subject {better['variant']} gets more replies ({better['reply_rate']}% against {worse['reply_rate']}%). Keep it, and try a new second line."
+                   if clear else "Neither subject line is clearly better yet.")
+    return {"on": bool(rules.get("subject_b")), "variants": [a, b], "winner": winner, "verdict": verdict}
 
 
 READ_REPLY_PROMPT = """You are reading a company's reply to a business pitch that {owner} emailed to {company}.
@@ -722,6 +765,7 @@ class Partners:
                 raise ValueError(f"{to} asked not to be contacted, or bounced before: Cerebra won't write to it")
             rules = settings(session)
             pitch_subject, pitch_body = template(rules, row)
+            tested = variant(rules, row) if subject is None else ""
             tailoring = rules["personalize"] and text is None and not row.personal
         if tailoring:
             self.tailor(company_id)
@@ -740,7 +784,7 @@ class Partners:
         with self.db.Session.begin() as session:
             row = session.get(PartnerCompany, company_id)
             row.email, row.thread_id, row.status = to, sent.get("thread_id", ""), "sent"
-            row.sent = [{"at": now(), "subject": subject_out[:150], "body": body, "message_id": sent.get("message_id", "")}]
+            row.sent = [{"at": now(), "subject": subject_out[:150], "body": body, "message_id": sent.get("message_id", ""), **({"variant": tested} if tested else {})}]
             row.next_at = (datetime.now(timezone.utc) + timedelta(days=follow_days)).isoformat() if follow_days else ""
             row.updated_at = now()
             session.add(Event(kind="partners", message=f"Pitched {name} ({to})", data={"company": company_id}))
@@ -1146,7 +1190,7 @@ class Partners:
         preview = compose(session, sample, pitch[1], pitch[0]) if sample and pitch[1] else None
         return {"settings": {key: value for key, value in rules.items() if key != "cleared_at"}, "industries": INDUSTRIES, "counts": counts, "total": len(rows),
                 "companies": [public(row) for row in rows[:600]], "ready": self.ready(session), "sent_today": self.sent_today(session),
-                "limit": self.limit(session), "max_per_day": MAX_PER_DAY, "health": self.health(session), "status": self.status,
+                "limit": self.limit(session), "max_per_day": MAX_PER_DAY, "health": self.health(session), "subject_test": subject_test(session), "status": self.status,
                 "search": dict(self.search), "signature": footer(session)[0], "default_follow_up": DEFAULT_FOLLOW_UP,
                 "drafts_ready": sum(row.status == "ready" and bool(row.personal or not rules["personalize"]) for row in rows),
                 "preview": {"company": sample.name, "to": sample.email, "subject": preview[0], "body": preview[1],

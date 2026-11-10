@@ -1129,6 +1129,15 @@
       append(el("div", "proof-grid"), column("Before the change", proof.before), column("After the change", proof.after)),
       proof.newly_failing.length ? el("p", "row-meta", `Newly failing: ${proof.newly_failing.join(", ")}`) : null);
   }
+  // How the two subject lines have done (partners.subject_test): pitches, replies and offers for each.
+  function subjectTest(test) {
+    if (!test || !test.on && !array(test.variants).some(item => item.sent)) return null;
+    return append(el("div", "subject-test"), append(el("div", "table-wrap"), append(el("table"),
+      append(el("thead"), append(el("tr"), el("th", "", ""), el("th", "", "Subject line"), el("th", "", "Sent"), el("th", "", "Replies"), el("th", "", "Offers"))),
+      append(el("tbody"), ...array(test.variants).map(item => append(el("tr"), el("td", "", item.variant + (test.winner === item.variant ? " ★" : "")),
+        el("td", "", item.subject || "—"), el("td", "", String(item.sent)), el("td", "", `${item.replies} (${item.reply_rate}%)`), el("td", "", String(item.offers))))))),
+      hint(test.verdict, !!test.winner));
+  }
   // When automatic emails may go out (ai_hq/sendwindow.py): weekdays, during working hours on this computer's clock.
   function sendWindowFields(rules) {
     const hours = Array.from({length: 25}, (_, hour) => [String(hour), hour === 0 || hour === 24 ? "Midnight" : hour === 12 ? "Noon" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`]);
@@ -1665,6 +1674,8 @@
       const subject = input("Subject, e.g. Translation and language data for {company}", rules.subject || ""),
         text = textarea("Hello {company} team,\n\nWho you are, what you offer, why it helps them, and one easy next step (a free sample, a short call).\n\nThank you,", rules.body || ""),
         followUp = textarea("Your follow-up", rules.follow_up || state.default_follow_up || ""), perDay = input("10", rules.per_day ?? 10, "number"), days = input("6", rules.follow_up_days ?? 6, "number");
+      const subjectB = input("Optional: a second subject line to test against the first", rules.subject_b || "");
+      subjectB.maxLength = 150;
       subject.maxLength = 150; text.rows = 10; followUp.rows = 4; perDay.min = 1; perDay.max = state.max_per_day; days.min = 0; days.max = 30;
       const tailor = check("Tailor each email to its company: Cerebra reads what the company says about itself on its own website, and your writing model adds a short paragraph on their work and how you help it", rules.personalize !== false);
       const bigSubject = input("Subject for big tech, e.g. Kiswahili and African-language training data for {company}'s AI", rules.big_subject || ""),
@@ -1675,6 +1686,7 @@
       const on = check("Work on its own: find and study companies, and send my pitch", rules.enabled === true),
         mode = select([["send", "Send each pitch automatically"], ["review", "Only when I press Send (follow-ups wait too)"]], rules.mode || "send");
       append(form, field("Subject", subject, "{company} becomes each company's name, {website} its web address."),
+        field("Test a second subject line (A/B)", subjectB, "Half the companies get this one instead. Cerebra counts replies and offers for each, and says which works once each has enough pitches."), subjectTest(state.subject_test),
         field("Your email", text, "Put {personal} where each company's own paragraph should go; without it, the paragraph goes after your greeting."), tailor.wrap,
         field("Big tech and AI labs: subject", bigSubject), field("Big tech and AI labs: your email", bigText, "Used for the big tech companies and AI labs in your list. {personal} works here too."),
         field("Follow-up (sent once, in the same thread, if nobody answers)", followUp),
@@ -1686,7 +1698,7 @@
       wireForm(form, save, async () => {
         await mutate("/api/partners", {subject: subject.value, body: text.value, follow_up: followUp.value, per_day: Number(perDay.value || 10), follow_up_days: Number(days.value || 0),
           mode: mode.value, enabled: on.control.checked, personalize: tailor.control.checked, big_subject: bigSubject.value, big_body: bigText.value,
-          industries: kinds.filter(box => box.control.checked).map(box => box.control.value), ...pitchWindow.values()}, "PUT");
+          industries: kinds.filter(box => box.control.checked).map(box => box.control.value), subject_b: subjectB.value, ...pitchWindow.values()}, "PUT");
         toast(on.control.checked ? "Saved. Company pitches are on." : "Saved."); render();
       });
       const before = array(state.ready).length ? panel("Before a pitch can go out", body(append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))),
