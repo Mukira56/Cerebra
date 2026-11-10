@@ -604,6 +604,7 @@ class JobPosting(Base):
     sent: Mapped[list] = mapped_column(JSON, default=list)
     next_at: Mapped[str] = mapped_column(String, default="")
     reply: Mapped[dict] = mapped_column(JSON, default=dict)
+    cv: Mapped[dict] = mapped_column(JSON, default=dict)  # this job's tailored CV (jobs.tailor_cv), facts from the owner's CV only
     created_at: Mapped[str] = mapped_column(String, default=now, index=True)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 

@@ -131,7 +131,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - Prospects, Books and Etsy research
 
 **Remaining**
-- Tailored CV documents
+- ~~Tailored CV documents~~ Done after 0.74.38: each job can get a version of the owner's CV with what the posting asks for first (`Jobs.tailor_cv`), using only the CV's facts: a skill the CV doesn't name is dropped and a figure from anywhere else is refused. It becomes a text PDF (`ai_hq/resumepdf.py`, no outside library) attached to the application email, and can be saved for application forms.
 - ~~Interview preparation~~ Done after 0.74.37: an interview invitation comes with notes (`Jobs.prepare`): likely questions with the CV's evidence for each, questions to ask them, and gaps to be ready for, built only from the CV, posting, employer research and their reply; a figure from anywhere else is refused.
 - A general research-report workflow
 

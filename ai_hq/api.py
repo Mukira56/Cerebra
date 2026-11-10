@@ -2035,6 +2035,23 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def jobs_read_reply(job_id: str, payload: dict):
         return jobs_call(lambda: jobs.read_reply(job_id, again=payload.get("again") is True))
 
+    @app.post("/api/jobs/{job_id}/cv")
+    def jobs_tailor_cv(job_id: str, payload: dict | None = None):
+        """This job's tailored CV (facts from the owner's CV only), made now or kept from before."""
+        return jobs_call(lambda: jobs.tailor_cv(job_id, again=(payload or {}).get("again") is True))
+
+    @app.get("/api/jobs/{job_id}/cv.pdf")
+    def jobs_cv_pdf(job_id: str):
+        """The tailored CV as a PDF, to look at or upload to an application form."""
+        from fastapi.responses import Response
+        from .models import JobPosting
+        with db.Session() as session:
+            job = session.get(JobPosting, job_id)
+            if job is None or not job.cv:
+                raise HTTPException(404, "This job has no tailored CV yet: press Tailor my CV first")
+        filename, data, kind = jobs.cv_file(job_id)
+        return Response(data, media_type=kind, headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
     @app.post("/api/jobs/{job_id}/prepare")
     def jobs_prepare(job_id: str, payload: dict | None = None):
         """Interview notes for an invitation: likely questions with the CV's evidence, questions to ask, and gaps."""

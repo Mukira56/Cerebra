@@ -217,3 +217,47 @@ def test_interview_notes_never_keep_an_invented_figure(client):  # noqa: F811
     assert client.post(f"/api/jobs/{backend['id']}/prepare", json={"again": True}).status_code == 400
     form = listed(client)["Frontend React Engineer"]
     assert "applied to" in client.post(f"/api/jobs/{form['id']}/prepare", json={}).json()["detail"]
+
+
+TAILORED = {"headline": "Python and Django developer", "summary": "Developer who built a booking platform in Django and React used by 3 clinics.",
+            "skills": ["Django", "PostgreSQL", "Python", "Kubernetes"],  # Kubernetes isn't in the CV
+            "experience": [{"role": "Developer", "where": "Booking platform", "when": "", "points": ["Built it in Django and React for 3 clinics."]}],
+            "education": ["BSc Computer Science (in progress)"]}
+
+
+def test_each_job_gets_a_cv_with_the_cv_s_own_facts_in_the_posting_s_order(client):  # noqa: F811
+    state, robot = ready(client)
+    robot.find()
+    studied(client)
+    backend = listed(client)["Backend Python Developer"]
+    letter_writer = robot.write
+    robot.write = lambda prompt: TAILORED if prompt.startswith("Rewrite") else letter_writer(prompt)
+    made = client.post(f"/api/jobs/{backend['id']}/cv", json={}).json()
+    assert made["skills"] == ["Django", "PostgreSQL", "Python"]  # a skill the CV doesn't name is dropped
+    pdf = client.get(f"/api/jobs/{backend['id']}/cv.pdf")
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-1.4") and pdf.content.rstrip().endswith(b"%%EOF") and b"Python and Django developer" in pdf.content
+    robot.send(backend["id"])
+    attached = robot.gmail.sent[-1]["attachments"]
+    assert len(attached) == 1 and attached[0][0].endswith("for Shop Example.pdf") and attached[0][2] == "application/pdf"
+
+
+def test_a_tailored_cv_never_keeps_an_invented_figure_and_can_be_switched_off(client):  # noqa: F811
+    state, robot = ready(client, attach_cv=False)
+    robot.find()
+    studied(client)
+    backend = listed(client)["Backend Python Developer"]
+    letter_writer = robot.write
+    robot.write = lambda prompt: {**TAILORED, "summary": "Led a team of 40 engineers."} if prompt.startswith("Rewrite") else letter_writer(prompt)
+    refused = client.post(f"/api/jobs/{backend['id']}/cv", json={})
+    assert refused.status_code == 400 and "figure" in refused.json()["detail"]
+    assert client.get(f"/api/jobs/{backend['id']}/cv.pdf").status_code == 404
+    robot.send(backend["id"])
+    assert robot.gmail.sent[-1]["attachments"] == []
+
+
+def test_the_cv_pdf_wraps_long_text_onto_more_pages():
+    from ai_hq import resumepdf
+    long = [("Experience", [("bullet", "Built and maintained services in Python. " * 6)] * 60)]
+    data = resumepdf.build("Jane Example", "Developer", long, "jane@example.com")
+    assert data.count(b"/Type /Page ") >= 2 and b"/Count " in data
+    assert all(resumepdf._width(line, 10) <= 612 - 108 for line in resumepdf.wrap("word " * 200, 10, 612 - 108))

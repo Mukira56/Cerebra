@@ -1892,17 +1892,18 @@
       const on = check("Work on its own: find jobs, study each employer and write the applications", rules.enabled === true);
       const mode = select([["review", "I review each one and press Send"], ["send", "Send each application automatically"]], rules.mode || "review");
       const jobWindow = sendWindowFields(rules);
+      const attachCv = check("Attach a CV tailored to each job: your CV's own facts, with what the posting asks for first (a PDF)", rules.attach_cv !== false);
       append(form, field("Your CV", cv, "The only source of facts about you: nothing that isn't here is ever claimed."), field("Signature", signature),
         append(el("div"), el("strong", "", "Kinds of work"), append(el("div", "check-list"), ...modes.map(box => box.wrap))),
         append(el("div", "form-grid"), field("Must mention", wantedWords), field("Skip jobs that mention", avoidWords)),
         append(el("div"), el("strong", "", "Job boards"), append(el("div", "check-list"), ...boards.map(box => box.wrap))),
-        append(el("div", "form-grid"), field("Sending", mode), field("Follow up after (days, 0 for none)", days)), jobWindow.node, on.wrap,
+        append(el("div", "form-grid"), field("Sending", mode), field("Follow up after (days, 0 for none)", days)), attachCv.wrap, jobWindow.node, on.wrap,
         hint("No daily number in Cerebra: Gmail's own limit applies (about 500 a day on a personal Gmail, 2,000 on Google Workspace). When Gmail refuses, sending waits for the next day."),
         actionsRow(save, button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/jobs/run", {}, "POST", 900000)).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/jobs", {cv: cv.value, signature: signature.value, wanted: wantedWords.value, avoid: avoidWords.value, follow_up_days: Number(days.value || 0),
           mode: mode.value, enabled: on.control.checked, work_modes: modes.filter(box => box.control.checked).map(box => box.control.value),
-          sources: boards.filter(box => box.control.checked).map(box => box.control.value), ...jobWindow.values()}, "PUT");
+          sources: boards.filter(box => box.control.checked).map(box => box.control.value), attach_cv: attachCv.control.checked, ...jobWindow.values()}, "PUT");
         toast(on.control.checked ? "Saved. Job applications are on." : "Saved."); render();
       });
       // 2. the jobs
@@ -1955,8 +1956,22 @@
         item.reply?.snippet ? replyBlockFor(item, `/api/jobs/${item.id}`) : null, interviewPrep(item))
         : append(el("div"), el("h4", "", "Your application"), field("To", to, item.apply_email ? "The address the posting gives for applying." : "This job takes applications on its own site: copy the letter and paste it there, or type an address it gives."),
           field("Subject", subject), field("Letter", text, "Built from your CV, the posting and the employer's research. Read it and change anything before sending."),
-          actionsRow(write, keep, item.apply_email ? send : copy)),
+          actionsRow(write, keep, item.apply_email ? send : copy), tailoredCv(item)),
       actionsRow(button("Mark as applied", () => mark("applied"), "button"), !applied ? button("Drop it", () => mark("dropped"), "button ghost") : null)));
+  }
+  // This job's version of the owner's CV: the same facts, with what the posting asks for first. Attached when sending.
+  function tailoredCv(item) {
+    const cv = item.cv || {}, has = !!cv.summary;
+    const make = button(has ? "Tailor it again" : "Tailor my CV for this job", () => act("Your CV is tailored for this job.",
+      () => mutate(`/api/jobs/${item.id}/cv`, {again: has}, "POST", 300000)).then(result => { if (result) { closeDialog(); render(); } }), has ? "button small" : "button");
+    const view = has ? button("Save the PDF", () => fetch(`/api/jobs/${encodeURIComponent(item.id)}/cv.pdf`, {credentials: "same-origin"})
+      .then(response => { if (!response.ok) throw new Error("The PDF couldn't be made"); return response.blob(); })
+      .then(blob => { const link = el("a"); link.href = URL.createObjectURL(blob); link.download = `CV for ${item.company || item.title}.pdf`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 10000); })
+      .catch(error => toast(error.message, true)), "button small") : null;
+    return append(el("div", "tailored-cv"), el("h4", "", "Your CV for this job"),
+      has ? append(el("div"), el("p", "", cv.headline || ""), el("p", "row-meta", cv.summary), array(cv.skills).length ? el("p", "row-meta", `Skills first: ${cv.skills.slice(0, 8).join(", ")}`) : null)
+        : hint("Cerebra reorders your CV's own facts so what this posting asks for comes first. Nothing is added: a skill or figure that isn't in your CV is refused."),
+      actionsRow(make, view));
   }
   // Interview notes, built from the CV, the posting and the employer's research when an employer invites the owner.
   function interviewPrep(item) {

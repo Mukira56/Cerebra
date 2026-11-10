@@ -46,9 +46,9 @@ class Gmail:
     def __init__(self):
         self.sent, self.threads = [], {}
 
-    def send(self, to, subject, body, thread_id=None, reply_to_message_id=None):
+    def send(self, to, subject, body, thread_id=None, reply_to_message_id=None, attachments=None):
         number = len(self.sent) + 1
-        self.sent.append({"to": to, "subject": subject, "body": body, "thread_id": thread_id, "reply_to": reply_to_message_id})
+        self.sent.append({"to": to, "subject": subject, "body": body, "thread_id": thread_id, "reply_to": reply_to_message_id, "attachments": attachments or []})
         return {"id": f"m{number}", "thread_id": thread_id or f"t{number}", "message_id": f"<m{number}@mail.example>"}
 
     def thread(self, thread_id):

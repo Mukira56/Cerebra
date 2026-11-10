@@ -136,8 +136,9 @@ class Gmail:
             raise ValueError(f"Gmail returned {response.status_code}")
         return response.json()
 
-    def send(self, to, subject, body, thread_id=None, reply_to_message_id=None):
-        """Send one plain-text email from the connected address. A follow-up goes into the same thread."""
+    def send(self, to, subject, body, thread_id=None, reply_to_message_id=None, attachments=None):
+        """Send one plain-text email from the connected address. A follow-up goes into the same thread. attachments:
+        [(file name, bytes, "type/subtype")], such as a tailored CV."""
         from email.message import EmailMessage
         with self.db.Session() as session:
             value = load(session)
@@ -148,6 +149,9 @@ class Gmail:
         if reply_to_message_id:
             message["In-Reply-To"] = message["References"] = reply_to_message_id
         message.set_content(body)
+        for filename, data, kind in attachments or []:
+            main, _, sub = str(kind).partition("/")
+            message.add_attachment(data, maintype=main, subtype=sub or "octet-stream", filename=filename)
         payload = {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
         if thread_id:
             payload["threadId"] = thread_id
