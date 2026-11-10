@@ -92,7 +92,8 @@ If the posting is not a real job, return {{"subject": "", "body": ""}}."""
 
 def settings(session):
     row = session.get(Metadata, KEY)
-    value = {**DEFAULTS, **(row.value if row else {})}
+    from . import sendwindow
+    value = {**DEFAULTS, **sendwindow.DEFAULT, **(row.value if row else {})}
     value["work_modes"] = [mode for mode in value.get("work_modes") or [] if mode in WORK_MODES] or list(WORK_MODES)
     value["sources"] = [name for name in value.get("sources") or [] if name in SOURCES]
     return value
@@ -126,6 +127,8 @@ def save_settings(session, changes):
         if days and not 3 <= days <= 30:
             raise ValueError("Follow up after 3 to 30 days, or 0 for none")
         value["follow_up_days"] = days
+    from . import sendwindow
+    sendwindow.validate(changes, value)
     row = session.get(Metadata, KEY)
     if row is None:
         session.add(Metadata(key=KEY, value=value))
@@ -597,6 +600,10 @@ class Jobs:
                 return self._note(f"Found {found['added']} new jobs and wrote {written} applications. Waiting for you: " + "; ".join(problems), "waiting")
             replies = self.check_replies()
             sent = 0
+            from . import sendwindow
+            waiting_for_hours = sendwindow.closed(rules, self.clock() if callable(getattr(self, "clock", None)) else None) if rules["mode"] == "send" else ""
+            if waiting_for_hours:
+                return self._note(f"Found {found['added']} new jobs and wrote {written} applications; {replies} new repl(ies). {waiting_for_hours}")
             if rules["mode"] == "send":
                 self.follow_ups()
                 with self.db.Session() as session:

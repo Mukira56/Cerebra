@@ -1129,6 +1129,15 @@
       append(el("div", "proof-grid"), column("Before the change", proof.before), column("After the change", proof.after)),
       proof.newly_failing.length ? el("p", "row-meta", `Newly failing: ${proof.newly_failing.join(", ")}`) : null);
   }
+  // When automatic emails may go out (ai_hq/sendwindow.py): weekdays, during working hours on this computer's clock.
+  function sendWindowFields(rules) {
+    const hours = Array.from({length: 25}, (_, hour) => [String(hour), hour === 0 || hour === 24 ? "Midnight" : hour === 12 ? "Noon" : `${hour % 12} ${hour < 12 ? "am" : "pm"}`]);
+    const on = check("Send automatic emails only on weekdays, during working hours: emails that arrive at night or at the weekend are buried by Monday", rules.business_hours !== false);
+    const start = select(hours.slice(0, 24), String(rules.start_hour ?? 8)), end = select(hours.slice(1), String(rules.end_hour ?? 17));
+    const node = append(el("div"), on.wrap, append(el("div", "form-grid"), field("From", start), field("Until", end)),
+      hint("Research, drafting and reading replies carry on at any hour, and your own Send button always sends at once."));
+    return {node, values: () => ({business_hours: on.control.checked, start_hour: Number(start.value), end_hour: Number(end.value)})};
+  }
   // Tokens a task's AI runs used, as the providers reported them. The dollar figure is what the same work would cost at
   // list prices; the owner's subscription isn't charged per run.
   const tokens = count => count >= 1e6 ? `${(count / 1e6).toFixed(1)}M` : count >= 1e3 ? `${Math.round(count / 1e3)}k` : String(count);
@@ -1662,6 +1671,7 @@
         bigText = textarea("Your email to big tech companies and AI labs (Google, Microsoft, Meta, OpenAI, Anthropic…). Leave empty to send them the pitch above.", rules.big_body || "");
       bigSubject.maxLength = 150; bigText.rows = 8;
       const kinds = Object.entries(state.industries || {}).map(([key, label]) => { const box = check(label, array(rules.industries || ["ai"]).includes(key)); box.control.value = key; return box; });
+      const pitchWindow = sendWindowFields(rules);
       const on = check("Work on its own: find and study companies, and send my pitch", rules.enabled === true),
         mode = select([["send", "Send each pitch automatically"], ["review", "Only when I press Send (follow-ups wait too)"]], rules.mode || "send");
       append(form, field("Subject", subject, "{company} becomes each company's name, {website} its web address."),
@@ -1670,13 +1680,13 @@
         field("Follow-up (sent once, in the same thread, if nobody answers)", followUp),
         append(el("div"), el("strong", "", "Kinds of companies to find"), append(el("div", "check-list"), ...kinds.map(box => box.wrap))),
         append(el("div", "form-grid"), field("Pitches a day", perDay, "Gmail's own limit applies: about 500 a day on a personal Gmail, 2,000 on Google Workspace."),
-          field("Follow up after (days, 0 for none)", days), field("Sending", mode)),
+          field("Follow up after (days, 0 for none)", days), field("Sending", mode)), pitchWindow.node,
         on.wrap, Object.assign(hint(`Added under every email (US law needs your postal address and an opt-out):\n${state.signature || ""}`), {style: "white-space: pre-line"}), actionsRow(save,
           button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/partners/run", {}, "POST", 600000)).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/partners", {subject: subject.value, body: text.value, follow_up: followUp.value, per_day: Number(perDay.value || 10), follow_up_days: Number(days.value || 0),
           mode: mode.value, enabled: on.control.checked, personalize: tailor.control.checked, big_subject: bigSubject.value, big_body: bigText.value,
-          industries: kinds.filter(box => box.control.checked).map(box => box.control.value)}, "PUT");
+          industries: kinds.filter(box => box.control.checked).map(box => box.control.value), ...pitchWindow.values()}, "PUT");
         toast(on.control.checked ? "Saved. Company pitches are on." : "Saved."); render();
       });
       const before = array(state.ready).length ? panel("Before a pitch can go out", body(append(el("ul", "tips"), ...state.ready.map(item => el("li", "", item))),
@@ -1881,17 +1891,18 @@
       const boards = Object.entries(state.sources || {}).map(([key, label]) => { const box = check(label, array(rules.sources).includes(key)); box.control.value = key; return box; });
       const on = check("Work on its own: find jobs, study each employer and write the applications", rules.enabled === true);
       const mode = select([["review", "I review each one and press Send"], ["send", "Send each application automatically"]], rules.mode || "review");
+      const jobWindow = sendWindowFields(rules);
       append(form, field("Your CV", cv, "The only source of facts about you: nothing that isn't here is ever claimed."), field("Signature", signature),
         append(el("div"), el("strong", "", "Kinds of work"), append(el("div", "check-list"), ...modes.map(box => box.wrap))),
         append(el("div", "form-grid"), field("Must mention", wantedWords), field("Skip jobs that mention", avoidWords)),
         append(el("div"), el("strong", "", "Job boards"), append(el("div", "check-list"), ...boards.map(box => box.wrap))),
-        append(el("div", "form-grid"), field("Sending", mode), field("Follow up after (days, 0 for none)", days)), on.wrap,
+        append(el("div", "form-grid"), field("Sending", mode), field("Follow up after (days, 0 for none)", days)), jobWindow.node, on.wrap,
         hint("No daily number in Cerebra: Gmail's own limit applies (about 500 a day on a personal Gmail, 2,000 on Google Workspace). When Gmail refuses, sending waits for the next day."),
         actionsRow(save, button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/jobs/run", {}, "POST", 900000)).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/jobs", {cv: cv.value, signature: signature.value, wanted: wantedWords.value, avoid: avoidWords.value, follow_up_days: Number(days.value || 0),
           mode: mode.value, enabled: on.control.checked, work_modes: modes.filter(box => box.control.checked).map(box => box.control.value),
-          sources: boards.filter(box => box.control.checked).map(box => box.control.value)}, "PUT");
+          sources: boards.filter(box => box.control.checked).map(box => box.control.value), ...jobWindow.values()}, "PUT");
         toast(on.control.checked ? "Saved. Job applications are on." : "Saved."); render();
       });
       // 2. the jobs

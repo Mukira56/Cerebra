@@ -26,3 +26,17 @@ def secret_store(monkeypatch):
     if os.name != "nt":
         monkeypatch.setattr(vault, "_store", MemoryStore())
     yield
+
+
+@pytest.fixture(autouse=True)
+def office_hours(monkeypatch, request):
+    """Automatic sending waits for business hours (ai_hq/sendwindow.py). Tests run at any hour, so the window is open
+    unless a test is about the window itself (marked with @pytest.mark.real_send_window)."""
+    if request.node.get_closest_marker("real_send_window") is None:
+        from ai_hq import sendwindow
+        monkeypatch.setattr(sendwindow, "closed", lambda value, now=None: "")
+    yield
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_send_window: use the real business-hours check")

@@ -148,8 +148,9 @@ SHORT = 3  # a role word this short must be the whole name (hi@, bd@, hr@), or i
 
 
 def settings(session):
+    from . import sendwindow
     row = session.get(Metadata, KEY)
-    return {**DEFAULTS, **(row.value if row else {})}
+    return {**DEFAULTS, **sendwindow.DEFAULT, **(row.value if row else {})}
 
 
 def check_template(subject, body, follow_up=""):
@@ -206,6 +207,8 @@ def save_settings(session, changes):
         if not isinstance(changes["personalize"], bool):
             raise ValueError("Tailoring each email must be on or off")
         value["personalize"] = changes["personalize"]
+    from . import sendwindow
+    sendwindow.validate(changes, value)
     problems = check_template(value["subject"], value["body"], value["follow_up"]) if value["subject"] or value["body"] else []
     if value["big_subject"] or value["big_body"]:
         problems += [f"Big tech pitch: {item}" for item in check_template(value["big_subject"], value["big_body"])]
@@ -1057,6 +1060,10 @@ class Partners:
             if room <= 0:
                 return {**self._note("Today's pitches are sent; more tomorrow."), "replies": replies}
             sending = rules["enabled"] and rules["mode"] == "send"  # switched off, or "only when I press Send": nothing goes on its own
+            from . import sendwindow
+            waiting_for_hours = sendwindow.closed(rules, self.clock() if callable(getattr(self, "clock", None)) else None) if sending else ""
+            if waiting_for_hours:
+                return {**self._note(f"{waiting_for_hours} Replies are read and drafts written meanwhile."), "sent": 0, "replies": replies}
             sent = self.follow_ups(room) if sending else 0
             skipped = []
             if sending and sent < room:
