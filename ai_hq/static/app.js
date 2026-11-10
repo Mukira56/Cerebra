@@ -738,7 +738,7 @@
         open.href = "#tasks"; open.addEventListener("click", () => { taskProjectFilter = item.id; });
         name.append(open);
         return append(el("tr"), name, cell(item.approvals, "attention"), cell(item.working), cell(item.queued), cell(item.stuck, "attention"),
-          cell(item.done), cell(item.failed, "attention"), el("td", "", item.tokens ? tokens(item.tokens) : "—"), el("td", "row-meta", relative(item.last_activity)));
+          cell(item.done), cell(item.failed, "attention"), el("td", "", item.tokens ? tokens(item.tokens) : "—"), el("td", "muted", relative(item.last_activity)));
       });
       holder.replaceChildren(panel("All projects at a glance", body(
         hint(`${t.working} working, ${t.approvals} ${t.approvals === 1 ? "approval" : "approvals"} waiting for you, ${t.done} done and ${t.failed} failed across ${summary.projects.length} projects.`),
