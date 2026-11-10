@@ -109,7 +109,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - Subscription balances are not shown, because Claude and Codex don't report them. Cerebra notices when a plan runs out and waits.
 
 **Remaining**
-- Retrieve only the files that matter when context is needed.
+- ~~Retrieve only the files that matter when context is needed~~ Done after 0.74.36: the Prompt Architect's outline names up to 12 files whose names match the request (camelCase and snake_case split, a source before its test), and the spec points the engineer at them. Only names are read, never contents; hidden, dependency and build folders and anything that may hold a secret are left out.
 - ~~Cache repeated questions~~ Done after 0.74.35: an exact repeat of a research, checking, sorting or large-document question within 24 hours gets the saved answer instead of another call against a free allowance (`answer_cache`, keyed by a SHA-256 of kind, model and prompt; the prompt isn't stored). Writing, plans, specs and code questions are never cached, and the Models page's Test button always asks for real.
 - ~~Show cost per task and per project~~ Done after 0.74.35: every coding run records the tokens and list-price equivalent its provider reported (Claude's result event, Codex's turn events; nothing estimated). Each task report shows "What it used", and Model intelligence has "Use per project" from one grouped query.
 - ~~Continue non-coding work while Claude is used up~~ Done in 0.74.35: a writing turn routed to the owner's Claude account moves to a free model when Claude's plan is used up, and only then. Coding tasks still wait for Claude.
@@ -170,6 +170,6 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 **Also fixed in 0.74.35:** three invisible control characters in Company pitches' page finder (since it was added) kept translator, interpreter and "become a…" pages from being recognised. A source check (`tests/test_source_hygiene.py`) now fails on any control character.
 
-**Next priority:** Phase 5's last item, sending only the files that matter as context. Then Phase 9's evaluation sets and regression alerts.
+**Next priority:** Phase 9's evaluation sets and regression alerts. Then Phase 10's cross-project priorities.
 
 **Previous priority:** Phase 3, measuring downstream success. Record when a task started from an architect spec, then compare completion and first-review pass rates per architect model in Model intelligence.

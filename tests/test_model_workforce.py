@@ -287,3 +287,17 @@ def test_every_project_at_a_glance(client, tmp_path):  # noqa: F811
     assert first["name"] == "Busy" and first["waiting"] == 1 and first["approvals"] >= 1 and first["failed"] == 1 and first["tokens"] == 400
     assert second["name"] == "Quiet" and second["done"] == 1 and second["tasks"] == 1
     assert summary["totals"]["tasks"] == 3 and summary["totals"]["failed"] == 1
+
+
+def test_the_architect_points_at_the_files_whose_names_match_the_request(tmp_path):
+    root = tmp_path / "shop"
+    for name in ["src/cart/CartPage.tsx", "src/cart/cartTotals.ts", "src/checkout/payment.ts", "src/blog/posts.ts", "tests/test_cart_totals.py",
+                 "node_modules/cart/index.js", ".git/cart", "config/cart_secret.json", ".env", "README.md"]:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("private contents", encoding="utf-8")
+    found = architect.relevant_files(root, "Fix the cart totals when a coupon is added")
+    assert found[:2] == ["src/cart/cartTotals.ts", "tests/test_cart_totals.py"] and "src/cart/CartPage.tsx" in found
+    assert not any(part in item for item in found for part in ("node_modules", ".git", "secret", ".env", "blog", "payment"))
+    shown = architect.outline({"name": "Shop", "path": str(root)}, "Fix the cart totals")
+    assert "likely_relevant_files" in shown and "private contents" not in shown
+    assert "likely_relevant_files" not in architect.outline({"name": "Shop", "path": str(root)}) and architect.relevant_files(tmp_path / "missing", "cart") == []
