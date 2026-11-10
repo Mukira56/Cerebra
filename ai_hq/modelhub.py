@@ -30,21 +30,23 @@ API = "https://openrouter.ai/api/v1"
 KEY = "model_hub"
 CATALOG_TTL = 6 * 3600
 # A route is "account:claude" or "account:codex" (the owner's own subscriptions, as before) or a free OpenRouter model.
-ACCOUNTS = {"account:claude": "Your Claude account", "account:codex": "Your Codex account"}
+ACCOUNTS = {"account:claude": "Your Claude account", "account:codex": "Your Codex account",
+            "account:gemini": "Your Google account (Gemini)", "account:qwen": "Your Qwen account (Qwen Code)"}
+SIGNED_IN = {"account:gemini": "gemini", "account:qwen": "qwen"}  # models the owner signs in to, run read-only (signin_models.py)
 # Kinds of work, with the default for each: the owner's Claude account where quality matters most (it's already paid for),
 # free models for volume and for checking. Checkers come from other companies than the writer, so they don't share its blind spots.
 CATEGORIES = {
     "writing": ("Writing in your name", "Proposals, emails to businesses, profiles, posts", "account:claude"),
     "judgment": ("Plans and judgment", "The Chief of Staff's plans, funding answers, final research reports", "account:claude"),
-    "bulk": ("High-volume work", "Sorting, summarising, extracting, first drafts", "nvidia/nemotron-3-ultra-550b-a55b:free"),
-    "research": ("Research", "The hive's researchers, reading pages Cerebra fetched", "thinkingmachines/inkling:free"),
-    "coding": ("Code questions", "Explaining and reviewing code outside a task", "poolside/laguna-s-2.1:free"),
-    "verify": ("Checking", "Cross-checking claims against their sources", "google/gemma-4-31b-it:free"),
-    "verify_second": ("Second check", "Another company's model, for disputed claims", "nvidia/nemotron-3.5-super-vl:free"),
+    "bulk": ("High-volume work", "Sorting, summarising, extracting, first drafts", "account:gemini"),
+    "research": ("Research", "The hive's researchers, reading pages Cerebra fetched", "account:gemini"),
+    "coding": ("Code questions", "Explaining and reviewing code outside a task", "account:qwen"),
+    "verify": ("Checking", "Cross-checking claims against their sources", "account:gemini"),
+    "verify_second": ("Second check", "Another company's model, for disputed claims", "account:qwen"),
     "architect": ("Prompt Architect", "Turns your request into a clear spec for Claude: goal, requirements, acceptance criteria, open questions",
-                  "openrouter/free"),
-    "reasoning": ("Reasoning and maths", "Algorithms, tricky bugs, alternative approaches (a free DeepSeek model suits this)", "openrouter/free"),
-    "long_context": ("Large documents", "Long files and documentation read and compared (a free Gemini model suits this)", "openrouter/free"),
+                  "account:gemini"),
+    "reasoning": ("Reasoning and maths", "Algorithms, tricky bugs, alternative approaches", "account:qwen"),
+    "long_context": ("Large documents", "Long files and documentation read and compared (Gemini reads very long documents)", "account:gemini"),
 }
 # Measured performance: a model needs this many calls in a kind of work before its numbers count, and must beat the
 # current choice by this many points of success rate before performance-based routing switches to it.
@@ -341,6 +343,10 @@ class Hub:
             key = vault.unprotect(value["api_key"]) if value["api_key"] else ""
         if limited:
             return AgentResult(False, "", error=limited)
+        if model in SIGNED_IN:
+            return self.chat_signed_in(category, model, prompt)
+        if model in ACCOUNTS:
+            return AgentResult(False, "", error="This kind of work uses your Claude or Codex account directly, not the free-model hub")
         if model.startswith(LOCAL):
             return self.chat_local(category, model, prompt, max_tokens)
         if not key:
@@ -374,6 +380,16 @@ class Hub:
             return AgentResult(False, "", error=f"{used} returned no answer")
         return AgentResult(True, text)
 
+    def chat_signed_in(self, category, route, prompt, workdir=None):
+        """One read-only turn with a model the owner signed in to (Gemini, Qwen), measured like every other call."""
+        from . import signin_models
+        allowed = self.allow_signed_in() if callable(getattr(self, "allow_signed_in", None)) else True
+        started = time.monotonic()
+        result = signin_models.chat(SIGNED_IN[route], prompt, workdir or getattr(self, "workdir", "."), allowed=allowed,
+                                    runner=getattr(self, "runner", None))
+        self._record(category, route, {}, 0.0, bool(result.success), time.monotonic() - started)
+        return result
+
     def _record(self, category, model, usage, cost, ok, seconds):
         with self.db.Session.begin() as session:
             session.add(ModelUsage(category=category, model=model, prompt_tokens=int(usage.get("prompt_tokens") or 0),
@@ -384,6 +400,17 @@ def chat_for(hub, category, registry_source, selected, prompt, workdir):
     """What every writer calls. The route for this kind of work decides: the owner's Claude or Codex account, or a free
     model through the hub. Without the hub (no key), it is the owner's chosen account, as before."""
     route = hub.route(category) if hub is not None and category in CATEGORIES else ""
+    if route in SIGNED_IN:
+        with hub.db.Session() as session:
+            limited = over_limit(session, category)
+        if limited:
+            return AgentResult(False, "", error=limited)
+        result = hub.chat_signed_in(category, route, prompt, workdir)
+        if result.success:
+            return result
+        # Not installed, not signed in, or today's allowance used: the owner's own account does this turn instead.
+        fallback = registry_source().chat(selected["provider"], prompt, str(workdir), selected.get("model", ""))
+        return fallback if fallback.success else AgentResult(False, "", error=f"{result.error} (and {fallback.error})")
     if route in ACCOUNTS:
         with hub.db.Session() as session:
             limited = over_limit(session, category)
@@ -394,6 +421,13 @@ def chat_for(hub, category, registry_source, selected, prompt, workdir):
         started = time.monotonic()
         result = registry_source().chat(provider, prompt, str(workdir), model)
         hub._record(category, route, {}, 0.0, bool(result.success and (result.output or "").strip()), time.monotonic() - started)
+        if not result.success and hub.ready():
+            from .prospects import failure_kind
+            if failure_kind(result.error) == "limit":
+                # The owner's plan is used up for now: this writing turn (never a coding task) goes to a free model instead.
+                spare = hub.chat(category, prompt, model=FALLBACK)
+                if spare.success:
+                    return spare
         return result
     if route.startswith(LOCAL) or (route and hub.ready()):
         return hub.chat(category, prompt)

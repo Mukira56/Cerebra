@@ -121,7 +121,7 @@ class Supervisor:
 
     def propose(self, project_id, objective, assigned_agent=None, dependencies=None,
                 allowed_paths=None, requirements=None, acceptance_criteria=None,
-                implementer=None, reviewer=None, planner=None, origin="user"):
+                implementer=None, reviewer=None, planner=None, origin="user", spec_by=None):
         """Propose a task. Roles name model profiles or "auto"; `assigned_agent` is the older name for implementer."""
         from .profiles import AUTO, default_roles, get_profile
         from . import routing
@@ -171,7 +171,8 @@ class Supervisor:
                 mode="live", allowed_paths=self._allowed(allowed_paths or ["."]),
                 requirements=_clean(requirements or [objective]),
                 acceptance_criteria=_clean(acceptance_criteria or ["Configured verification commands pass", "Independent review has no unresolved defects", "Human approves integration"]),
-                max_retries=-1 if self.settings.max_retries < 0 else min(100, self.settings.max_retries), results={"queued": False, "models": chosen, "routing": routing_record, "origin": origin})
+                max_retries=-1 if self.settings.max_retries < 0 else min(100, self.settings.max_retries), results={"queued": False, "models": chosen, "routing": routing_record, "origin": origin,
+                         **({"architect": {"by": str(spec_by)[:200], "at": now()}} if spec_by else {})})
             session.add(task)
             session.flush()
             self._state(session, task, "PLANNING", "Deterministic supervisor is preparing an execution plan")

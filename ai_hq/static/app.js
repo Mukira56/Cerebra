@@ -349,6 +349,23 @@
     if (!events.length) return body(empty("Your activity starts here", "Task updates and approvals appear here as you use your workspace.", null, "≡"));
     const list = el("div", "trace"); events.slice(0, limit).forEach(event => list.append(append(el("div"), el("time", "", date(event.created_at)), el("span", "k", event.kind), el("span", "", event.message)))); return list;
   }
+  // Tell Cerebra what you want: it works out which workflow that is (rules first, a free model only when they can't tell)
+  // and takes you there with your words filled in. Nothing starts until you confirm it there.
+  function askBox() {
+    const form = el("form", "ask-box"), text = input("Tell Cerebra what you want, e.g. Build a booking website for a cleaning company", ""), go = submitButton("Go");
+    const answer = el("div");
+    text.maxLength = 2000;
+    append(form, append(el("div", "ask-row"), text, go), answer);
+    wireForm(form, go, async () => {
+      const result = await mutate("/api/understand", {text: text.value}, "POST", 120000);
+      const open = button(`Open ${result.label}`, () => {
+        if (result.workflow === "build") { taskForm("", text.value); return; }
+        location.hash = result.page;
+      }, "button primary");
+      answer.replaceChildren(append(el("div", "ask-answer"), append(el("div"), el("strong", "", result.label), el("div", "row-meta", result.why)), el("p", "", result.about), actionsRow(open)));
+    });
+    return form;
+  }
   // The big buttons at the top of Home: the everyday jobs, one click each.
   function homeTiles() {
     const waiting = pendingApprovals().length + finishedTasks().length;
@@ -370,7 +387,7 @@
       tile.setAttribute("aria-label", `${title}: ${note}`);
       box.append(tile);
     });
-    return append(el("section"), el("h2", "home-question", "What would you like to do today?"), box);
+    return append(el("section"), el("h2", "home-question", "What would you like to do today?"), askBox(), box);
   }
   function overview() {
     const node = el("div"), tasks = realTasks(), active = tasks.filter(task => ACTIVE.includes(task.state)), setup = setupChecklist();
@@ -456,10 +473,11 @@
     [planner, implementer, reviewer].forEach(control => { control.addEventListener("change", () => { if (control === implementer && control.value !== "auto" && reviewer.value !== "auto") { const coder = control.value.split(":")[1] || profiles().find(item => item.id === control.value)?.provider; const checker = reviewer.value.split(":")[1] || profiles().find(item => item.id === reviewer.value)?.provider; if (coder && coder === checker) reviewer.value = "auto"; } }); });
     const project_info = el("div"); function describe() { const chosen = projectFor(project.value); project_info.replaceChildren(chosen && !array(chosen.test_commands).length ? hint("This project has no test commands, so Cerebra cannot verify the work. Add them on the Projects page first.", true) : hint(`Tests: ${array(chosen?.test_commands).map(command => command.join(" ")).join("  |  ") || "none"}`)); } project.addEventListener("change", describe); describe();
     append(form, field("Project", project), project_info, field("What do you want?", objective), team, field("Requirements", requirements), field("Acceptance criteria", criteria), field("Files the AI may change", allowed, "Comma-separated paths inside the project. Leave blank for the whole project."), !agentsOn() ? hint("AI agents are switched off. You can create the task now, but it will only run after you switch agents on in Settings.", true) : null);
-    const specNotes = el("div");
+    const specNotes = el("div"); let specBy = "";
     const architect = button("Ask the Prompt Architect", () => act(result => result.by === "template" ? "A short request: filled in from a template, no model needed." : `Spec written by ${result.model}. Check it before creating the plan.`,
       () => mutate("/api/architect", {project_id: project.value, objective: objective.value.trim()}, "POST", 600000)).then(result => {
         if (!result) return;
+        specBy = result.by === "template" ? "template" : String(result.model || "Prompt Architect");
         requirements.value = array(result.requirements).join("\n"); criteria.value = array(result.acceptance_criteria).join("\n");
         const extra = [["Goal", [result.goal]], ["Constraints", result.constraints], ["Steps", result.steps], ["Open questions: decide these before you create the plan", result.open_questions],
           ["Assumptions it made: not added to the requirements", result.assumptions]].filter(([, items]) => array(items).filter(Boolean).length);
@@ -469,7 +487,7 @@
     const submit = submitButton("Create plan"); form.append(actionsRow(button("Cancel", closeDialog, "button ghost"), submit));
     wireForm(form, submit, async () => {
       const lines = value => value.split("\n").map(item => item.trim()).filter(Boolean);
-      const task = await mutate("/api/tasks", {project_id: project.value, description: objective.value.trim(), planner: planner.value, implementer: implementer.value, reviewer: reviewer.value, requirements: lines(requirements.value), acceptance_criteria: lines(criteria.value), dependencies: [], allowed_paths: allowed.value.trim() ? allowed.value.split(",").map(value => value.trim()).filter(Boolean) : ["."]});
+      const task = await mutate("/api/tasks", {...(specBy ? {spec_by: specBy} : {}), project_id: project.value, description: objective.value.trim(), planner: planner.value, implementer: implementer.value, reviewer: reviewer.value, requirements: lines(requirements.value), acceptance_criteria: lines(criteria.value), dependencies: [], allowed_paths: allowed.value.trim() ? allowed.value.split(",").map(value => value.trim()).filter(Boolean) : ["."]});
       closeDialog(); await refresh(true); toast("Plan created. Review and approve it to continue."); taskDetail(task.id);
     });
     showDialog("New task", form);
@@ -1086,6 +1104,16 @@
       append(el("div", "proof-grid"), column("Before the change", proof.before), column("After the change", proof.after)),
       proof.newly_failing.length ? el("p", "row-meta", `Newly failing: ${proof.newly_failing.join(", ")}`) : null);
   }
+  // Your verdict on a finished task: counted per coder model in Model intelligence, next to the test results.
+  function feedbackBox(report) {
+    if (!["COMPLETED", "FAILED", "CANCELLED"].includes(report.state)) return null;
+    const box = el("div", "feedback"), mine = report.feedback;
+    const rate = good => act("Thank you: noted.", () => mutate(`/api/tasks/${encodeURIComponent(param)}/feedback`, {good}, "POST"))
+      .then(result => { if (result) box.replaceChildren(el("p", "", good ? "You rated this result good." : "You rated this result not good.")); });
+    append(box, el("h2", "", "Was this result good?"), mine ? el("p", "", mine.good ? "You rated this result good." : "You rated this result not good.") : null,
+      actionsRow(button("Yes, it was good", () => rate(true), "button"), button("No", () => rate(false), "button ghost")));
+    return box;
+  }
   function reportView() {
     const holder = el("div", "report"), token = renderToken; holder.append(el("div", "loading", "loading report…"));
     async function load() {
@@ -1098,7 +1126,7 @@
       const saved = el("div", "saved"); report.saved.forEach(item => saved.append(append(el("div"), el("strong", "", item.what), el("p", "", item.explain), el("code", "", item.where))));
       append(holder.replaceChildren() || holder, hero, el("h2", "", "What you asked for"), el("div", "asked", report.asked), proofSection(report.evidence), el("h2", "", "Who helped"), helpers, el("h2", "", "What happened, step by step"), story,
         report.changed_files.length ? [el("h2", "", "Files that changed"), list(report.changed_files)] : null,
-        el("h2", "", "Where everything is saved"), saved, el("h2", "", "What happens next"), el("div", "next", report.next));
+        el("h2", "", "Where everything is saved"), saved, el("h2", "", "What happens next"), el("div", "next", report.next), feedbackBox(report));
       if (!["COMPLETED", "FAILED", "CANCELLED"].includes(report.state)) pageTimer = setTimeout(() => { if (token === renderToken) load(); }, 4000);
     }
     load(); return holder;
@@ -1109,6 +1137,11 @@
 
   // ---------- models & sign-in ----------
   // ---------- model intelligence: who does what, how each model measures up, and why tasks were routed ----------
+  function specsTable(specs) {
+    if (!array(specs).length) return hint("No finished tasks yet. Once tasks finish, this compares those that started from a Prompt Architect spec with those that didn't: how often they finished, finished first time, and how many repairs they needed.");
+    return append(el("div", "table-wrap"), append(el("table"), append(el("thead"), append(el("tr"), el("th", "", "Spec written by"), el("th", "", "Finished tasks"), el("th", "", "Completed"), el("th", "", "First time, no repairs"), el("th", "", "Repairs per task"))),
+      append(el("tbody"), ...specs.map(item => append(el("tr"), el("td", "", item.by), el("td", "", String(item.tasks)), el("td", "", `${item.completed_rate}%`), el("td", "", `${item.first_try_rate}%`), el("td", "", String(item.repairs_per_task)))))));
+  }
   function intelligencePanel() {
     const box = el("div"); box.append(el("p", "row-meta", "Loading…"));
     (async () => {
@@ -1135,19 +1168,23 @@
       });
       append(table, head, rows);
       const adaptive = check(`Route by measured performance: switch a kind of work to the model that has clearly done it best (needs ${state.min_calls} calls of evidence; free models only, never your Claude account)`, state.adaptive === true);
+      const signedIn = button("Use my signed-in accounts (no OpenRouter)", () => act("Every kind of work now uses your Claude, Gemini or Qwen account.",
+        () => mutate("/api/models/hub", {routes: Object.fromEntries(array(state.work).map(item => [item.key, item.default]))}, "PUT")).then(() => render()), "button");
       const saveWork = button("Save limits", () => act("Saved.", () => mutate("/api/models/hub", {adaptive: adaptive.control.checked,
         daily_calls: Object.fromEntries(Object.entries(limits).map(([key, control]) => [key, Number(control.value || 0)]))}, "PUT")), "button primary");
       // 3. Coding results per model, and recent routing decisions in plain words.
-      const coding = array(state.coding).length ? append(el("table"), append(el("thead"), append(el("tr"), el("th", "", "Coder"), el("th", "", "Tasks"), el("th", "", "Completed"), el("th", "", "Failed"))),
-        append(el("tbody"), ...state.coding.map(item => append(el("tr"), el("td", "", item.model), el("td", "", String(item.tasks)), el("td", "", String(item.completed)), el("td", "", String(item.failed)))))) : hint("No coding tasks yet.");
+      const coding = array(state.coding).length ? append(el("table"), append(el("thead"), append(el("tr"), el("th", "", "Coder"), el("th", "", "Tasks"), el("th", "", "Completed"), el("th", "", "Failed"), el("th", "", "Your rating"))),
+        append(el("tbody"), ...state.coding.map(item => append(el("tr"), el("td", "", item.model), el("td", "", String(item.tasks)), el("td", "", String(item.completed)), el("td", "", String(item.failed)), el("td", "", item.rated ? `${item.rated_good} of ${item.rated} good` : "Not rated"))))) : hint("No coding tasks yet.");
       const decisions = array(state.decisions).length ? append(el("ul", "tips"), ...state.decisions.slice(0, 8).map(item => el("li", "",
         `${item.task}: ${Object.entries(item.roles).map(([role, pick]) => `${role} ${pick.label}${pick.why ? ` (${pick.why})` : ""}`).join("; ")}`))) : hint("No tasks routed yet.");
       box.replaceChildren(
         el("h4", "", "Lead engineer"), leadForm,
         el("h4", "", "Specialists"), hint("Each kind of work goes to one model: your Claude account, a free model or one on this computer. Choose them under Free models and routes below. Numbers come from real calls: how often a model gave a usable answer, and how fast."),
-        append(el("div", "table-wrap"), table), adaptive.wrap, actionsRow(saveWork),
+        append(el("div", "table-wrap"), table), adaptive.wrap, actionsRow(saveWork, signedIn),
+        hint("Gemini and Qwen run as you, signed in with your own Google and Qwen accounts (install and sign in on this page and Install tools), read-only, within their free daily allowances. When one isn't signed in or has used today's allowance, your Claude account answers instead."),
         state.memory_gb ? hint(`This computer has ${state.memory_gb} GB of memory: local models larger than ${state.local_limit_gb} GB are never loaded, so it stays responsive.`) : null,
         el("h4", "", "Coding results by model"), append(el("div", "table-wrap"), coding),
+        el("h4", "", "Do Prompt Architect specs help?"), specsTable(state.specs),
         el("h4", "", "Why recent tasks went where they did"), decisions, hint(state.subscription_note));
     })();
     return panel("Model intelligence", body(box));

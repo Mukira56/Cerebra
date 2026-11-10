@@ -49,6 +49,8 @@ class TaskCreate(StrictModel):
     acceptance_criteria: list[str] = Field(default_factory=list, max_length=100)
     dependencies: list[str] = Field(default_factory=list, max_length=100)
     allowed_paths: list[str] = Field(default_factory=lambda:["."], min_length=1, max_length=100)
+    # Which model wrote the spec this task started from (the Prompt Architect), or "template"; measured in Model intelligence.
+    spec_by: str | None = Field(default=None, max_length=200)
 
     @field_validator("allowed_paths")
     @classmethod

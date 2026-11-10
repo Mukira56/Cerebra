@@ -39,7 +39,8 @@ class OpenRouter:
 def connect(client, status=200):  # noqa: F811
     site = OpenRouter(status)
     client.app.state.hub.client = httpx.Client(transport=httpx.MockTransport(site))
-    client.put("/api/models/hub", json={"api_key": KEY})
+    client.put("/api/models/hub", json={"api_key": KEY, "routes": {"bulk": "nvidia/nemotron-3-ultra-550b-a55b:free", "verify": "google/gemma-4-31b-it:free",
+                                                                    "research": "openrouter/free"}})  # these tests are about OpenRouter itself
     return site
 
 

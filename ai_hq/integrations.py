@@ -35,8 +35,12 @@ PROVIDERS = {
                 "install": "copilot-cli"},
     "gemini": {"label": "Gemini CLI", "vendor": "Google", "execution": False, "command": "gemini",
                "login": [], "logout": [], "status": [],
-               "models": [], "model_hint": "Gemini CLI can be installed and signed in here. Running it inside Cerebra tasks is not supported yet.",
+               "models": [], "model_hint": "Sign in with your Google account (choose Login with Google in its window). Gemini then researches, reads long documents and checks facts for Cerebra, read-only, within Google's free daily allowance. Coding tasks stay with Claude.",
                "install": "gemini-cli"},
+    "qwen": {"label": "Qwen Code", "vendor": "Alibaba Qwen", "execution": False, "command": "qwen",
+             "login": [], "logout": [], "status": [],
+             "models": [], "model_hint": "Sign in with your Qwen account (choose Qwen OAuth in its window, or type /auth). Qwen then reasons, answers code questions and gives second checks for Cerebra, read-only, within Qwen's free daily allowance. Coding tasks stay with Claude.",
+             "install": "qwen-code"},
 }
 
 # Engineering toolchain. The install command list is fixed here; nothing user-supplied is executed.
@@ -54,7 +58,8 @@ TOOLS = [
     {"id": "codex-cli", "label": "OpenAI Codex CLI", "group": "AI coding agents", "commands": ["codex"], "version": ["--version"], "install": ["npm", "install", "-g", "@openai/codex"], "why": "The Codex coding agent. Needs Node.js."},
     {"id": "claude-code", "label": "Claude Code", "group": "AI coding agents", "commands": ["claude"], "version": ["--version"], "install": ["winget", "install", "--id", "Anthropic.ClaudeCode", "-e"], "why": "The Claude coding agent."},
     {"id": "copilot-cli", "label": "GitHub Copilot CLI", "group": "AI coding agents", "commands": ["copilot"], "version": ["--version"], "install": ["npm", "install", "-g", "@github/copilot"], "why": "GitHub's coding agent. Needs Node.js and a Copilot plan."},
-    {"id": "gemini-cli", "label": "Gemini CLI", "group": "AI coding agents", "commands": ["gemini"], "version": ["--version"], "install": ["npm", "install", "-g", "@google/gemini-cli"], "why": "Google's coding agent. Needs Node.js."},
+    {"id": "gemini-cli", "label": "Gemini CLI", "group": "AI coding agents", "commands": ["gemini"], "version": ["--version"], "install": ["npm", "install", "-g", "@google/gemini-cli"], "why": "Google's Gemini, signed in with your Google account: research, long documents and checking for Cerebra. Needs Node.js."},
+    {"id": "qwen-code", "label": "Qwen Code", "group": "AI coding agents", "commands": ["qwen"], "version": ["--version"], "install": ["npm", "install", "-g", "@qwen-code/qwen-code"], "why": "Alibaba's Qwen, signed in with a free Qwen account: reasoning, code questions and second checks for Cerebra. Needs Node.js."},
     {"id": "ollama", "label": "Ollama", "group": "AI coding agents", "commands": ["ollama"], "version": ["--version"], "install": ["winget", "install", "--id", "Ollama.Ollama", "-e"], "why": "Runs open models on this computer (optional log summaries)."},
 ]
 TOOL_IDS = {tool["id"]: tool for tool in TOOLS}

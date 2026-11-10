@@ -126,8 +126,8 @@ TAGS = re.compile(r"<[^>]+>")
 # Pages worth reading for an address or an application: (pattern over the link and its words, how useful, is it a page that takes applications)
 PAGE_KINDS = (
     (re.compile(r"vendor|supplier|procurement|become[ -]?a[ -]?partner|partner[ -]?with|partnership", re.I), 5, True),
-    (re.compile(r"linguist|translators|interpreters|contributor|annotator|transcriber|freelanc|work[ -]?with[ -]?us|join[ -]?(our|the)?[ -]?(community|team|network)|"
-                r"become[ -]?a|find[ -]?work|apply", re.I), 4, True),
+    (re.compile(r"linguist|translators\b|interpreters\b|contributor|annotator|transcriber|freelanc|work[ -]?with[ -]?us|join[ -]?(our|the)?[ -]?(community|team|network)|"
+                r"become[ -]?a\b|find[ -]?work|apply", re.I), 4, True),
     (re.compile(r"careers?|jobs|opportunit", re.I), 2, True),
     (re.compile(r"contact|get[ -]?in[ -]?touch|talk[ -]?to|reach[ -]?us|enquir|inquir", re.I), 3, False),
     (re.compile(r"about|company|partners?\b", re.I), 1, False),

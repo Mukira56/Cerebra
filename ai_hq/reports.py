@@ -124,4 +124,5 @@ def build(task, project, data_dir):
                  "Wait a little. This page updates by itself.")
     return {"task_id": task.get("id"), "project": project.get("name"), "emoji": emoji, "headline": headline, "meaning": meaning,
             "asked": task.get("description", ""), "helpers": helpers, "steps": steps, "changed_files": changed,
-            "saved": saved, "next": next_step, "state": state, "updated_at": task.get("updated_at"), "evidence": proof}
+            "saved": saved, "next": next_step, "state": state, "updated_at": task.get("updated_at"), "evidence": proof,
+            "feedback": (task.get("results") or {}).get("feedback")}

@@ -341,3 +341,12 @@ def test_no_warm_up_cap_of_cerebra_s_own(client):  # noqa: F811
     client.put("/api/partners", json={"per_day": 500}).raise_for_status()
     with client.app.state.db.Session() as session:
         assert robot.limit(session) == 500  # only Gmail's own limit applies
+
+
+def test_translator_and_join_pages_count_as_application_pages():
+    import re
+    kinds = [(pattern, applies) for pattern, _, applies in partners.PAGE_KINDS if applies]
+    for words in ("Translators", "Become a translator", "Interpreters wanted"):
+        assert any(pattern.search(words) for pattern, _ in kinds), words
+    assert not any(ord(c) < 32 and c not in "\t\r\n" for c in open(partners.__file__, encoding="utf-8").read()), "control characters in partners.py"
+    assert re

@@ -423,7 +423,23 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
                 if dep.project_id != payload.project_id: raise ValueError("Dependencies must belong to the same project")
         values = payload.model_dump()
         values["objective"] = values.pop("description")
+        if not values.get("spec_by"):
+            values.pop("spec_by", None)
         return supervisor.propose(**values)
+
+    @app.post("/api/tasks/{task_id}/feedback")
+    def task_feedback(task_id: str, payload: dict):
+        """The owner's verdict on a finished task's result: good or not, with an optional note. Counted per coder model in
+        Model intelligence, next to the test results."""
+        if not isinstance(payload.get("good"), bool):
+            raise ValueError("Say whether the result was good: yes or no")
+        with db.Session.begin() as session:
+            task = task_or_404(session, task_id)
+            if task.state not in {"COMPLETED", "FAILED", "CANCELLED"}:
+                raise ValueError("Rate a task once it has finished")
+            task.results = {**(task.results or {}), "feedback": {"good": payload["good"], "note": str(payload.get("note") or "")[:500], "at": now()}}
+            session.add(Event(kind="feedback", task_id=task.id, message=f"You rated the result {'good' if payload['good'] else 'not good'}", data={}))
+            return {"feedback": task.results["feedback"]}
 
     @app.get("/api/tasks/{task_id}/checkpoints")
     def task_checkpoints(task_id: str):
@@ -2141,6 +2157,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     # ---- The model hub: free models and the owner's own Claude and Codex accounts, routed by kind of work ----
     from . import modelhub
     hub = modelhub.Hub(db)
+    hub.allow_signed_in = lambda: settings.live_enabled and settings.cli_confinement_accepted
+    hub.workdir = settings.data_dir / "chat-workspace"
     app.state.hub = hub
     for writer in (drafter, prospect_writer, funding_drafter, planner, app.state.pitch_writer, app.state.post_writer, listing_writer, notebook_maker):
         writer.hub = hub
@@ -2183,6 +2201,16 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             value = modelhub.save_settings(session, {key: payload[key] for key in ("api_key", "routes", "enabled", "daily_calls", "adaptive") if key in payload})
             return modelhub.public(value, modelhub.spent_this_month(session))
 
+    @app.post("/api/understand")
+    def understand_request(payload: dict):
+        """Which workflow a plain request belongs to, with the reason; rules first, a free model only when they can't tell."""
+        from . import orchestrator
+        ask = None
+        if hub.ready() or hub.route("bulk").startswith(modelhub.LOCAL) or hub.route("bulk") in modelhub.SIGNED_IN:
+            def ask(prompt):
+                return hub.chat("bulk", prompt, max_tokens=200)
+        return orchestrator.understand(payload.get("text"), ask)
+
     @app.post("/api/architect")
     def prompt_architect(payload: dict):
         """The Prompt Architect's spec for a request: requirements and acceptance criteria for the owner to edit, with the
@@ -2215,22 +2243,40 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         for key, (label, about, default) in modelhub.CATEGORIES.items():
             current = value["routes"].get(key) or default
             better, why = modelhub.recommend(measured, key, current)
-            work.append({"key": key, "label": label, "about": about, "route": current, "in_use": hub.route(key), "measured": measured.get(key, []),
+            work.append({"key": key, "label": label, "about": about, "route": current, "default": default, "in_use": hub.route(key), "measured": measured.get(key, []),
                          "recommended": better, "recommendation": why, "today": today[key], "daily_limit": value["daily_calls"].get(key, 0)})
         coding = {}
         for task in recent:
             models = (task.results or {}).get("models") or {}
             label = (models.get("implementer") or {}).get("label") or task.assigned_agent
-            entry = coding.setdefault(label, {"model": label, "tasks": 0, "completed": 0, "failed": 0})
+            entry = coding.setdefault(label, {"model": label, "tasks": 0, "completed": 0, "failed": 0, "rated_good": 0, "rated": 0})
+            feedback = (task.results or {}).get("feedback") or {}
+            entry["rated"] += "good" in feedback
+            entry["rated_good"] += feedback.get("good") is True
             entry["tasks"] += 1
             entry["completed"] += task.state == "COMPLETED"
             entry["failed"] += task.state == "FAILED"
+        specs = {}
+        for task in recent:
+            if task.state not in {"COMPLETED", "FAILED", "CANCELLED", "REJECTED"}:
+                continue  # only finished tasks count
+            by = ((task.results or {}).get("architect") or {}).get("by") or "No spec"
+            entry = specs.setdefault(by, {"by": by, "tasks": 0, "completed": 0, "first_try": 0, "repairs": 0})
+            entry["tasks"] += 1
+            entry["completed"] += task.state == "COMPLETED"
+            entry["first_try"] += task.state == "COMPLETED" and not task.retry_count
+            entry["repairs"] += task.retry_count or 0
+        for entry in specs.values():
+            entry["completed_rate"] = round(100 * entry["completed"] / entry["tasks"]) if entry["tasks"] else 0
+            entry["first_try_rate"] = round(100 * entry["first_try"] / entry["tasks"]) if entry["tasks"] else 0
+            entry["repairs_per_task"] = round(entry["repairs"] / entry["tasks"], 1) if entry["tasks"] else 0
         decisions = [{"task": task.description[:120], "at": task.created_at,
                       "roles": {role: {"label": (pick or {}).get("label", ""), "why": (pick or {}).get("why", "")}
                                 for role, pick in ((task.results or {}).get("models") or {}).items()},
                       "handoffs": (task.results or {}).get("handoffs", [])} for task in recent[:15]]
         memory = modelhub.memory_bytes()
         return {"work": work, "coding": sorted(coding.values(), key=lambda item: -item["tasks"]), "decisions": decisions, "routing": policy,
+                "specs": sorted(specs.values(), key=lambda item: -item["tasks"]),
                 "adaptive": value["adaptive"], "min_calls": modelhub.MIN_CALLS, "memory_gb": round(memory / 2**30, 1) if memory else None,
                 "local_limit_gb": round(modelhub.LOCAL_SHARE * memory / 2**30, 1) if memory else None,
                 "subscription_note": "Claude and Codex don't tell Cerebra how much of your plan is left, so it isn't shown. Cerebra notices when a plan runs out and waits for it."}

@@ -45,8 +45,17 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - The live free list comes from OpenRouter itself. A priced model is refused.
 - Local Ollama models are listed with their sizes. A model larger than 60% of the computer's memory is never loaded (`memory_bytes`, `too_big`).
 
+**Done in 0.74.35: signed-in accounts** (`ai_hq/signin_models.py`), at the owner's request ("like i signed in to chatgpt and claude… i dont want to use that openrouter thing").
+- Gemini CLI uses the owner's Google account and its free daily allowance. Qwen Code uses a free Qwen account.
+- Each runs headless (`-p`) with JSON output, in plan (read-only) approval mode, in Cerebra's empty chat folder.
+- Both are installed from Install tools and signed in in their own window, like Claude and Codex.
+- They are the default routes for research, long documents, the Prompt Architect, checking, reasoning and code questions. Claude keeps writing and plans; OpenRouter is optional.
+- If a tool isn't installed, isn't signed in, or has used its allowance, the owner's Claude account answers that turn.
+- The Gemini CLI on the owner's computer (0.67.0) was found and its flags confirmed from `gemini --help`. A live answer is checked by the owner pressing Test on the Models page, because Cerebra's tests never call real accounts.
+- DeepSeek has no sign-in tool, only a paid API, so it isn't offered (except small local models through Ollama).
+
 **Remaining**
-- A direct Gemini API adapter for Google AI Studio's free tier. It needs the owner's key, and the free-tier terms must be checked first.
+- Show the Gemini and Qwen sign-in status without a test call; neither tool has a status command.
 - A health check per provider on the Models page. Today one test call per kind of work exists.
 - Capability profiles from provider metadata, such as context length and tool support. Context length is read for OpenRouter models but not yet shown.
 
@@ -63,8 +72,11 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - Short, plain requests use a template with no model call. Building work always goes to the architect.
 - Answers are validated; an unusable spec is refused.
 
+**Done in 0.74.35**
+- Each task records which model wrote its spec, or "template".
+- Model intelligence compares finished tasks with and without a spec: share completed, share completed first time with no repairs, and repairs per task. Prompt quality is measured by outcomes, not by how a spec reads.
+
 **Remaining**
-- Measure prompt quality by downstream success: record which tasks started from an architect spec, and compare how many completed against tasks without one.
 - Templates for research, job applications and business tasks. Applications and pitches have their own prompts today.
 - Instructions written for the specific receiving model.
 
@@ -80,8 +92,10 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - Every role's choice carries a plain reason, shown in **Model intelligence** under "Why recent tasks went where they did".
 - **Performance-based routing** is optional and off by default. It only moves free-model routes, never the owner's account choices, and only after 20 calls of evidence and 10 points better.
 
+**Done in 0.74.35:** understanding plain requests (`ai_hq/orchestrator.py`, the box on Home). A request goes to one of 11 workflows by Cerebra's own rules first, with strong phrases such as "find … jobs" outweighing passing mentions. A free model is asked only when the rules can't tell, and its answer must name a listed workflow. The owner gets a suggestion with a reason and opens the workflow; nothing starts from Home.
+
 **Remaining**
-- Model-assisted classification of non-coding requests, to send a request to the right workflow.
+- Splitting a request that spans several workflows into steps across them.
 
 **Tests:** `tests/test_routing_access.py`, `tests/test_model_workforce.py`
 
@@ -98,7 +112,7 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - Retrieve only the files that matter when context is needed.
 - Cache repeated questions.
 - Show cost per task and per project.
-- Continue free-model research while Claude work is queued.
+- ~~Continue non-coding work while Claude is used up~~ Done in 0.74.35: a writing turn routed to the owner's Claude account moves to a free model when Claude's plan is used up, and only then. Coding tasks still wait for Claude.
 
 ## Phase 6: Software development workflow
 
@@ -134,9 +148,10 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 - Coding results per coder model: tasks, completed, failed.
 - Recommendations require enough evidence.
 
+**Done in 0.74.35:** "Was this result good?" on every finished task's report. Ratings are counted per coder model in Model intelligence, next to the test results.
+
 **Remaining**
 - Repeatable evaluation sets.
-- Owner feedback on finished work.
 - Regression alerts.
 
 ## Phase 10: Multi-project management
@@ -149,4 +164,8 @@ A phase is **Completed** only when its tests pass and the behaviour has been che
 
 ---
 
-**Next priority:** Phase 3, measuring downstream success. Record when a task started from an architect spec, then compare completion and first-review pass rates per architect model in Model intelligence.
+**Also fixed in 0.74.35:** three invisible control characters in Company pitches' page finder (since it was added) kept translator, interpreter and "become a…" pages from being recognised. A source check (`tests/test_source_hygiene.py`) now fails on any control character.
+
+**Next priority:** Phase 5, the remaining resource work: sending only the files that matter as context, caching repeated questions, and cost per task. Then Phase 10's consolidated project dashboard.
+
+**Previous priority:** Phase 3, measuring downstream success. Record when a task started from an architect spec, then compare completion and first-review pass rates per architect model in Model intelligence.

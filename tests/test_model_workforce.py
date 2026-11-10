@@ -139,12 +139,69 @@ def test_a_local_model_too_big_for_this_computer_is_never_loaded(client, monkeyp
     assert not refused.success and "won't load it" in refused.error
 
 
-def test_new_specialist_kinds_of_work_default_to_free_routes():
-    for key in ("architect", "reasoning", "long_context"):
-        assert modelhub.CATEGORIES[key][2] == "openrouter/free"  # free by default: never a paid service, never the Codex account
+def test_defaults_are_the_owners_signed_in_accounts_never_openrouter_or_codex():
+    defaults = {key: model for key, (_, _, model) in modelhub.CATEGORIES.items()}
+    assert defaults["writing"] == defaults["judgment"] == "account:claude"
+    assert defaults["research"] == defaults["long_context"] == defaults["architect"] == "account:gemini"
+    assert defaults["reasoning"] == defaults["verify_second"] == "account:qwen"
+    assert all(model in modelhub.ACCOUNTS and model != "account:codex" for model in defaults.values())
     assert datetime.now(timezone.utc)
 
 
 def test_choosing_claude_to_review_makes_codex_the_coder():
     chosen = routing.route(routing.assess("Add a feature"), fixed={"reviewer": {"provider": "claude", "model": "opus", "label": "Claude Opus"}})
     assert chosen["implementer"]["provider"] == "codex" and "You chose Claude to review" in chosen["implementer"]["why"]
+
+
+def test_tasks_remember_their_spec_and_outcomes_are_compared(client, tmp_path):  # noqa: F811
+    from test_routing_access import calculator
+    from test_product_api import enable_agents
+    from ai_hq.models import Task
+    enable_agents(client)
+    repo = calculator(tmp_path / "calc")
+    project = client.post("/api/projects", json={"name": "Calc", "path": str(repo), "authorize": True, "test_commands": [["python", "-c", "pass"]]}).json()
+    with_spec = client.post("/api/tasks", json={"project_id": project["id"], "description": "Fix calculator addition", "spec_by": "google/gemma-4-31b-it:free"}).json()
+    without = client.post("/api/tasks", json={"project_id": project["id"], "description": "Fix calculator subtraction"}).json()
+    assert with_spec["results"]["architect"]["by"] == "google/gemma-4-31b-it:free" and "architect" not in without["results"]
+    with client.app.state.db.Session.begin() as session:
+        session.get(Task, with_spec["id"]).state = "COMPLETED"
+        failed = session.get(Task, without["id"])
+        failed.state, failed.retry_count = "FAILED", 3
+    specs = {item["by"]: item for item in client.get("/api/models/intelligence").json()["specs"]}
+    assert specs["google/gemma-4-31b-it:free"]["completed_rate"] == 100 and specs["google/gemma-4-31b-it:free"]["first_try_rate"] == 100
+    assert specs["No spec"]["completed_rate"] == 0 and specs["No spec"]["repairs_per_task"] == 3
+
+
+def test_writing_carries_on_with_a_free_model_when_claude_s_plan_is_used_up(client):  # noqa: F811
+    site = connect(client)
+    hub = client.app.state.hub
+
+    class UsedUp:
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            return AgentResult(False, "", error="You've hit your usage limit. Try again later.")
+    result = modelhub.chat_for(hub, "writing", lambda: UsedUp(), {"provider": "claude"}, "Write the email", "/tmp")
+    assert result.success and result.output == "ready" and site.bodies[-1]["model"] == "openrouter/free"
+
+    class Broken:
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            return AgentResult(False, "", error="The prompt was refused")
+    assert not modelhub.chat_for(hub, "writing", lambda: Broken(), {"provider": "claude"}, "Write it", "/tmp").success  # only a used-up plan moves
+
+
+def test_the_owner_rates_finished_work_and_it_counts_per_coder(client, tmp_path):  # noqa: F811
+    from test_routing_access import calculator
+    from test_product_api import enable_agents
+    from ai_hq.models import Task
+    enable_agents(client)
+    repo = calculator(tmp_path / "calc")
+    project = client.post("/api/projects", json={"name": "Calc", "path": str(repo), "authorize": True, "test_commands": [["python", "-c", "pass"]]}).json()
+    task = client.post("/api/tasks", json={"project_id": project["id"], "description": "Fix calculator addition"}).json()
+    early = client.post(f"/api/tasks/{task['id']}/feedback", json={"good": True})
+    assert early.status_code == 400 and "once it has finished" in early.json()["detail"]
+    with client.app.state.db.Session.begin() as session:
+        session.get(Task, task["id"]).state = "COMPLETED"
+    assert client.post(f"/api/tasks/{task['id']}/feedback", json={"good": True, "note": "Works"}).json()["feedback"]["good"] is True
+    assert client.get(f"/api/reports/{task['id']}").json()["feedback"]["note"] == "Works"
+    coder = client.get("/api/models/intelligence").json()["coding"][0]
+    assert coder["rated"] == 1 and coder["rated_good"] == 1
+    assert client.post(f"/api/tasks/{task['id']}/feedback", json={"good": "yes"}).status_code == 400

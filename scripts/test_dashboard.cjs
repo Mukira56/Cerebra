@@ -19,6 +19,10 @@ const path = require('node:path');
     // The simple menu shows the everyday pages; the rest are one click away.
     assert.equal(await page.locator('[data-page="projects"]').isVisible(), false, 'Coding pages wait behind Show all pages');
     await page.getByText('What would you like to do today?', {exact: true}).waitFor();
+    await page.locator('.ask-box input').fill('Find software engineering jobs I qualify for');
+    await page.locator('.ask-box').getByRole('button', {name: 'Go'}).click();
+    await page.locator('.ask-answer strong', {hasText: 'Apply for jobs'}).waitFor();
+    assert.ok(await page.getByRole('button', {name: 'Open Apply for jobs'}).count() === 1, 'Home understands a plain request and offers the right workflow');
     assert.equal(await page.locator('.home-tile').count(), 9, 'Home has a shortcut for each everyday job');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light', 'Light colours by default');
     assert.equal(await page.locator('[data-comfort]').count(), 0, 'Text size and colours are in Settings, not the menu');
@@ -94,6 +98,7 @@ const path = require('node:path');
     await page.locator('#page-content .row', {hasText: 'booking calendar'}).click();
     await page.getByText('What you asked for', {exact: true}).waitFor();
     await page.getByText('Where everything is saved', {exact: true}).waitFor();
+    assert.ok(await page.getByText('Was this result good?', {exact: true}).count() === 0, 'Only a finished task can be rated');
     assert.ok(await page.getByText('Claude Code (opus) checked the code.', {exact: true}).count());
     await shot('report');
 
