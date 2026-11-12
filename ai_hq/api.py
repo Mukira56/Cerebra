@@ -65,6 +65,8 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     from .council import CouncilService
     council = CouncilService(db, settings, chat_registry)
     council.recover()
+    from .research_lab import ResearchLabService
+    research = ResearchLabService(db, settings, chat_registry)
     from .work import WorkService
     work = WorkService(db, supervisor)
     from . import autofix as autofix_module
@@ -117,6 +119,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             finder.start()
             publisher.start()
             scheduler.start()
+            research.resume_all()  # business research labs carry on after a restart
             app.state.remote.start()  # Cerebra from the owner's phone (Telegram), when their bot is set up
         yield
         app.state.backups.stop()
@@ -127,6 +130,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         finder.stop()
         autofix.stop()
         viewer.stop_all()
+        research.pause_all()  # running labs carry on when Cerebra starts again
         supervisor.shutdown()
         notifier.stop()
         commerce.close()
@@ -1088,6 +1092,40 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.post("/api/council/{session_id}/stop")
     def council_stop(session_id: str): return council.stop(session_id)
+
+    # ---- business research lab: two models research and improve business ideas for as long as the owner lets them ----
+    app.state.research = research
+    research.on_report = lambda lab_id, text: notifier.send("Research lab", text)
+
+    @app.get("/api/research")
+    def research_list(): return research.list()
+
+    @app.post("/api/research", status_code=201)
+    def research_start(payload: dict):
+        return research.start(payload.get("goal") or "", payload.get("first") or "claude", payload.get("second") or "codex", payload.get("pace", 60))
+
+    @app.get("/api/research/{lab_id}")
+    def research_get(lab_id: str): return chat_or_404(research.get, lab_id)
+
+    @app.get("/api/research/{lab_id}/notes")
+    def research_notes(lab_id: str, q: str = "", kind: str = "", limit: int = 100): return research.notes(lab_id, q, kind, limit)
+
+    @app.post("/api/research/{lab_id}/say")
+    def research_say(lab_id: str, payload: dict): return chat_or_404(research.say, lab_id, payload.get("text"))
+
+    @app.post("/api/research/{lab_id}/stop")
+    def research_stop(lab_id: str): return chat_or_404(research.stop, lab_id)
+
+    @app.post("/api/research/{lab_id}/resume")
+    def research_resume(lab_id: str): return chat_or_404(research.resume, lab_id)
+
+    @app.put("/api/research/{lab_id}")
+    def research_pace(lab_id: str, payload: dict): return chat_or_404(research.set_pace, lab_id, payload.get("pace", 60))
+
+    @app.delete("/api/research/{lab_id}")
+    def research_delete(lab_id: str):
+        chat_or_404(research.delete, lab_id)
+        return {"deleted": True}
 
     @app.delete("/api/council/{session_id}")
     def council_delete(session_id: str):

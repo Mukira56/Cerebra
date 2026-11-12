@@ -14,6 +14,7 @@
     setup: ["WORKSPACE", "Get set up", "Choose what you want Cerebra to do, then connect only what that needs, one step at a time."],
     chat: ["WORKSPACE", "Ask for help", "Ask about a project or task, or have Cerebra plan, create and start the work."],
     council: ["BUILD", "AI discussion", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
+    lab: ["BUILD", "Research lab", "Claude and Codex research business ideas for real US and European customers, attack each other's ideas and keep improving them for as long as you let them."],
     marketing: ["OUTREACH", "Social media posts", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Goals & helpers", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
     prospects: ["OUTREACH", "Local customers", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
@@ -102,7 +103,7 @@
     gear: [["circle", 8, 8, 2.2], ["path", "M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"]],
   };
   const PAGE_ICON = {overview: "home", approvals: "check", chat: "help", chief: "target", partners: "mail", jobs: "idcard", freelance: "search", money: "money", books: "book",
-    etsy: "shop", prospects: "pin", marketing: "megaphone", funding: "grant", business: "briefcase", tasks: "code", projects: "folder", council: "chat",
+    etsy: "shop", prospects: "pin", marketing: "megaphone", funding: "grant", business: "briefcase", tasks: "code", projects: "folder", council: "chat", lab: "search",
     reports: "report", activity: "clock", system: "pulse", connections: "link", models: "chip", github: "branch", toolchain: "tool", settings: "gear"};
   function icon(name) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -261,7 +262,7 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, setup: setupView, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, jobs: jobsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, setup: setupView, council: councilView, lab: labView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, jobs: jobsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
     if (setupGuide && page !== "setup" && page === setupGuide.page) {
@@ -980,6 +981,155 @@
     const conversation = await act(null, () => mutate("/api/chats", {profile, project_id: projectId || null}));
     if (conversation) { chatId = conversation.id; cache.chats = null; if (page === "chat") render(); else location.hash = "chat"; }
   }
+  // ---------- business research lab: two models research and improve business ideas for as long as you let them ----------
+  let labId = "", labPoll = 0, labShown = "", labDraft = "", labSearch = "", labKind = "";
+  const labOpen = new Set();
+  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", customer: "tests as the customer", synthesis: "judges and re-scores", owner: "your note"};
+  const LAB_FIELDS = [["customer", "Customer"], ["problem", "Problem"], ["offer", "Offer"], ["price", "Price"], ["revenue_math", "Revenue math"], ["channel", "How buyers find it"],
+    ["sells_itself", "Why it sells itself"], ["evidence", "Evidence"], ["risks", "Risks"], ["first_step", "First step"]];
+  const LAB_SCORES = [["pain", "Pain"], ["willingness_to_pay", "Will pay"], ["sells_itself", "Sells itself"], ["reach", "Reach"], ["speed_to_cash", "Speed to cash"],
+    ["defensibility", "Defensible"], ["evidence", "Evidence"], ["legal_safety", "Legal safety"]];
+  const LAB_TRACK = {big: "Millions track", floor: "$4,000+ a month track"};
+  const LAB_GOAL = "Find business ideas that real customers in the United States (then Europe) will pay for because they make a person's, a company's, an organization's or a government's work clearly faster, cheaper or easier, so the product markets itself. Keep two tracks: one idea that can grow to millions of dollars a year, and one that can reach at least $4,000 a month soon. Look everywhere: software, services, AI automation, gaps in markets, new regulations and deadlines, platform changes, public data nobody packages, slow incumbents, and tools for investors, traders or crypto users. Think like the customer: would they pay for it this month?";
+  const labWho = provider => ({claude: "Claude", codex: "Codex", owner: "You"})[provider] || nice(provider || "model");
+  function labView() {
+    const root = el("div", "lab"), token = renderToken;
+    async function load(poll = false) {
+      clearTimeout(labPoll);
+      let labs = [];
+      try { labs = await api("/api/research"); } catch (issue) { if (!poll) toast(issue.message, true); }
+      if (token !== renderToken || page !== "lab") return;
+      if (!labs.length) { labShown = ""; root.replaceChildren(startPanel(true)); return; }
+      if (!labs.some(item => item.id === labId)) labId = labs[0].id;
+      let state;
+      try { state = await api(`/api/research/${encodeURIComponent(labId)}`); } catch (issue) { if (!poll) root.replaceChildren(body(empty("Lab unavailable", issue.message))); return; }
+      if (token !== renderToken || page !== "lab") return;
+      // Repaint only when something changed: a turn can take minutes, and repainting would close what you have open.
+      const print = JSON.stringify([labs.map(item => [item.id, item.status, item.turn]), state.status, state.turn, state.error, state.next_at, state.now, state.turns.map(turn => [turn.id, turn.status]), state.pace]);
+      if (print !== labShown) { labShown = print; const y = window.scrollY; paint(labs, state); window.scrollTo(window.scrollX, y); }
+      if (state.busy) labPoll = setTimeout(() => load(true), 5000);
+    }
+    function startPanel(first) {
+      const form = el("form"), goal = textarea("What should the lab find?", LAB_GOAL);
+      const models = [["claude", "Claude (your plan's default model)"], ["codex", "Codex · ChatGPT (your plan's default model)"], ...roleChoices().filter(([id]) => id !== "auto")];
+      const lead = select(models, "claude"), second = select(models, "codex"), pace = select(Object.entries({0: "No pause", 60: "1 minute", 300: "5 minutes", 900: "15 minutes", 3600: "1 hour"}), "60");
+      append(form, field("The goal", goal, "Both models read this before every turn. Your notes during the research count even more."),
+        field("Lead researcher (opens, and judges every round)", lead), field("Challenger", second),
+        field("Pause between turns", pace, "Every turn uses your Claude or ChatGPT plan. When a plan runs out, the lab waits and carries on by itself."));
+      const submit = submitButton("Start the research");
+      form.append(actionsRow(first ? null : button("Cancel", () => { labShown = ""; load(); }, "button ghost"), submit));
+      wireForm(form, submit, async () => {
+        const lab = await mutate("/api/research", {goal: goal.value, first: lead.value, second: second.value, pace: Number(pace.value)});
+        labId = lab.id; labShown = ""; toast("The lab started. The lead researcher is searching the web."); load();
+      });
+      const intro = append(el("div", "lab-intro"),
+        el("p", "", "Two AI researchers work on one goal for as long as you let them, days or months. Every round, one researches and proposes, the other attacks with evidence, they test the best ideas as real customers would, and the lead judges and re-scores the board."),
+        el("p", "", "Everything they learn goes into a shared research memory with sources, and every idea keeps all its versions and scores. Each turn must improve on the last. You can add your thoughts at any time."),
+        el("p", "hint", "They only research: nothing is sent, bought or published. They keep to legal, honest businesses and say which licence or rule an idea needs."));
+      return panel(first ? "Business research lab" : "Start another lab", body(intro, form));
+    }
+    function paint(labs, state) {
+      const parts = [], id = encodeURIComponent(state.id), counts = state.counts || {};
+      // Status and controls
+      const status = state.busy && state.status !== "waiting" ? "running" : state.status;
+      const now = state.now ? `${labWho(state.now.provider)} ${LAB_STAGE[state.now.stage] || state.now.stage} (since ${relative(state.now.since)})` : "";
+      const line = el("p", "lab-status", state.status === "waiting" ? `Waiting until ${new Date(state.next_at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}, then it carries on by itself. ${state.error}` :
+        state.status === "stopped" ? "Stopped. Everything learned is kept; press Resume to carry on." : now || "Between turns.");
+      const pace = select(Object.entries(state.paces || {}).map(([key, label]) => [key, `Pause: ${label}`]), String(state.pace));
+      pace.addEventListener("change", () => act(result => result.message, () => mutate(`/api/research/${id}`, {pace: Number(pace.value)}, "PUT")));
+      const picker = labs.length > 1 ? select(labs.map(item => [item.id, `${item.goal.slice(0, 60)}… (${nice(item.status)})`]), state.id) : null;
+      if (picker) picker.addEventListener("change", () => { labId = picker.value; labShown = ""; load(); });
+      const controls = append(el("div", "lab-controls"), picker,
+        state.status === "stopped" ? button("Resume", () => act(result => result.message, () => mutate(`/api/research/${id}/resume`)).then(() => { labShown = ""; load(); }), "button primary")
+          : button("Stop", () => act(result => result.message, () => mutate(`/api/research/${id}/stop`)).then(() => { labShown = ""; load(); }), "button danger"),
+        pace, button("+ New lab", () => root.replaceChildren(startPanel(false)), "button ghost"),
+        state.status === "stopped" && !state.busy ? button("Delete", () => showDialog("Delete this lab?", append(el("div"),
+          el("p", "", `This deletes ${counts.turns || 0} turns, ${counts.notes || 0} research notes and the idea board. It can't be undone.`),
+          actionsRow(button("Cancel", closeDialog, "button ghost"), button("Delete", async () => { closeDialog(); if (await act("Lab deleted.", () => api(`/api/research/${id}`, {method: "DELETE"}))) { labId = ""; labShown = ""; load(); } }, "button danger")))), "button ghost") : null);
+      const stats = append(el("div", "lab-stats"), badge(status, status === "running" ? "blue" : status === "waiting" ? "amber" : "muted"),
+        el("span", "", `${counted(counts.turns || 0, "turn", "turns")} · ${counted(counts.notes || 0, "research note", "research notes")} · ${counted(counts.ideas || 0, "idea", "ideas")} on the board · ${counts.killed || 0} killed`));
+      parts.push(panel("Business research lab", body(stats, line, controls, append(el("details", "lab-goal"), el("summary", "", "The goal"), el("p", "", state.goal)))));
+      // The current leaders, from the latest judging turn
+      const report = state.report || {};
+      const leaders = el("div", "lab-leaders");
+      Object.entries(LAB_TRACK).forEach(([track, title]) => {
+        const lead = report[track], idea = array(state.ideas).find(item => lead && item.name === lead.idea);
+        leaders.append(append(el("div", "lab-leader"), el("small", "", title), el("strong", "", lead ? lead.idea : "Not decided yet"),
+          idea ? el("span", "lab-score", `score ${idea.score} / 100`) : null, lead?.why ? el("p", "", lead.why) : null,
+          array(lead?.plan).length ? append(el("ol"), ...lead.plan.map(step => el("li", "", step))) : null));
+      });
+      parts.push(panel("Current leaders", body(leaders,
+        report.summary ? el("p", "", report.summary) : hint("The lead researcher names a leader for each track at the end of every round (every 4 turns)."),
+        report.confidence ? el("p", "hint", `How sure: ${report.confidence}`) : null, report.turn ? el("small", "", `As judged at turn ${report.turn}, ${relative(report.at)}.`) : null)));
+      // Your thoughts
+      const note = textarea("Add your thoughts: a market to look at, an idea, a doubt, a customer you know… The next turn reads it first and your words decide.", labDraft);
+      note.addEventListener("input", () => { labDraft = note.value; });
+      const send = button("Add to the research", async () => {
+        const result = await act(outcome => outcome.message, () => mutate(`/api/research/${id}/say`, {text: note.value}));
+        if (result) { labDraft = ""; labShown = ""; load(); }
+      }, "button primary");
+      note.addEventListener("keydown", event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) send.click(); });
+      parts.push(panel("Your thoughts", body(append(el("div", "council-composer"), note, send))));
+      // The idea board
+      const board = el("div", "lab-board");
+      Object.entries(LAB_TRACK).forEach(([track, title]) => {
+        const alive = array(state.ideas).filter(item => item.track === track && item.status === "alive");
+        board.append(el("h3", "", `${title} (${alive.length})`));
+        if (!alive.length) board.append(hint("No ideas in this track yet."));
+        alive.forEach(item => board.append(ideaCard(item)));
+      });
+      const killed = array(state.ideas).filter(item => item.status === "killed");
+      if (killed.length) board.append(append(el("details", "lab-killed"), el("summary", "", `Killed ideas (${killed.length})`),
+        ...killed.map(item => append(el("p"), el("strong", "", item.name), document.createTextNode(`: ${item.killed_reason}`)))));
+      parts.push(panel("Idea board", body(board), null, array(state.ideas).length));
+      // The research memory
+      const memory = el("div", "lab-memory"), search = input("Search the research memory"), kind = select([["", "All kinds"], ...["fact", "customer", "competitor", "price", "channel", "regulation", "market", "risk"].map(name => [name, nice(name)])], labKind);
+      search.value = labSearch;
+      let searchTimer = 0;
+      const findNotes = async () => {
+        labSearch = search.value; labKind = kind.value;
+        let notes = []; try { notes = await api(`/api/research/${id}/notes?limit=100&q=${encodeURIComponent(search.value)}&kind=${encodeURIComponent(kind.value)}`); } catch (issue) { memory.replaceChildren(hint(issue.message, true)); return; }
+        memory.replaceChildren(...(notes.length ? notes.map(item => append(el("div", "lab-note"), badge(item.kind, "muted"), el("strong", "", item.title),
+          item.detail ? el("p", "", item.detail) : null,
+          el("small", "", `${item.source ? item.source : "no source"} · ${item.confidence} confidence · turn ${item.turn}, ${labWho(item.by)}`))) : [hint(search.value || kind.value ? "Nothing matches." : "The memory fills as the researchers work.")]));
+      };
+      search.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(findNotes, 300); });
+      kind.addEventListener("change", findNotes);
+      parts.push(panel("Research memory", body(append(el("div", "lab-controls"), search, kind), memory), null, counts.notes || 0));
+      findNotes();
+      // The turns, newest first
+      const turns = el("div", "lab-turns");
+      [...array(state.turns)].reverse().forEach((turn, index) => {
+        if (turn.stage === "owner") { turns.append(append(el("div", "lab-owner"), el("strong", "", "You: "), document.createTextNode(turn.content), el("small", "", ` ${relative(turn.created_at)}`))); return; }
+        const gains = turn.gains || {}, added = [gains.notes ? counted(gains.notes, "note", "notes") : "", gains.new_ideas ? counted(gains.new_ideas, "new idea", "new ideas") : "",
+          gains.improved ? `${gains.improved} improved` : "", gains.killed ? `${gains.killed} killed` : ""].filter(Boolean).join(", ");
+        const open = labOpen.has(turn.id) || (index === 0 && !labOpen.size);
+        const card = append(el("details", `lab-turn ${turn.status}`), el("summary", "", `Turn ${turn.number} · ${labWho(turn.provider)} ${LAB_STAGE[turn.stage] || turn.stage} · ${turn.status === "pending" ? "working…" : turn.status === "failed" ? "couldn't answer" : added || "nothing new"} · ${relative(turn.created_at)}`));
+        card.open = open;
+        card.addEventListener("toggle", () => { if (card.open) labOpen.add(turn.id); else labOpen.delete(turn.id); });
+        card.append(turn.status === "pending" ? append(el("div", "typing"), el("span"), el("span"), el("span")) : turn.status === "failed" ? failureText(turn.error || "No answer.")
+          : markdown(String(turn.content || "").replace(/```cerebra-research[\s\S]*?```/g, "").trim()));
+        turns.append(card);
+      });
+      if (!array(state.turns).length) turns.append(hint("The first turn is starting."));
+      parts.push(panel("Turns (newest first)", body(turns)));
+      root.replaceChildren(...parts);
+    }
+    function ideaCard(item) {
+      const card = append(el("details", "lab-idea"), append(el("summary"), el("strong", "", item.name), el("span", "lab-score", `${item.score} / 100`), el("small", "", ` version ${item.version}`)));
+      card.open = labOpen.has(item.id);
+      card.addEventListener("toggle", () => { if (card.open) labOpen.add(item.id); else labOpen.delete(item.id); });
+      const current = item.current || {};
+      card.append(append(el("dl"), ...LAB_FIELDS.filter(([name]) => current[name]).flatMap(([name, label]) => [el("dt", "", label), el("dd", "", current[name])])),
+        append(el("div", "lab-scores"), ...LAB_SCORES.filter(([name]) => item.scores?.[name]).map(([name, label]) => el("span", `chip${name === "legal_safety" && item.scores[name] < 6 ? " warn" : ""}`, `${label} ${item.scores[name]}/10`))),
+        append(el("details", "lab-history"), el("summary", "", `How it changed (${array(item.history).length})`),
+          append(el("ol"), ...array(item.history).map(step => el("li", "", `Turn ${step.turn}, ${labWho(step.by)} (${step.stage}): score ${step.score}. ${step.change || ""}`)))));
+      return card;
+    }
+    load();
+    return root;
+  }
+
   // ---------- council: a recorded meeting between two models ----------
   function councilView() {
     const root = el("div", "chat council"), side = el("div", "chat-list"), head = el("div", "chat-list-head"), items = el("div", "chat-items"), main = el("div", "chat-main"), token = renderToken;

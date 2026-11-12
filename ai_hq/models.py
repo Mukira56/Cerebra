@@ -326,6 +326,76 @@ class CouncilMessage(Base):
     created_at: Mapped[str] = mapped_column(String, default=now)
     finished_at: Mapped[str] = mapped_column(String, default="")
 
+class ResearchLab(Base):
+    """A long-running business research lab: two models research, attack and improve business ideas turn after turn,
+    keeping everything they learn in a shared memory (research_notes) and a scored idea board (research_ideas)."""
+    __tablename__ = "research_labs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    goal: Mapped[str] = mapped_column(Text)
+    first: Mapped[str] = mapped_column(String, default="claude")  # the lead: opens, and writes every synthesis
+    second: Mapped[str] = mapped_column(String, default="codex")
+    status: Mapped[str] = mapped_column(String, default="running")  # running | waiting | stopped
+    turn: Mapped[int] = mapped_column(Integer, default=0)  # turns finished so far
+    pace: Mapped[int] = mapped_column(Integer, default=60)  # seconds between turns
+    error: Mapped[str] = mapped_column(Text, default="")  # why it is waiting, when it is
+    next_at: Mapped[str] = mapped_column(String, default="")
+    report: Mapped[dict] = mapped_column(JSON, default=dict)  # the latest synthesis: leading idea per track
+    questions: Mapped[list] = mapped_column(JSON, default=list)  # open research questions for the next turns
+    notes_seen: Mapped[list] = mapped_column(JSON, default=list)  # owner notes not yet read by a turn
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
+class ResearchTurn(Base):
+    __tablename__ = "research_turns"
+    __table_args__ = (Index("ix_research_turns_lab_number", "lab_id", "number"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    lab_id: Mapped[str] = mapped_column(ForeignKey("research_labs.id"))
+    number: Mapped[int] = mapped_column(Integer, default=1)
+    stage: Mapped[str] = mapped_column(String, default="scout")  # scout | critic | customer | synthesis | owner
+    gains: Mapped[dict] = mapped_column(JSON, default=dict)  # what the turn added: notes, ideas improved, killed
+    provider: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | done | failed
+    content: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    finished_at: Mapped[str] = mapped_column(String, default="")
+
+class ResearchNote(Base):
+    """One thing the lab learned: a fact with its source, a customer reaction, a competitor, a risk, a rule."""
+    __tablename__ = "research_notes"
+    __table_args__ = (Index("ix_research_notes_lab_kind", "lab_id", "kind"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    lab_id: Mapped[str] = mapped_column(ForeignKey("research_labs.id"))
+    turn: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String, default="fact")
+    title: Mapped[str] = mapped_column(String)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String, default="")
+    confidence: Mapped[str] = mapped_column(String, default="medium")
+    by: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+class ResearchIdea(Base):
+    """A business idea on the lab's board. Every turn may improve it; each version is kept in history."""
+    __tablename__ = "research_ideas"
+    __table_args__ = (Index("ix_research_ideas_lab_score", "lab_id", "score"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    lab_id: Mapped[str] = mapped_column(ForeignKey("research_labs.id"))
+    key: Mapped[str] = mapped_column(String)
+    name: Mapped[str] = mapped_column(String)
+    track: Mapped[str] = mapped_column(String, default="big")  # big (aims at millions) | floor ($4,000+ a month soon)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    current: Mapped[dict] = mapped_column(JSON, default=dict)
+    scores: Mapped[dict] = mapped_column(JSON, default=dict)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default="alive")  # alive | killed
+    killed_reason: Mapped[str] = mapped_column(Text, default="")
+    aliases: Mapped[list] = mapped_column(JSON, default=list)  # earlier names (keys) of a renamed idea
+    history: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class Plan(Base):
     """An executable plan (see work.py). Its items stay the authoritative source for the tasks made from them."""
     __tablename__ = "plans"
