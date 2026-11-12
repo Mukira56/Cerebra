@@ -8,7 +8,6 @@ Exit code 0 = every check passed; 1 = at least one check failed (each problem is
 """
 from __future__ import annotations
 
-from .words import counted
 import json
 import re
 import sys
@@ -49,6 +48,11 @@ class _Html(HTMLParser):
     def handle_data(self, data):
         if self._in_title:
             self.title += data.strip()
+
+
+# This file also runs on its own (python business_check.py): no package imports.
+def counted(number, one, many):
+    return f"{number} {one if int(number) == 1 else many}"
 
 
 def check_svg(path, problems):
