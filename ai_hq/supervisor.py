@@ -41,6 +41,10 @@ def by_priority(tasks, ranks):
 # fault: another provider can take the step over, or the task waits until usage is available again.
 OUT_OF_USAGE = ("rate_limited:", "rate limit", "usage limit", "insufficient_quota", "exceeded your current quota", "credit balance is too low",
                 "out of credits", "limit reached", "too many requests", "authentication_error:", "not logged in", "please log in", "login required")
+# Words a provider uses when its service itself is down or overloaded. Not the task's fault either: the other
+# provider takes the step over at once (auto takeover), so the task keeps going instead of waiting.
+PROVIDER_DOWN = ("overloaded", "service unavailable", "internal server error", "temporarily unavailable", "bad gateway", "gateway timeout",
+                 "server_error", "api_error", "error 529", "error 503", "error 502", "status 529", "status 503", "status 502", "529 ", "upstream connect error")
 USAGE_RETRY_SECONDS = 15 * 60
 OFFLINE_RETRY_SECONDS = 5 * 60
 
@@ -1073,7 +1077,7 @@ class Supervisor:
     @staticmethod
     def _out_of_usage(result):
         text = (result.error or "").lower()  # only the failure message: the work itself may mention billing, quotas, etc.
-        return not result.success and any(marker in text for marker in OUT_OF_USAGE)
+        return not result.success and any(marker in text for marker in OUT_OF_USAGE + PROVIDER_DOWN)
 
     def _usable(self, provider):
         return time.monotonic() >= self._unavailable.get(provider, 0)
@@ -1088,8 +1092,9 @@ class Supervisor:
         if key == "implementer" and failed == "claude":
             from . import routing
             with self.db.Session() as session:
-                if routing.load(session).get("lock_coder", True):
-                    return None  # Claude is the owner's locked coder: the task waits for Claude, or the owner switches it
+                policy = routing.load(session)
+            if not policy.get("auto_takeover", True) and policy.get("lock_coder", True):
+                return None  # the owner turned automatic takeover off and kept Claude as the coder: the task waits for Claude
         with self._lock, self.db.Session.begin() as session:
             stored = self._get(session, task.id)
             models = {name: dict(value) for name, value in (stored.results.get("models") or {}).items()}
@@ -1098,7 +1103,7 @@ class Supervisor:
             tier = models.get(key, {}).get("tier") or "balanced"
             pick = best(catalog(), other, tier if tier in {"frontier", "balanced", "fast"} else "balanced")
             models[key] = {"profile": "failover", "provider": other, "model": pick["model"], "label": pick["label"], "tier": pick.get("tier") or tier,
-                           "why": f"Took over from {failed}, which ran out of usage."}
+                           "why": f"Took over from {failed}, which was out of usage or down."}
             if key == "implementer":
                 stored.assigned_agent = other
                 if models.get("reviewer", {}).get("provider") == other:
@@ -1110,7 +1115,7 @@ class Supervisor:
                 stored.reviewer = other
             handoffs = list(stored.results.get("handoffs", [])) + [{"role": key, "from": failed, "to": other, "at": now(), "reason": redact(reason)[:300]}]
             stored.results = {**stored.results, "models": models, "handoffs": handoffs}
-            self._event(session, task.id, "failover", f"{failed} ran out of usage during the {key} step; {other} ({pick['label']}) takes over and continues from where it stopped",
+            self._event(session, task.id, "failover", f"{failed} was out of usage or down during the {key} step; {other} ({pick['label']}) takes over and continues from where it stopped",
                         {"role": key, "from": failed, "to": other})
         return self.get(task.id)
 

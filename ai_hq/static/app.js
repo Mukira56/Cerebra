@@ -827,7 +827,7 @@
   }
 
   // ---------- chat ----------
-  let chatId = "", chatPoll = 0, councilId = "", councilPoll = 0, councilShown = "";
+  let chatId = "", chatPoll = 0, councilId = "", councilPoll = 0, councilShown = "", councilDraft = "";
   // Re-rendering a live conversation must not move the reader: follow new messages only when already at the bottom.
   // Measure before the old list is replaced (a detached element reports zero sizes), restore after.
   function readingPlace(node) { return node && node.isConnected ? {top: node.scrollTop, atBottom: node.scrollHeight - node.scrollTop - node.clientHeight < 40} : null; }
@@ -910,12 +910,13 @@
       messages.append(hint(`The owner asked: “${state.topic}”` + (state.rounds === 0 ? " · they talk until they both agree" : ` · ${state.rounds} round${state.rounds === 1 ? "" : "s"}`) + (state.send_to_support ? " · the plan goes to Support when they agree" : "")));
       const kinds = {discussion: "", closing: " · closing summary", confirm: " · confirms the list"};
       state.messages.forEach(message => {
-        const row = el("div", `message ${message.speaker === state.second ? "user" : "assistant"}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
+        const mine = message.provider === "owner";
+        const row = el("div", `message ${mine || message.speaker === state.second ? "user" : "assistant"}${mine ? " owner-note" : ""}`), bubble = el("div", `bubble${message.status === "failed" ? " failed" : ""}`), holder = el("div");
         if (message.status === "pending") bubble.append(append(el("div", "typing"), el("span"), el("span"), el("span")), el("small", "", `${nice(message.provider)} is reading the project and replying…`));
         else if (message.status === "failed") bubble.append(failureText(message.error || "No answer."));
         else bubble.append(markdown(message.content.replace(/```cerebra-council[\s\S]*?```/g, "").trim() || "(agreed list below)"));
-        append(holder, bubble, el("div", "message-meta", `${nice(message.provider)}${message.model ? ` · ${message.model}` : ""} · round ${message.round}${kinds[message.kind] || ""} · ${relative(message.created_at)}`));
-        append(row, el("span", "avatar", PROVIDER_ICON[message.provider] || "AI"), holder); messages.append(row);
+        append(holder, bubble, el("div", "message-meta", mine ? `You · ${relative(message.created_at)}` : `${nice(message.provider)}${message.model ? ` · ${message.model}` : ""} · round ${message.round}${kinds[message.kind] || ""} · ${relative(message.created_at)}`));
+        append(row, el("span", "avatar", mine ? "You" : PROVIDER_ICON[message.provider] || "AI"), holder); messages.append(row);
       });
       if (state.error) messages.append(append(hint("", state.status === "failed"), failureText(state.error, "")));
       if (state.handoff_error) messages.append(hint(`Sending the plan to Support failed: ${state.handoff_error}`, true));
@@ -946,6 +947,15 @@
         append(conclusion, el("h2", "", "Tasks that carry it out"), el("p", "row-meta", "Each task runs through the normal steps: your plan approval, tests, the other model's review, and your approval to merge. Full access applies only if you've switched it on."), list);
       }
       if (conclusion) { panes.classList.add("split"); panes.append(conclusion); }
+      // The owner's own words in the discussion: read by both models before their next turn, or a follow-up meeting.
+      const note = textarea(state.busy ? "Add your thoughts: both models read them before their next turn" : "Add your thoughts: a follow-up meeting starts from where this one ended", councilDraft);
+      note.rows = 2; note.addEventListener("input", () => { councilDraft = note.value; });
+      const sendNote = button(state.busy ? "Add to the discussion" : "Continue with my note", async () => {
+        const result = await act(outcome => outcome.message, () => mutate(`/api/council/${encodeURIComponent(councilId)}/say`, {text: note.value}));
+        if (result) { councilDraft = ""; if (result.meeting_id && result.meeting_id !== councilId) { councilId = result.meeting_id; loadList(); } councilShown = ""; openMeeting(); }
+      }, "button primary");
+      note.addEventListener("keydown", event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) sendNote.click(); });
+      parts.push(append(el("div", "council-composer"), note, sendNote));
       main.replaceChildren(...parts);
       keepReading(place, messages); window.scrollTo(window.scrollX, pageY);
       if (conclusion && conclusionPlace) conclusion.scrollTop = conclusionPlace.top;
@@ -1213,10 +1223,10 @@
       const policy = state.routing || {};
       // 1. The lead engineer.
       const lead = select([["claude", "Claude writes the code (Codex reviews)"], ["auto", "Automatic: Codex codes, Claude writes docs and reviews"]], policy.lead_coder || "claude");
-      const lock = check("Keep Claude as the coder: when Claude runs out of usage, the task waits for it instead of moving to another model (you can still switch a task yourself)", policy.lock_coder !== false);
+      const lock = check("When a model is down or out of usage, the other takes over automatically and the task keeps going (off: coding waits for Claude)", policy.auto_takeover !== false);
       const leadForm = el("form"), saveLead = submitButton("Save");
       append(leadForm, field("Who writes the code", lead), lock.wrap, actionsRow(saveLead));
-      wireForm(leadForm, saveLead, async () => { await mutate("/api/routing", {mode: policy.mode || "rules", provider: policy.provider || "claude", model: policy.model || "opus", lead_coder: lead.value, lock_coder: lock.control.checked}, "PUT"); toast("Saved."); await refresh(true); });
+      wireForm(leadForm, saveLead, async () => { await mutate("/api/routing", {mode: policy.mode || "rules", provider: policy.provider || "claude", model: policy.model || "opus", lead_coder: lead.value, auto_takeover: lock.control.checked}, "PUT"); toast("Saved."); await refresh(true); });
       // 2. Each kind of work: who does it, how the models measured, a daily limit.
       const limits = {};
       const table = el("table"), head = el("thead"), rows = el("tbody");

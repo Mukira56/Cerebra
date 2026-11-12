@@ -37,7 +37,7 @@ class MeetingRegistry(FixtureRegistry):
         number = len(self.turns)
         if self.gate is not None:
             self.gate.wait(10)
-        if number == self.fail_on:
+        if number == self.fail_on or (isinstance(self.fail_on, set) and number in self.fail_on):
             return AgentResult(False, "", error="usage limit reached")
         if "closing turn" in prompt:
             return AgentResult(True, f"We agreed on two things.\n```cerebra-council\n{json.dumps(AGREED)}\n```")
@@ -103,12 +103,38 @@ def test_owner_turns_a_proposal_into_a_normal_task_once(client):
     assert client.get(f"/api/council/{meeting['id']}").json()["proposals"][1]["task_id"] == task["id"]
 
 
-def test_a_failed_turn_stops_the_meeting_and_keeps_the_transcript(client):
+def test_when_one_model_cant_answer_the_other_takes_the_turn(client):
     client.app.state.supervisor.registry = MeetingRegistry(fail_on=3)
     state = wait(client, client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan"}).json()["id"])
-    assert state["status"] == "failed" and "usage limit reached" in state["error"]
-    assert [message["status"] for message in state["messages"]] == ["done", "done", "failed"]
+    assert state["status"] == "done"
+    assert [message["status"] for message in state["messages"]][:4] == ["done", "done", "failed", "done"]
+    turns = client.app.state.supervisor.registry.turns
+    assert turns[2][0] != turns[3][0] and "couldn't answer this turn" in turns[3][1]
+
+
+def test_when_neither_model_can_answer_the_meeting_stops_and_keeps_the_transcript(client):
+    client.app.state.supervisor.registry = MeetingRegistry(fail_on={3, 4})
+    state = wait(client, client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan"}).json()["id"])
+    assert state["status"] == "failed" and "usage limit reached" in state["error"] and "Neither model" in state["error"]
+    assert [message["status"] for message in state["messages"]] == ["done", "done", "failed", "failed"]
     assert client.post(f"/api/council/{state['id']}/proposals/0/task").status_code == 400
+
+
+def test_the_owner_joins_the_discussion(client):
+    gate = threading.Event()
+    registry = client.app.state.supervisor.registry = MeetingRegistry(gate=gate)
+    meeting = client.post("/api/council", json={"project_id": client.project["id"], "topic": "Plan"}).json()["id"]
+    added = client.post(f"/api/council/{meeting}/say", json={"text": "Keep it simple: no new dependencies."}).json()
+    assert "next turn" in added["message"]
+    gate.set()
+    state = wait(client, meeting)
+    assert any(message["provider"] == "owner" and "no new dependencies" in message["content"] for message in state["messages"])
+    assert any("THE OWNER" in prompt.upper() and "no new dependencies" in prompt for _, prompt, _ in registry.turns)
+    follow = client.post(f"/api/council/{meeting}/say", json={"text": "Now plan the tests too."}).json()
+    assert follow["meeting_id"] != meeting and "follow-up" in follow["message"]
+    later = wait(client, follow["meeting_id"])
+    assert "Now plan the tests too." in later["topic"] and "WHERE THE LAST MEETING ENDED" in later["topic"]
+    assert client.post(f"/api/council/{meeting}/say", json={"text": ""}).status_code == 400
 
 
 def test_stop_and_validation(client):

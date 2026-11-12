@@ -896,7 +896,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def routing_update(payload: RoutingUpdate):
         from . import routing
         with db.Session.begin() as session:
-            value = routing.save(session, payload.mode, payload.provider, payload.model, payload.lead_coder, payload.lock_coder)
+            value = routing.save(session, payload.mode, payload.provider, payload.model, payload.lead_coder, payload.lock_coder, payload.auto_takeover)
             session.add(Event(kind="settings_changed", message="Supervisor now picks models with rules" if payload.mode == "rules" else f"Supervisor now asks {payload.provider} {payload.model or ''} to pick models".replace("  ", " ")))
             return value
 
@@ -1059,6 +1059,11 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.get("/api/council/{session_id}")
     def council_get(session_id: str): return chat_or_404(council.get, session_id)
+
+    @app.post("/api/council/{session_id}/say")
+    def council_say(session_id: str, payload: dict):
+        """The owner's words in an AI discussion: read by both models before their next turn, or a follow-up meeting."""
+        return chat_or_404(council.say, session_id, payload.get("text"))
 
     @app.post("/api/council/{session_id}/stop")
     def council_stop(session_id: str): return council.stop(session_id)
@@ -3232,13 +3237,25 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             return response.status_code, {"detail": response.text[:300]}
 
     def phone_think(prompt):
+        """Understanding a phone message: a free or signed-in model first (the hub's high-volume route), then the owner's
+        writing model when that gives nothing usable. Saves Claude's usage for the work that needs it."""
+        from .prospects import _json
+        try:
+            quick = modelhub.chat_for(hub, "bulk", chat_registry, {"provider": "claude"}, prompt, settings.data_dir / "chat-workspace")
+            if quick.success:
+                answer = _json(quick.output)
+                if isinstance(answer, dict) and ("reply" in answer or "actions" in answer):
+                    return answer
+        except Exception:  # noqa: BLE001 - the owner's writing model answers instead
+            pass
         with db.Session() as session:
             selected = prospect_writer.profile_for(session)
         return prospect_writer._ask(selected, prompt)
 
     api_routes = sorted({(method, route.path) for route in app.routes if getattr(route, "path", "").startswith("/api/")
-                         for method in (getattr(route, "methods", None) or set()) if method in {"GET", "POST", "PUT", "PATCH"}})
+                         for method in (getattr(route, "methods", None) or set()) if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}})
     phone = assistant_module.Assistant(db, phone_call, phone_think, api_routes, updater)
     app.state.assistant = phone
     app.state.remote.assistant = phone
+    notifier.rich_task = app.state.remote.task_alert  # task alerts on Telegram say why, with Yes/Resume buttons
     return app

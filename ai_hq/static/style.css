@@ -627,3 +627,8 @@ a.row { color: inherit; text-decoration: none; }
 /* All projects at a glance */
 .glance td.muted { color: var(--muted); }
 .glance td.attention { color: var(--amber); font-weight: 600; }
+
+/* The owner joins an AI discussion */
+.council-composer { display: flex; gap: var(--s-2); align-items: flex-end; padding: var(--s-3) 0 0; border-top: 1px solid var(--line); margin-top: var(--s-3); }
+.council-composer textarea { flex: 1; min-height: 44px; }
+.message.owner-note .bubble { border-left: 3px solid var(--brand); }

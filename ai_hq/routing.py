@@ -17,7 +17,9 @@ from .catalog import best, catalog as model_catalog
 from .models import Metadata
 
 KEY = "routing"
-DEFAULT = {"mode": "rules", "provider": "claude", "model": "opus", "lead_coder": "claude", "lock_coder": True}
+# auto_takeover (the owner's choice, 12 Nov 2026): when the model doing a step is down or out of usage, the other company's
+# model takes the step over at once and the task keeps going. Off, with lock_coder on, a coding step waits for Claude.
+DEFAULT = {"mode": "rules", "provider": "claude", "model": "opus", "lead_coder": "claude", "lock_coder": True, "auto_takeover": True}
 ROLES = ("planner", "implementer", "reviewer")
 HARD = ("architect", "redesign", "refactor", "migrat", "security", "authenticat", "authoriz", "concurren", "race condition",
         "performance", "optimi", "distributed", "schema", "encrypt", "payment", "from scratch", "full app", "entire",
@@ -32,7 +34,7 @@ def load(session):
     return {**DEFAULT, **(row.value if row else {})}
 
 
-def save(session, mode, provider="claude", model="opus", lead_coder=None, lock_coder=None):
+def save(session, mode, provider="claude", model="opus", lead_coder=None, lock_coder=None, auto_takeover=None):
     from .agents import valid_model
     if mode not in {"rules", "model"}:
         raise ValueError("Routing mode must be rules or model")
@@ -45,7 +47,10 @@ def save(session, mode, provider="claude", model="opus", lead_coder=None, lock_c
     lock = before["lock_coder"] if lock_coder is None else lock_coder
     if not isinstance(lock, bool):
         raise ValueError("Keeping Claude as the coder must be on or off")
-    value = {"mode": mode, "provider": provider, "model": valid_model(model), "lead_coder": lead, "lock_coder": lock}
+    takeover = before["auto_takeover"] if auto_takeover is None else auto_takeover
+    if not isinstance(takeover, bool):
+        raise ValueError("Automatic takeover must be on or off")
+    value = {"mode": mode, "provider": provider, "model": valid_model(model), "lead_coder": lead, "lock_coder": lock, "auto_takeover": takeover}
     row = session.get(Metadata, KEY)
     if row:
         row.value = value

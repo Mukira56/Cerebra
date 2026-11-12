@@ -244,6 +244,46 @@ class CouncilService:
         threading.Thread(target=self._meeting, args=(identifier, profiles, stop), name=f"aihq-council-{identifier[:8]}", daemon=True).start()
         return self.get(identifier)
 
+    def say(self, session_id, text):
+        """The owner joins the discussion. During a meeting the note reaches both models before the next turn and their
+        words decide; after a meeting, the note opens a follow-up meeting that starts from the last conclusion."""
+        text = " ".join(str(text or "").split())[:3000]
+        if len(text) < 2:
+            raise ValueError("Type what you want to add to the discussion")
+        with self.db.Session.begin() as session:
+            meeting = session.get(CouncilSession, session_id)
+            if meeting is None:
+                raise LookupError("Meeting not found")
+            running = session_id in self._running
+            if running:
+                session.add(CouncilMessage(id=uid(), session_id=session_id, speaker="owner", provider="owner", model="", round=0, kind="owner",
+                                           status="done", content=redact(text), finished_at=now()))
+                stored = session.get(Metadata, f"council:{session_id}")
+                notes = list((stored.value or {}).get("owner_notes", [])) if stored else []
+                notes.append({"text": redact(text), "at": now(), "used": False})
+                if stored:
+                    stored.value = {**stored.value, "owner_notes": notes}
+                else:
+                    session.add(Metadata(key=f"council:{session_id}", value={"owner_notes": notes}))
+            project_id, topic, first, second, rounds = meeting.project_id, meeting.topic, meeting.first, meeting.second, meeting.rounds
+        if running:
+            return {"message": "Added. Both models read it before their next turn.", "meeting_id": session_id}
+        summary = self.get(session_id).get("summary") or ""
+        follow_up = (f"{topic}\n\nWHERE THE LAST MEETING ENDED: {summary[:1500] or '(no agreed conclusion)'}\n\n"
+                     f"THE OWNER ADDS (their words decide): {text}")
+        started = self.start(project_id, follow_up, rounds, first, second)
+        return {"message": "The meeting had ended, so a follow-up meeting started with your note.", "meeting_id": started["id"]}
+
+    def _owner_notes(self, session_id):
+        """Notes the owner added since the last turn (marked as read by the meeting)."""
+        with self.db.Session.begin() as session:
+            stored = session.get(Metadata, f"council:{session_id}")
+            notes = list((stored.value or {}).get("owner_notes", [])) if stored else []
+            fresh = [note["text"] for note in notes if not note.get("used")]
+            if fresh:
+                stored.value = {**stored.value, "owner_notes": [{**note, "used": True} for note in notes]}
+            return fresh
+
     def stop(self, session_id):
         event = self._running.get(session_id)
         if event:
@@ -325,17 +365,29 @@ class CouncilService:
                 if stop.is_set():
                     status, error = "stopped", "You stopped the meeting."
                     break
+                for note in self._owner_notes(session_id):
+                    transcript.append(("The owner", "note: their words decide", note))
                 me, other = profiles[speaker], profiles[1 - speaker]
-                prompt = self._prompt(me, other, topic, scope, transcript, kind, number, rounds)
-                message_id = self._begin_turn(session_id, me, number, kind)
-                try:
-                    result = self.registry_source().chat(me["provider"], prompt, workdir, me["model"], stop)
-                    success, content, failure = result.success, result.output, (result.error or "").removeprefix("offline: ")
-                except Exception as exc:  # recorded on the turn, never raised into the server
-                    success, content, failure = False, "", redact(str(exc))
-                self._finish_turn(message_id, success, content, failure)
+                success, content, failure = False, "", ""
+                for attempt, (speaking, listening) in enumerate(((me, other), (other, me))):
+                    if attempt and (stop.is_set() or kind == "confirm"):
+                        break  # the confirming turn must come from the other model; a stopped meeting doesn't retry
+                    prompt = self._prompt(speaking, listening, topic, scope, transcript, kind, number, rounds)
+                    if attempt:
+                        prompt = (f"{me['provider_label']} couldn't answer this turn ({failure[:200]}), so you take it for now and say so in one "
+                                  f"short line.\n\n") + prompt
+                    message_id = self._begin_turn(session_id, speaking, number, kind)
+                    try:
+                        result = self.registry_source().chat(speaking["provider"], prompt, workdir, speaking["model"], stop)
+                        success, content, failure = result.success, result.output, (result.error or "").removeprefix("offline: ")
+                    except Exception as exc:  # recorded on the turn, never raised into the server
+                        success, content, failure = False, "", redact(str(exc))
+                    self._finish_turn(message_id, success, content, failure)
+                    if success:
+                        me = speaking
+                        break
                 if not success:
-                    status, error = ("stopped", "You stopped the meeting.") if stop.is_set() else ("failed", f"{me['provider_label']} couldn't answer: {failure[:600]}")
+                    status, error = ("stopped", "You stopped the meeting.") if stop.is_set() else ("failed", f"Neither model could answer: {failure[:600]}")
                     break
                 transcript.append((me["provider_label"], kind, content))
                 if kind == "discussion":

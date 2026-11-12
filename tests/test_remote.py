@@ -162,6 +162,7 @@ def test_decisions_waiting_for_the_owner_can_be_approved_from_the_phone(client):
                 session.get(Approval, approval_id).status = "approved" if approve else "rejected"
 
     client.app.state.remote.supervisor = Supervisor()
+    client.app.state.supervisor.resolve_approval = Supervisor().resolve_approval  # the Yes/No buttons go through Cerebra's own API
     with client.app.state.db.Session.begin() as session:
         session.add(Project(id="proj", name="Shop site", path="C:/shop", default_branch="main"))
         session.flush()
@@ -170,10 +171,11 @@ def test_decisions_waiting_for_the_owner_can_be_approved_from_the_phone(client):
         session.add(Approval(id="a1", task_id="t1", kind="plan", status="pending", payload={}))
     bot.message(OWNER, "/calls")
     client.app.state.remote.poll(wait=0)
-    plan = next(item for item in bot.said if "Approve this plan?" in item["text"])
-    assert "Add online booking" in plan["text"] and plan["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "apr:a1"
-    bot.tap(STRANGER, "apr:a1")  # not the owner: nothing happens
-    bot.tap(OWNER, "apr:a1")
-    bot.tap(OWNER, "apr:a1")  # pressed twice: answered once
+    plan = next(item for item in bot.said if "Approve a plan" in item["text"])
+    yes, no = [button["callback_data"] for button in plan["reply_markup"]["inline_keyboard"][0]]
+    assert "Add online booking" in plan["text"] and yes.startswith("w:") and yes.endswith(":y") and no.endswith(":n")
+    bot.tap(STRANGER, yes)  # not the owner: nothing happens
+    bot.tap(OWNER, yes)
+    bot.tap(OWNER, yes)  # pressed twice: answered once
     client.app.state.remote.poll(wait=0)
     assert answered == [("a1", True)] and "Approved" in bot.said[-2]["text"] and "already answered" in bot.said[-1]["text"]

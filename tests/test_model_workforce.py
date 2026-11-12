@@ -25,15 +25,25 @@ def test_claude_writes_the_code_and_another_company_reviews_it():
     assert "lead engineer" in chosen["implementer"]["why"]
 
 
-def test_claude_running_out_waits_instead_of_handing_the_code_to_another_model(client):  # noqa: F811
+def test_with_takeover_off_claude_running_out_waits_instead_of_handing_the_code_on(client):  # noqa: F811
     supervisor = client.app.state.supervisor
+    assert routing.load(client.app.state.db.Session())["auto_takeover"] is True  # by default the other model takes over at once
 
     class Task:
         id, results, assigned_agent = "t", {"models": {"implementer": {"provider": "claude", "tier": "balanced"}}}, "claude"
+    with client.app.state.db.Session.begin() as session:
+        routing.save(session, "rules", lock_coder=True, auto_takeover=False)  # the owner keeps Claude and turns takeover off
     assert supervisor._take_over(Task, "implement", "claude", "usage limit") is None
     with client.app.state.db.Session.begin() as session:
-        routing.save(session, "rules", lock_coder=False)  # the owner allows the switch
-    assert routing.load(client.app.state.db.Session()) ["lock_coder"] is False
+        routing.save(session, "rules", auto_takeover=True)
+    assert routing.load(client.app.state.db.Session())["auto_takeover"] is True
+
+
+def test_a_provider_that_is_down_is_treated_like_one_out_of_usage():
+    from ai_hq.supervisor import Supervisor
+    for error in ("agent exited with code 1: API Error: 529 overloaded_error", "Service Unavailable", "rate_limited: usage limit"):
+        assert Supervisor._out_of_usage(AgentResult(False, "", error=error))
+    assert not Supervisor._out_of_usage(AgentResult(False, "", error="tests failed: test_add"))
 
 
 def test_the_lead_coder_setting_is_saved(client):  # noqa: F811

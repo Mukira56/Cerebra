@@ -359,22 +359,27 @@ def calls(session):
         task = session.get(Task, approval.task_id)
         what = {"merge": "Merge finished work", "plan": "Approve a plan", "live_execution": "Let the AI team start",
                 "review_findings": "Decide on review findings"}.get(approval.kind, approval.kind.replace("_", " ").capitalize())
-        items.append({"kind": "approval", "title": what, "detail": " ".join((task.description if task else "").split())[:140], "page": "approvals",
-                      "at": approval.created_at})
+        items.append({"kind": "approval", "id": approval.id, "title": what, "detail": " ".join((task.description if task else "").split())[:140], "page": "approvals",
+                      "at": approval.created_at,
+                      "yes": {"method": "POST", "path": f"/api/approvals/{approval.id}", "body": {"approve": True}, "done": "Approved: Cerebra carries on."},
+                      "no": {"method": "POST", "path": f"/api/approvals/{approval.id}", "body": {"approve": False}, "done": "Declined."}})
     # Only the columns needed: the Overview asks for this every few seconds, and job posts are long.
     from .freelance import auto_settings
     leads = session.execute(select(FreelanceLead.title, FreelanceLead.status, FreelanceLead.source, FreelanceLead.proposal, FreelanceLead.updated_at,
-                                   FreelanceLead.extra, FreelanceLead.score).where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
+                                   FreelanceLead.extra, FreelanceLead.score, FreelanceLead.id).where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
     fresh = _stamp(datetime.now(timezone.utc) - timedelta(hours=48))
     worth = auto_settings(session)["min_score"]  # scores are refreshed hourly: an old, crowded job's proposal stops asking for attention
-    for title, status, source, proposal, updated, extra, points in leads:
+    for title, status, source, proposal, updated, extra, points, lead_id in leads:
         proposal, spotted = proposal or {}, str((extra or {}).get("rare") or "")
         if status == "awarded":
-            items.append({"kind": "award", "title": "A client chose you", "detail": f"{title[:120]}: accept or decline", "page": "freelance", "at": updated})
+            items.append({"kind": "award", "id": lead_id, "title": "A client chose you", "detail": f"{title[:120]}: accept or decline", "page": "freelance", "at": updated,
+                          "yes": {"method": "POST", "path": "/api/freelance/accept-award", "body": {"id": lead_id}, "done": "Accepted. Cerebra starts the work."}})
         elif (proposal.get("status") == "ready" and not proposal.get("sent_at") and not proposal.get("skipped")
               and (not proposal.get("auto") or proposal.get("bid_error")) and (status == "saved" or (points or 0) >= worth)):  # an automatic bid is sent at once; only a refused one waits for the owner
-            items.append({"kind": "proposal", "title": "A proposal is ready to send", "detail": f"{title[:120]}: apply in your own name", "page": "freelance",
-                          "at": proposal.get("drafted_at") or updated})
+            items.append({"kind": "proposal", "id": lead_id, "title": "A proposal is ready to send", "detail": f"{title[:120]}: apply in your own name", "page": "freelance",
+                          "at": proposal.get("drafted_at") or updated,
+                          **({"yes": {"method": "POST", "path": "/api/freelance/bid", "body": {"id": lead_id, "confirmed": True}, "done": "Your bid was sent on Freelancer.com."}}
+                             if source == "freelancer" else {})})
         elif spotted >= fresh and status == "new" and not proposal.get("sent_at") and not proposal.get("skipped"):
             items.append({"kind": "rare", "title": "A rare chance: apply soon", "detail": f"{title[:120]}: a strong match with few bids so far",
                           "page": "freelance", "at": spotted})
@@ -384,7 +389,8 @@ def calls(session):
                       "detail": f"{item['title'][:120]}: {item['days']} days " + ("since your follow-up; mark it lost or keep waiting" if item["followed_up"] else "since you applied; send one short follow-up"),
                       "page": "freelance", "at": now()})
     for post in session.scalars(select(SocialPost).where(SocialPost.status == "draft", SocialPost.origin == "ai")).all():
-        items.append({"kind": "post", "title": "A post waits for your approval", "detail": " ".join(post.text.split())[:140], "page": "marketing", "at": post.created_at})
+        items.append({"kind": "post", "id": post.id, "title": "A post waits for your approval", "detail": " ".join(post.text.split())[:140], "page": "marketing", "at": post.created_at,
+                      "yes": {"method": "POST", "path": f"/api/social/posts/{post.id}/approve", "body": {}, "done": "Approved: it goes out at its time."}})
     today = now()[:10]
     for doc in session.scalars(select(MoneyDocument).where(MoneyDocument.kind == "invoice", MoneyDocument.status == "sent")).all():
         if doc.due_date and doc.due_date < today:
@@ -396,8 +402,10 @@ def calls(session):
     for goal_id, item in plans(session).items():
         goal = session.get(ChiefGoal, goal_id)
         if goal is not None and item.get("status") == "proposed":
-            items.append({"kind": "plan", "title": "A plan waits for your approval", "detail": f"{goal.title[:120]}: approve or decline it", "page": "chief",
-                          "at": item.get("drafted_at") or goal.created_at})
+            items.append({"kind": "plan", "id": goal_id, "title": "A plan waits for your approval", "detail": f"{goal.title[:120]}: approve or decline it", "page": "chief",
+                          "at": item.get("drafted_at") or goal.created_at,
+                          "yes": {"method": "POST", "path": f"/api/chief/goals/{goal_id}/plan/approve", "body": {}, "done": "Plan approved: Cerebra works on it."},
+                          "no": {"method": "POST", "path": f"/api/chief/goals/{goal_id}/plan/decline", "body": {}, "done": "Plan declined."}})
     since = _stamp(datetime.now(timezone.utc) - timedelta(hours=24))
     failed = {row.job_id for row in session.scalars(select(ChiefRun).where(ChiefRun.status == "failed", ChiefRun.started_at >= since)).all()}
     for job_id in sorted(failed):

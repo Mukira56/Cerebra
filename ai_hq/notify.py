@@ -134,6 +134,7 @@ class Notifier:
     # ---- watching ----------------------------------------------------------------------------
     def pending_messages(self):
         """New events worth telling the user about, since the last run. Advances the cursor."""
+        self._task_refs = {}  # message index -> (task id, state): Telegram gets these with the reason and buttons instead
         with self.db.Session.begin() as session:
             settings = load(session)
             if not (settings["ntfy_enabled"] or settings["telegram_enabled"]):
@@ -178,14 +179,25 @@ class Notifier:
                 symbol, words = STATES[state]
                 title = " ".join(task.description.split())[:70]
                 messages.append((f"{symbol} {title}", f"Task {task.id[:8]} {words}. Open Cerebra for details.", ""))
+                self._task_refs[len(messages) - 1] = (task.id, state)
             if events:
                 cursor_row.value = {"at": events[-1].created_at}
             return settings, messages
 
     def tick(self):
         settings, messages = self.pending_messages()
-        for title, text, tags in messages[:10]:
+        for index, (title, text, tags) in enumerate(messages[:10]):
             if self._stop.is_set(): break
+            ref, rich = self._task_refs.get(index), getattr(self, "rich_task", None)
+            if ref and rich is not None and settings["telegram_enabled"]:
+                try:
+                    told = rich(*ref)  # the phone gets the reason and Yes/Resume buttons
+                except Exception:  # noqa: BLE001 - fall back to the plain message
+                    told = False
+                if told:
+                    if settings["ntfy_enabled"]:
+                        self.send(title, text, {**settings, "telegram_enabled": False}, tags)
+                    continue
             self.send(title, text, settings, tags)
         return len(messages)
 

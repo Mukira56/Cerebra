@@ -17,6 +17,7 @@ handled twice. A failure here never touches the rest of Cerebra.
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 
 from sqlalchemy import select
@@ -25,8 +26,10 @@ from . import notify, vault
 from .models import Book, Metadata, Prospect, now
 
 OFFSET = "telegram_offset"
+WAITING, ANNOUNCED = "phone_waiting", "phone_announced"  # Yes/No answers kept by token; waiting items already sent
 HELP = ("Cerebra on your phone. Type to me in your own words (\"put dark mode on\", \"update Cerebra\", \"what's waiting?\"), or:\n"
         "/status - what's waiting and what's working\n"
+        "/tasks - where every coding task is, and why it waits\n"
         "/calls - everything waiting for you: approve with one tap\n"
         "/drafts - drafted business emails: send or skip with one tap\n"
         "/replies - businesses that answered\n"
@@ -114,12 +117,17 @@ class Remote:
                 return self.replies(settings)
             if action in {"ok", "no"} and self.assistant is not None:
                 return self._speak(settings, self.assistant.answer_pending(action == "ok", value))
+            if action == "w":
+                return self.answer_waiting(settings, value)
+            if action == "tsk" and self.assistant is not None:
+                do, _, task_id = value.partition(":")
+                return self._speak(settings, self.assistant._task({"id": task_id, "do": do}, confirmed=False))
             return 0
         message = update.get("message") or {}
         if str(message.get("chat", {}).get("id")) != settings["chat"]:
             return 0  # strangers get no reply at all
         command = str(message.get("text") or "").strip().split()[0].lower().split("@")[0] if message.get("text") else ""
-        handlers = {"/status": self.status, "/calls": self.calls, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/jobs": self.jobs, "/books": self.books,
+        handlers = {"/status": self.status, "/calls": self.calls, "/tasks": self.tasks, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/jobs": self.jobs, "/books": self.books,
                     "/money": self.money, "/outreach": self.run_outreach}
         handler = handlers.get(command)
         if handler is not None:
@@ -136,7 +144,108 @@ class Remote:
         """Say the assistant's answer, with its Yes/No buttons when it asks first; background results come later."""
         self.assistant.notify = lambda text: self.say(settings, text)
         self.say(settings, answer.get("text") or "Done.", buttons=answer.get("buttons"))
+        if answer.get("waiting"):
+            self.calls(settings)
         return 1
+
+    def tasks(self, settings):
+        if self.assistant is None:
+            return 0
+        self.say(settings, self.assistant.tasks_text())
+        return 1
+
+    # ---- everything waiting for the owner's OK, each with Yes and No ----
+    @staticmethod
+    def _token(item):
+        return hashlib.sha256(f"{item['kind']}:{item.get('id', '')}".encode()).hexdigest()[:10]
+
+    def _offer(self, settings, item):
+        """Send one waiting item with its Yes/No buttons (or a pointer to Cerebra when it can only be done there)."""
+        token = self._token(item)
+        with self.db.Session.begin() as session:
+            row = session.get(Metadata, WAITING)
+            kept = dict(row.value or {}) if row else {}
+            kept[token] = {"title": item["title"], "yes": item.get("yes"), "no": item.get("no")}
+            kept = dict(list(kept.items())[-200:])
+            if row is None:
+                session.add(Metadata(key=WAITING, value=kept))
+            else:
+                row.value = kept
+        text = f"{item['title']}\n{item['detail']}"
+        if item.get("yes"):
+            self.say(settings, text, buttons=[[("YES ✓", f"w:{token}:y"), ("NO", f"w:{token}:n")]])
+        else:
+            self.say(settings, text + "\n(This one is done in Cerebra on the laptop.)")
+
+    def answer_waiting(self, settings, value):
+        token, _, choice = value.partition(":")
+        with self.db.Session() as session:
+            row = session.get(Metadata, WAITING)
+            item = (row.value or {}).get(token) if row else None
+        if not item:
+            self.say(settings, "That was already answered.")
+            return 1
+        step = item.get("yes") if choice == "y" else item.get("no")
+        if choice != "y" and not step:
+            self.say(settings, f"Left as it is: {item['title'].lower()}. It stays in Waiting for my OK.")
+            return 1
+        if self.assistant is None or not step:
+            return 0
+        status, data = self.assistant.call(step["method"], step["path"], step.get("body") or {})
+        detail = (data or {}).get("detail") if isinstance(data, dict) else ""
+        with self.db.Session.begin() as session:
+            row = session.get(Metadata, WAITING)
+            if row and status < 400:
+                row.value = {key: value for key, value in (row.value or {}).items() if key != token}
+        self.say(settings, step.get("done", "Done.") if status < 400 else f"That didn't work: {str(detail or status)[:300]}")
+        return 1
+
+    def announce_waiting(self, settings):
+        """Message the owner as soon as something new waits for their OK, once per item, with Yes and No."""
+        from . import chief
+        with self.db.Session() as session:
+            items = chief.calls(session)
+            row = session.get(Metadata, ANNOUNCED)
+            seen = list((row.value or {}).get("keys", [])) if row else None
+        keys = [f"{item['kind']}:{item.get('id', '')}" for item in items]
+        if seen is None:  # first time: don't replay everything that was already waiting
+            fresh = []
+        else:
+            fresh = [item for item, key in zip(items, keys) if key not in seen and item.get("yes")]
+        for item in fresh[:5]:
+            self._offer(settings, item)
+        with self.db.Session.begin() as session:
+            row = session.get(Metadata, ANNOUNCED)
+            value = {"keys": (list(seen or []) + [key for key in keys if key not in (seen or [])])[-500:], "at": now()}
+            if row is None:
+                session.add(Metadata(key=ANNOUNCED, value=value))
+            else:
+                row.value = value
+        return len(fresh)
+
+    def task_alert(self, task_id, state):
+        """A task changed state: tell the owner why, with buttons for what they can do (used instead of the plain alert)."""
+        settings = self._settings()
+        if settings is None or self.assistant is None:
+            return False
+        from .models import Approval, Task
+        with self.db.Session() as session:
+            task = session.get(Task, task_id)
+            if task is None:
+                return False
+            text = self.assistant.describe_task(session, task)
+            approvals = [row.id for row in session.scalars(select(Approval).where(Approval.task_id == task_id, Approval.status.in_(["pending", "PENDING"]))).all()]
+        buttons = None
+        if approvals and self.supervisor is not None:
+            buttons = [[("YES ✓", f"apr:{approvals[0]}"), ("NO", f"dec:{approvals[0]}")]]
+        elif state == "BLOCKED":
+            buttons = [[("Resume", f"tsk:resume:{task_id}"), ("Pause it", f"tsk:pause:{task_id}")]]
+        elif state == "FAILED":
+            buttons = [[("Try again", f"tsk:retry:{task_id}")]]
+        elif state == "READY":
+            buttons = [[("Start", f"tsk:start:{task_id}")]]
+        self.say(settings, text, buttons=buttons)
+        return True
 
     # ---- what the commands answer ----
     def _drafts(self, session):
@@ -240,26 +349,20 @@ class Remote:
 
     # ---- decisions waiting for the owner ----
     def calls(self, settings):
-        """Everything that waits for the owner; approvals come one by one with Approve and Decline buttons."""
+        """Everything that waits for the owner, one message each: Yes and No buttons where it can be answered from here."""
         from . import chief
-        from .models import Approval, Task
         with self.db.Session() as session:
             waiting = chief.calls(session)
-            pending = [(row.id, row.kind, " ".join((session.get(Task, row.task_id).description if session.get(Task, row.task_id) else "").split())[:300])
-                       for row in session.scalars(select(Approval).where(Approval.status.in_(["pending", "PENDING"])).order_by(Approval.created_at)).all()][:5]
-        others = [item for item in waiting if item["kind"] != "approval"]
         if not waiting:
-            self.say(settings, "Nothing is waiting for you.")
+            self.say(settings, "Nothing is waiting for your OK.")
             return 1
+        answerable = [item for item in waiting if item.get("yes")]
+        others = [item for item in waiting if not item.get("yes")]
+        for item in answerable[:10]:
+            self._offer(settings, item)
         if others:
-            self.say(settings, f"{len(waiting)} thing(s) wait for you:\n" + "\n".join(f"- {item['title']}: {item['detail'][:120]}" for item in others[:12])
-                     + "\n\n/drafts, /replies and /jobs handle the email and freelance ones from here.")
-        words = {"plan": "Approve this plan?", "merge": "Merge this finished work into your project?", "live_execution": "Let the AI team start this task?",
-                 "review_findings": "Accept the review's findings?"}
-        if self.supervisor is not None:
-            for approval_id, kind, task in pending:
-                self.say(settings, f"{words.get(kind, kind.replace('_', ' ').capitalize() + '?')}\n\n{task}",
-                         buttons=[[("Approve ✓", f"apr:{approval_id}"), ("Decline", f"dec:{approval_id}")]])
+            self.say(settings, f"Also waiting ({len(others)}), done in Cerebra or with /drafts, /replies and /jobs:\n"
+                     + "\n".join(f"- {item['title']}: {item['detail'][:120]}" for item in others[:12]))
         return 1
 
     def answer_approval(self, settings, approval_id, approve):
@@ -366,6 +469,12 @@ class Remote:
         def loop():
             while not self._stop.is_set():
                 try:
+                    settings = self._settings()
+                    if settings is not None:
+                        try:
+                            self.announce_waiting(settings)
+                        except Exception:  # noqa: BLE001 - never stops the bot from listening
+                            pass
                     if not self.poll():
                         self._stop.wait(5 if self._settings() else 60)  # nothing new, or Telegram isn't set up yet
                 except Exception:  # noqa: BLE001 - never affects the rest of Cerebra

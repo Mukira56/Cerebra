@@ -142,6 +142,7 @@ class RoutingUpdate(StrictModel):
     model: str = Field(default="", max_length=100)
     lead_coder: str | None = Field(default=None, pattern="^(claude|auto)$")
     lock_coder: bool | None = None
+    auto_takeover: bool | None = None
 
 class AutoFixSettings(StrictModel):
     enabled: bool | None = None
