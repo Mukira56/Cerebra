@@ -125,7 +125,7 @@ RULES = [
     (re.compile(r"\b(large|larger|bigger)\s+(text|font|letters)\b|\b(text|font)\s+(large|larger|bigger)\b", re.I), ("appearance", {"size": "large"})),
     (re.compile(r"\b(normal|smaller|regular)\s+(text|font|letters)\b", re.I), ("appearance", {"size": "normal"})),
     (re.compile(r"\b(update|upgrade)\b.*\b(cerebra|app|newest|latest|release|version)\b|^\s*(update|upgrade)( now)?\s*[.!]*\s*$", re.I), ("update", {})),
-    (re.compile(r"^\s*(help|what can you do|commands|menu|\?)\s*[?.!]*\s*$", re.I), ("help", {})),
+    (re.compile(r"^\s*(help|what can you do|commands|menu|hi|hello|hey|hi there|hello there|good (morning|afternoon|evening)|\?)\s*(cerebra)?\s*[?.!]*\s*$", re.I), ("help", {})),
 ]
 
 
