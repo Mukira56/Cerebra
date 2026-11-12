@@ -378,7 +378,8 @@ class CouncilService:
                                   f"short line.\n\n") + prompt
                     message_id = self._begin_turn(session_id, speaking, number, kind)
                     try:
-                        result = self.registry_source().chat(speaking["provider"], prompt, workdir, speaking["model"], stop)
+                        registry = self.registry_source()  # the strongest model, thinking hard, as a plain assistant (not a coding agent)
+                        result = (getattr(registry, "deep", None) or registry.chat)(speaking["provider"], prompt, workdir, speaking["model"], stop)
                         success, content, failure = result.success, result.output, (result.error or "").removeprefix("offline: ")
                     except Exception as exc:  # recorded on the turn, never raised into the server
                         success, content, failure = False, "", redact(str(exc))

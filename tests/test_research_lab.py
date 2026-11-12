@@ -215,3 +215,33 @@ def test_research_turns_may_search_the_web_but_never_edit_or_run_commands(tmp_pa
     assert 'web_search="live"' not in codex._command("codex", tmp_path, True, ["."])
     plain = codex._command("codex", tmp_path, True, ["."], web=True)
     assert plain[plain.index("--sandbox") + 1] == "read-only"
+
+
+def test_conversation_turns_run_as_a_plain_premium_model_not_a_coding_agent(tmp_path):
+    claude = ClaudeAdapter()
+    args = claude._command("claude", tmp_path, True, ["."], "opus", web=True, plain=True, effort="high")
+    system = args[args.index("--system-prompt") + 1]
+    assert "You are Claude" in system and "search and read the web" in system and "can't change anything" in system
+    assert args[args.index("--effort") + 1] == "high" and args[args.index("--model") + 1] == "opus"
+    assert args[args.index("--tools") + 1] == "Read,Grep,Glob,WebSearch,WebFetch"
+    assert "--system-prompt" not in claude._command("claude", tmp_path, False, ["."], plain=True)  # coding work keeps the full agent
+    codex = CodexAdapter()
+    plain = codex._command("codex", tmp_path, True, ["."], plain=True, effort="high")
+    assert "--skip-git-repo-check" in plain and 'model_reasoning_effort="high"' in plain
+    assert "--skip-git-repo-check" not in codex._command("codex", tmp_path, False, ["."], plain=True)
+
+
+def test_deep_turns_use_the_strongest_claude_model_with_high_effort(tmp_path):
+    from ai_hq.agents import AgentRegistry, AgentResult as Result
+
+    class Recorder(ClaudeAdapter):
+        def chat(self, prompt, workdir, model="", cancel_event=None, web=False, effort=""):
+            self.seen = (model, web, effort)
+            return Result(True, "ok")
+
+    registry = AgentRegistry()
+    registry.adapters["claude"] = recorder = Recorder()
+    registry.research("claude", "find buyers", str(tmp_path))
+    assert recorder.seen == ("opus", True, "high")
+    registry.deep("claude", "discuss", str(tmp_path), "sonnet")
+    assert recorder.seen == ("sonnet", False, "high")  # the owner's own choice of model wins
