@@ -392,7 +392,7 @@ class ResearchLabService:
             turn_id = self._begin(lab_id, number, stage, speaking)
             try:
                 registry = self.registry_source()
-                research = getattr(registry, "research", None) or registry.chat
+                research = getattr(type(registry), "research", None) and registry.research or registry.chat
                 result = research(speaking["provider"], prompt, str(folder), speaking.get("model", ""), stop)
                 success, content, failure = result.success, result.output or "", (result.error or "").removeprefix("offline: ")
             except Exception as exc:  # recorded on the turn, never raised into the server
