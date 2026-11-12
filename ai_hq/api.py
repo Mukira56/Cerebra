@@ -386,6 +386,22 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         totals = {key: sum(row[key] for row in projects) for key in ("tasks", "working", "waiting", "queued", "stuck", "done", "failed", "approvals", "runs", "tokens")}
         return {"projects": projects, "totals": totals}
 
+    def look_now():
+        from . import assistant as assistant_module
+        with db.Session() as session:
+            return assistant_module.preferences(session)
+
+    @app.get("/api/preferences")
+    def preferences_get():
+        """How Cerebra looks: theme, text size and the short or full menu. Kept in Cerebra, so the phone can change it."""
+        return look_now()
+
+    @app.put("/api/preferences")
+    def preferences_put(payload: dict):
+        from . import assistant as assistant_module
+        with db.Session.begin() as session:
+            return assistant_module.save_preferences(session, payload)
+
     @app.get("/api/overview")
     def overview():
         with db.Session() as session:
@@ -428,7 +444,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"earn":earn,"onboarding":workspace_setup,"version":__version__,"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"earn":earn,"onboarding":workspace_setup,"version":__version__,"preferences":look_now(),"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
@@ -3195,4 +3211,34 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     def index(): return FileResponse(STATIC/"index.html")
     STATIC.mkdir(exist_ok=True)
     app.mount("/static",StaticFiles(directory=STATIC),name="static")
+    # ---- talk to Cerebra from the phone (ai_hq/assistant.py): the owner's words, Cerebra's own API ----
+    from . import assistant as assistant_module
+    phone_session, phone_csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    phone_client = {}
+
+    def phone_call(method, path, body=None):
+        """Cerebra's API, called in-process (no network) with a session of its own, so every check the screens get applies."""
+        from starlette.testclient import TestClient
+        sessions[phone_session] = (phone_csrf, time.monotonic())  # kept fresh: it never expires while Cerebra runs
+        client = phone_client.get("client")
+        if client is None:
+            client = phone_client["client"] = TestClient(app, base_url="http://testserver", raise_server_exceptions=False)
+        client.cookies.set("aihq_session", phone_session)
+        response = client.request(method, path, json=body if method != "GET" else None,
+                                  headers={"x-csrf-token": phone_csrf} if method != "GET" else {})
+        try:
+            return response.status_code, response.json()
+        except ValueError:
+            return response.status_code, {"detail": response.text[:300]}
+
+    def phone_think(prompt):
+        with db.Session() as session:
+            selected = prospect_writer.profile_for(session)
+        return prospect_writer._ask(selected, prompt)
+
+    api_routes = sorted({(method, route.path) for route in app.routes if getattr(route, "path", "").startswith("/api/")
+                         for method in (getattr(route, "methods", None) or set()) if method in {"GET", "POST", "PUT", "PATCH"}})
+    phone = assistant_module.Assistant(db, phone_call, phone_think, api_routes, updater)
+    app.state.assistant = phone
+    app.state.remote.assistant = phone
     return app

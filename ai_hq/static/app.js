@@ -55,6 +55,18 @@
   function setComfort(key, value) {
     comfort[key] = value; try { localStorage.setItem("cerebra-comfort", JSON.stringify(comfort)); } catch { /* not kept */ }
     applyComfort(); if (key === "simple" && data) render();  // Home shows or hides the coding steps
+    // Kept in Cerebra too, so the phone and every other window agree (ai_hq/assistant.py preferences).
+    if (csrf) mutate("/api/preferences", {[key]: value}, "PUT").then(saved => { if (saved && saved.changed_at) comfortStamp = saved.changed_at; }).catch(() => {});
+  }
+  // A change made elsewhere (the phone, another window) arrives with the overview every few seconds.
+  let comfortStamp = "";
+  function followComfort(saved) {
+    if (!saved || !saved.changed_at || saved.changed_at === comfortStamp) return;
+    comfortStamp = saved.changed_at;
+    const before = comfort.simple;
+    Object.assign(comfort, {theme: saved.theme, size: saved.size, simple: saved.simple});
+    try { localStorage.setItem("cerebra-comfort", JSON.stringify(comfort)); } catch { /* not kept */ }
+    applyComfort(); if (before !== comfort.simple && data) render();
   }
   const simpleMenu = () => comfort.simple !== false;
   applyComfort();
@@ -4066,7 +4078,7 @@
     while (fetching) { if (!force) return fetching; await fetching; }
     let done; fetching = new Promise(resolve => { done = resolve; });
     try {
-      const next = await api("/api/overview"), fingerprint = JSON.stringify(next); data = next;
+      const next = await api("/api/overview"), fingerprint = JSON.stringify(next); data = next; followComfort(next.preferences);
       const status = $("#connection-status"); status.className = "pill good"; status.replaceChildren(el("span", "dot"), document.createTextNode("Connected")); notice("");
       if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "projects", "approvals", "reports", "activity"].includes(page) || force) render(); else chrome(); if (page === "system" && !force) paintTeamBar(); }
       if (detailTaskId && dialog.open) await taskDetail(detailTaskId, true);

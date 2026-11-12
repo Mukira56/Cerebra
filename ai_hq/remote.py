@@ -25,7 +25,7 @@ from . import notify, vault
 from .models import Book, Metadata, Prospect, now
 
 OFFSET = "telegram_offset"
-HELP = ("Cerebra on your phone:\n"
+HELP = ("Cerebra on your phone. Type to me in your own words (\"put dark mode on\", \"update Cerebra\", \"what's waiting?\"), or:\n"
         "/status - what's waiting and what's working\n"
         "/calls - everything waiting for you: approve with one tap\n"
         "/drafts - drafted business emails: send or skip with one tap\n"
@@ -41,6 +41,7 @@ class Remote:
     def __init__(self, db, notifier, outreach, drafter=None, bidder=None, supervisor=None):
         self.db, self.notifier, self.outreach, self.drafter, self.bidder, self.supervisor = db, notifier, outreach, drafter, bidder, supervisor
         self._stop, self._thread = threading.Event(), None
+        self.assistant = None  # ai_hq/assistant.py: plain-language messages (set by the app)
 
     # ---- Telegram ----
     def _settings(self):
@@ -111,6 +112,8 @@ class Remote:
             if action == "redo":
                 self.outreach.draft_answer(value)
                 return self.replies(settings)
+            if action in {"ok", "no"} and self.assistant is not None:
+                return self._speak(settings, self.assistant.answer_pending(action == "ok", value))
             return 0
         message = update.get("message") or {}
         if str(message.get("chat", {}).get("id")) != settings["chat"]:
@@ -119,10 +122,20 @@ class Remote:
         handlers = {"/status": self.status, "/calls": self.calls, "/drafts": self.show_draft, "/replies": self.replies, "/sent": self.sent, "/jobs": self.jobs, "/books": self.books,
                     "/money": self.money, "/outreach": self.run_outreach}
         handler = handlers.get(command)
-        if handler is None:
+        if handler is not None:
+            handler(settings)
+            return 1
+        if command in {"/start", "/help"} or self.assistant is None or not command:
             self.say(settings, HELP)
             return 1
-        handler(settings)
+        # Anything else is a message in the owner's own words.
+        self._call(settings, "sendChatAction", chat_id=settings["chat"], action="typing")
+        return self._speak(settings, self.assistant.reply(message.get("text") or ""))
+
+    def _speak(self, settings, answer):
+        """Say the assistant's answer, with its Yes/No buttons when it asks first; background results come later."""
+        self.assistant.notify = lambda text: self.say(settings, text)
+        self.say(settings, answer.get("text") or "Done.", buttons=answer.get("buttons"))
         return 1
 
     # ---- what the commands answer ----
