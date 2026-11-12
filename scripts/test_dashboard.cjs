@@ -45,6 +45,18 @@ const path = require('node:path');
 
     await shot('overview-empty');
 
+    // The Setup Center: pick a goal, see only what it needs, open the next step at its panel.
+    await page.getByRole('button', {name: 'Get started', exact: true}).click();
+    await page.getByText('What do you want Cerebra to do?', {exact: true}).waitFor();
+    await page.locator('.setup-goal', {hasText: 'Get a job'}).click();
+    await page.getByRole('button', {name: 'Show me what to connect', exact: true}).click();
+    await page.getByText('NEXT STEP', {exact: true}).waitFor();
+    assert.equal(await page.locator('.setup-steps li').count(), 6, 'Only the steps the chosen goal needs');
+    await shot('setup');
+    await page.getByRole('button', {name: 'Open Settings', exact: true}).click();
+    await page.locator('.setup-guide-bar').waitFor();
+    await page.locator('[data-page="overview"]').click();
+
     // Add a project through the form.
     await page.locator('[data-page="projects"]').click();
     await page.locator('#heading-actions').getByRole('button', {name: '+ Add project'}).click();
@@ -233,7 +245,7 @@ const path = require('node:path');
     await narrow.close();
 
     await page.locator('[data-page="connections"]').click();
-    await page.getByText('Read-only Gmail intake', {exact:true}).waitFor();
+    await page.getByText('Gmail: send and read from your own address', {exact:true}).waitFor();
     assert.equal(await page.locator('.connection-grid input[type="password"]').count(), 7, 'Secrets use password fields (Shopify client secret included)');
     // Setup notes beside each connection, and the full guide in a pop-up.
     assert.equal(await page.locator('.guide-notes').count(), 7, 'Setup notes beside every connection (Etsy, Printify, images, Shopify, Gmail, phone, Fiverr)');

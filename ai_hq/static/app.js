@@ -11,6 +11,7 @@
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const pages = {
     overview: ["WORKSPACE", "Home", "Everything happening in Cerebra, at a glance."],
+    setup: ["WORKSPACE", "Get set up", "Choose what you want Cerebra to do, then connect only what that needs, one step at a time."],
     chat: ["WORKSPACE", "Ask for help", "Ask about a project or task, or have Cerebra plan, create and start the work."],
     council: ["BUILD", "AI discussion", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
     marketing: ["OUTREACH", "Social media posts", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
@@ -119,6 +120,7 @@
   document.querySelectorAll(".nav-link[data-page]").forEach(node => { const spot = node.querySelector(".nav-icon"); const name = PAGE_ICON[node.dataset.page]; if (spot && name) spot.replaceChildren(icon(name)); });
   const PROVIDER_ICON = {codex: "◇", claude: "✳", copilot: "⧉", gemini: "✦"};
   const ACTIVE = ["RUNNING", "VERIFYING", "REVIEWING", "NEEDS_CHANGES"];
+  let lastProjectsPrint = "";
   let csrf = "", data = null, page = "overview", param = "", lastFingerprint = "", fetching = null, toastTimer = 0;
   let detailTaskId = "", detailTab = "Overview", detailFingerprint = "", pageTimer = 0, renderToken = 0;
   const cache = {providers: null, tools: null, github: null, repos: null, chats: null};
@@ -231,6 +233,12 @@
     const count = pendingApprovals().length; $("#approval-count").textContent = count; $("#approval-count").classList.toggle("hidden", !count);
     const status = $("#agents-status"); status.className = `pill ${agentsOn() ? "good" : "warn"}`; status.replaceChildren(el("span", "dot"), document.createTextNode(agentsOn() ? (awayOn() ? "AI helpers: away mode" : "AI helpers: on") : "AI helpers: off")); status.title = awayOn() ? `Away mode until ${date(data.autopilot.until)}` : "";
     $("#version-label").textContent = `Cerebra v${data.version || ""}`;
+    // Setup progress in the menu, and a short menu that shows only the pages for the owner's goals.
+    const setup = data.setup || {}, setupCount = $("#setup-count");
+    if (setupCount) { setupCount.textContent = array(setup.goals).length ? `${setup.done}/${setup.total}` : "new"; setupCount.classList.toggle("hidden", !!setup.complete); }
+    const GOAL_PAGES = ["partners", "prospects", "jobs", "freelance", "money", "books", "etsy"];
+    document.querySelectorAll("#navigation .nav-link").forEach(node => node.classList.toggle("goal-hidden",
+      array(setup.goals).length > 0 && GOAL_PAGES.includes(node.dataset.page) && !array(setup.pages).includes(node.dataset.page)));
     // The taskbar shows the window title: say when something needs the owner, is running, or failed.
     const waitingCount = pendingApprovals().length + finishedTasks().length, workingCount = realTasks().filter(task => ACTIVE.includes(task.state)).length, failedCount = realTasks().filter(task => task.state === "FAILED" && !task.finished).length;
     document.title = waitingCount ? `(${waitingCount}) Cerebra — waiting for you` : workingCount ? "Cerebra — working…" : failedCount ? `Cerebra — ${failedCount} problem${failedCount === 1 ? "" : "s"}` : "Cerebra · Development command center";
@@ -253,9 +261,93 @@
     if (page !== "system") window.AIHQSystem?.unmount();
     heading(); chrome();
     if (!data) { content.replaceChildren(el("div", "loading", "connecting to your local workspace…")); return; }
-    const views = {overview, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, jobs: jobsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
+    const views = {overview, setup: setupView, council: councilView, connections: connectionView, business: businessView, money: moneyView, books: booksView, etsy: etsyView, chief: chiefView, prospects: prospectsView, partners: partnersView, jobs: jobsView, funding: fundingView, freelance: freelanceView, marketing: marketingView, job: jobView, chat: chatView, tasks: tasksView, projects: projectsView, approvals: approvalsView, system: systemView, reports: reportsView, report: reportView, activity: activityView, models: modelsView, github: githubView, toolchain: toolchainView, settings: settingsView};
     const result = views[page]();
     if (result) content.replaceChildren(result);
+    if (setupGuide && page !== "setup" && page === setupGuide.page) {
+      content.prepend(append(el("div", "setup-guide-bar"),
+        el("span", "", `Setting up: ${setupGuide.title}. When it's done, it turns green on Get set up by itself.`),
+        button("Back to setup", () => { location.hash = "setup"; }, "button small primary")));
+      if (setupGuide.find && !setupGuide.shown) jumpToPanel(setupGuide);
+    }
+  }
+
+  // ---------- Setup Center: goals first, then only the connections they need, one step at a time ----------
+  let setupGuide = null;  // the step being done on another page: that page shows a "Back to setup" bar
+  // Open the step's page at the right panel: scrolled into view and briefly highlighted (panels may load a moment later).
+  function jumpToPanel(guide, tries = 15) {
+    const wanted = guide.find.toLowerCase();
+    const heading = [...content.querySelectorAll(".panel-header h2")].find(node => node.textContent.toLowerCase().startsWith(wanted));
+    if (!heading) { if (tries) setTimeout(() => jumpToPanel(guide, tries - 1), 200); return; }
+    guide.shown = true;
+    const section = heading.closest(".panel");
+    section.scrollIntoView({block: "start"});
+    section.classList.add("setup-highlight"); setTimeout(() => section.classList.remove("setup-highlight"), 2600);
+  }
+  function setupView() {
+    setupGuide = null;  // back on the setup page: the guide bar elsewhere is no longer needed
+    const root = el("div"), token = renderToken;
+    root.append(el("div", "loading", "Checking what's connected…"));
+    api("/api/setup").then(state => { if (token === renderToken) root.replaceChildren(setupScreen(state)); }).catch(issue => root.replaceChildren(hint(issue.message, true)));
+    return root;
+  }
+  function setupScreen(state) {
+    const node = el("div");
+    // 1. What do you want Cerebra to do?
+    const chosen = new Set(array(state.goals));
+    const goals = el("div", "setup-goals");
+    Object.entries(state.available).forEach(([key, goal]) => {
+      const card = append(el("button", "setup-goal"), el("span", "tick", chosen.has(key) ? "✓" : ""), append(el("span"), el("strong", "", goal.label), el("small", "", goal.about)));
+      card.type = "button"; card.setAttribute("aria-pressed", String(chosen.has(key)));
+      card.addEventListener("click", () => { chosen.has(key) ? chosen.delete(key) : chosen.add(key); card.setAttribute("aria-pressed", String(chosen.has(key))); card.querySelector(".tick").textContent = chosen.has(key) ? "✓" : ""; });
+      goals.append(card);
+    });
+    const saveGoals = button(state.goals.length ? "Update my setup" : "Show me what to connect", async () => {
+      const saved = await act("", () => mutate("/api/setup", {goals: [...chosen]}, "PUT"));
+      if (saved) { await refresh(true); node.replaceWith(setupScreen(saved)); }
+    }, "button primary");
+    const picking = panel(state.goals.length ? "What you want Cerebra to do" : "What do you want Cerebra to do?",
+      body(hint("Pick one or more. Cerebra then shows only the connections those need, in order. You can change this any time."), goals, actionsRow(saveGoals)));
+    if (!state.goals.length) { node.append(picking); return node; }
+    // 2. Progress and the one next step
+    const percent = state.total ? Math.round(100 * state.done / state.total) : 100;
+    const progress = append(el("div"), el("strong", "", state.complete ? "All set. Cerebra is ready for what you chose." : `${state.done} of ${counted(state.total, "step", "steps")} done · about ${state.minutes_left} minutes left`),
+      append(el("div", "setup-progress"), Object.assign(el("span"), {style: `width:${percent}%`})));
+    node.append(progress);
+    const next = state.next;
+    if (next) {
+      const open = button(`Open ${(pages[next.page] || ["", next.page])[1]}`, () => { setupGuide = {page: next.page, title: next.title, find: next.find}; location.hash = next.page; }, "button primary");
+      const skip = button("Skip for now", async () => { const saved = await act("Skipped. It stays on the list below.", () => mutate("/api/setup", {skip: next.id}, "PUT")); if (saved) node.replaceWith(setupScreen(saved)); }, "button ghost");
+      const check = button("Check again", async () => { const fresh = await act("", () => api("/api/setup")); if (fresh) node.replaceWith(setupScreen(fresh)); }, "button");
+      node.append(append(el("div", "setup-next"), el("span", "eyebrow", next.optional ? "NEXT · OPTIONAL" : "NEXT STEP"), el("h3", "", next.title), el("p", "", next.why),
+        append(el("ol"), ...array(next.how).map(line => el("li", "", line))), el("p", "row-meta", `About ${counted(next.minutes, "minute", "minutes")} · needed for ${array(next.for).join(", ")}`),
+        actionsRow(open, check, skip)));
+    }
+    // 3. Every step for the chosen goals
+    const list = el("ul", "setup-steps");
+    array(state.steps).forEach(step => {
+      const current = next && step.id === next.id, item = el("li", step.done ? "done" : current ? "current" : "");
+      const action = step.done ? null : step.skipped
+        ? button("Do it now", async () => { const saved = await act("", () => mutate("/api/setup", {unskip: step.id}, "PUT")); if (saved) node.replaceWith(setupScreen(saved)); }, "button small ghost")
+        : button("Open", () => { setupGuide = {page: step.page, title: step.title, find: step.find}; location.hash = step.page; }, "button small ghost");
+      append(item, el("span", "mark", step.done ? "✓" : String(array(state.steps).indexOf(step) + 1)),
+        append(el("span", "grow"), el("strong", "", step.title), el("small", "", step.done ? (step.detail ? `Done: ${step.detail}` : "Done") : step.skipped ? "Skipped for now" : step.optional ? `Optional · ${step.why}` : step.why)), action);
+      list.append(item);
+    });
+    node.append(panel("Your setup", body(list)));
+    // 4. First wins
+    const wins = el("div", "setup-wins");
+    array(state.first_wins).forEach(win => {
+      const go = button(win.label, async () => {
+        if (win.path) { const result = await act(outcome => outcome.message || "Started.", () => mutate(win.path, {}, win.method, 120000)); if (!result) return; }
+        location.hash = win.page;
+      }, win.ready ? "button primary" : "button");
+      go.disabled = !win.ready;
+      wins.append(append(el("div", "setup-win"), el("strong", "", win.goal_label), el("p", "row-meta", win.ready ? "Ready." : `After: ${array(win.waiting_for).join(", ")}`), go));
+    });
+    node.append(panel("Do your first thing", body(wins)), picking);
+    if (state.complete) node.append(actionsRow(button("Hide the setup banner on Home", async () => { if (await act("Hidden. Get set up stays in the menu.", () => mutate("/api/setup", {dismissed: true}, "PUT"))) refresh(true); }, "button ghost")));
+    return node;
   }
 
   // ---------- overview ----------
@@ -303,19 +395,6 @@
       closeDialog(); await refresh(true); toast("Workspace setup saved.");
     });
     showDialog("Set up your workspace", form);
-  }
-  function setupChecklist() {
-    const signIn = name => cache.providers?.find(item => item.id === name)?.sign_in?.signed_in === true || agentRow(name).authentication === "verified_by_execution";
-    const items = [
-      ["Install Git and the AI coding tools", "Toolchain checks and installs Git, Codex and Claude Code.", agentRow("codex").installed && agentRow("claude").installed, "toolchain"],
-      ["Sign in to Codex and Claude", "Use your own accounts; Cerebra never sees your password.", signIn("codex") && signIn("claude"), "models"],
-      ["Switch AI agents on", "One-time permission in Settings. Every task still asks you first.", agentsOn(), "settings"],
-      ["Add a project", "An existing folder, a new project, or one cloned from GitHub.", array(data.projects).length > 0, "projects"],
-      ["Create your first task", "Describe what you want built.", realTasks().length > 0, "tasks"]
-    ];
-    const list = el("div", "checklist");
-    items.forEach(([title, text, done, target], index) => { const item = el("div", `check-item${done ? " done" : ""}`), info = el("div"); append(info, el("strong", "", title), el("small", "", text)); append(item, el("span", "tick", done ? "✓" : index + 1), info, done ? badge("done", "green") : link("Open →", target)); list.append(item); });
-    return {list, complete: items.every(item => item[2])};
   }
   // Plain words for the errors people actually hit; anything else shows its own first sentence.
   const REASONS = [
@@ -404,10 +483,13 @@
     return append(el("section"), el("h2", "home-question", "What would you like to do today?"), askBox(), box);
   }
   function overview() {
-    const node = el("div"), tasks = realTasks(), active = tasks.filter(task => ACTIVE.includes(task.state)), setup = setupChecklist();
+    const node = el("div"), tasks = realTasks(), active = tasks.filter(task => ACTIVE.includes(task.state));
     node.append(homeTiles());
-    if (data.onboarding?.needs_setup && !data.onboarding.existing_workspace) node.append(customerWelcome(data.onboarding));
-    if (!setup.complete && !simpleMenu()) node.append(panel("Get started", body(el("p", "row-meta", "These steps apply when you want Cerebra to run a coding task. You can use other workspace tools before completing them."), setup.list)));
+    const center = data.setup || {};
+    if (!center.complete && !center.dismissed) node.prepend(append(el("div", "setup-banner"),
+      append(el("div"), el("strong", "", center.goals?.length ? `Setup: ${center.done} of ${center.total} done` : "Welcome to Cerebra: let's set it up"),
+        el("div", "row-meta", center.goals?.length ? (center.next ? `Next: ${center.next.title}` : "Everything essential is connected.") : "Pick what you want it to do, and it shows you only what to connect, step by step.")),
+      button(center.goals?.length ? "Continue setup" : "Get started", () => { location.hash = "setup"; }, "button primary")));
     // Tasks paused because Cerebra closed or stopped, or waiting for an AI model with usage left.
     const stopped = tasks.filter(task => task.state === "BLOCKED" && ["paused_on_close", "interrupted_restart"].includes(task.results?.blocked_reason));
     const noUsage = tasks.filter(task => task.state === "BLOCKED" && task.results?.blocked_reason === "waiting_for_usage");
@@ -733,11 +815,17 @@
       tests.forEach(command => { const line = el("code", "", shortCommand(command)); line.title = command.join(" "); shown.append(line); });
       append(card, top, kv([["Branch", project.default_branch], ["Tasks", tasks.length], ["Tests", tests.length ? shown : "none — add some"]]));
       const needs = el("div"); card.append(needs);
-      api(`/api/projects/${encodeURIComponent(project.id)}/settings-files`).then(info => {
-        if (!info.missing) return;
+      const paintNeeds = info => {
+        if (!info || !info.missing) { needs.replaceChildren(); return; }
         const names = array(info.missing.names), target = info.missing.target || ".env";
         needs.replaceChildren(append(hint(`Its tests need local settings this laptop doesn't have yet${names.length ? `: ${names.slice(0, 6).join(", ")}${names.length > 6 ? "…" : ""}` : ""}. They belong in ${target}, which doesn't exist yet. Cerebra lends it to test runs only; the AI never sees it.`, true),
           append(el("div", "actions"), button(`Create ${target} and open it`, async () => { if (await act(result => `Created ${result.created} from ${info.missing.example}. Fill in your own values and save; tasks waiting for these settings continue by themselves.`, () => mutate(`/api/projects/${encodeURIComponent(project.id)}/settings-file`, {}))) render(); }, "button small"))));
+      };
+      const seen = projectNotes[project.id];
+      paintNeeds(seen);  // what was last seen, at once: no empty gap that fills in a moment later
+      api(`/api/projects/${encodeURIComponent(project.id)}/settings-files`).then(info => {
+        if (JSON.stringify(info) === JSON.stringify(seen)) return;
+        projectNotes[project.id] = info; paintNeeds(info);
       }).catch(() => {});
       append(card, append(el("div", "card-footer"), button("New task", () => taskForm(project.id), "button small primary"), viewControls("project", project.id), button("Chat", () => newChat(project.id), "button small"), button("Get paid…", () => paymentsTaskChooser(project), "button small"), button("Tests…", () => testsForm(project), "button small ghost"), button("Push", () => act(result => `Pushed to ${result.remote}`, () => mutate(`/api/projects/${project.id}/push`, {}, "POST", 600000)), "button small ghost"), button("Publish…", () => publishForm(project), "button small ghost")));
       grid.append(card);
@@ -745,10 +833,23 @@
     return root;
   }
   // Every project in one table: what's working, what needs the owner, what's done or failed, and what the AI runs used.
+  // The Projects page keeps what it last loaded, so a refresh redraws the same content at once instead of blanking it
+  // while the server answers (that blank-then-fill was the page's blinking).
+  const projectNotes = {};
+  let glanceSeen = null;
   function projectsAtAGlance(holder) {
     const token = renderToken;
+    if (glanceSeen) paintGlance(holder, glanceSeen);
     api("/api/projects/summary").then(summary => {
-      if (token !== renderToken || array(summary.projects).length < 2) return;  // one project: its card says it all
+      if (token !== renderToken) return;
+      if (glanceSeen && JSON.stringify(summary) === JSON.stringify(glanceSeen)) return;
+      glanceSeen = summary;
+      paintGlance(holder, summary);
+    }).catch(() => {});
+  }
+  function paintGlance(holder, summary) {
+    {
+      if (array(summary.projects).length < 2) { holder.replaceChildren(); return; }  // one project: its card says it all
       const t = summary.totals, cell = (value, cls) => el("td", value ? cls || "" : "muted", String(value));
       const rows = summary.projects.map(item => {
         const name = el("td"), open = el("a", "", item.name);
@@ -765,7 +866,7 @@
         hint(`${t.working} working, ${t.approvals} ${t.approvals === 1 ? "approval" : "approvals"} waiting for you, ${t.done} done and ${t.failed} failed across ${summary.projects.length} projects.`),
         append(el("div", "table-wrap"), append(el("table", "glance"), append(el("thead"), append(el("tr"), el("th", "", "Project"), el("th", "", "Priority"), el("th", "", "Needs you"), el("th", "", "Working"),
           el("th", "", "Queued"), el("th", "", "Stuck"), el("th", "", "Done"), el("th", "", "Failed"), el("th", "", "Tokens"), el("th", "", "Last activity"))), append(el("tbody"), ...rows))))));
-    }).catch(() => {});
+    }
   }
   const TEST_PRESETS = [["none", "Not yet: add tests later", null], ["pytest", "Python: pytest", ["python", "-m", "pytest", "-q"]], ["unittest", "Python: unittest", ["python", "-m", "unittest", "-q"]],
     ["npm", "Node.js: npm test", ["npm", "test"]], ["pnpm", "Node.js: pnpm test", ["pnpm", "test"]], ["yarn", "Node.js: yarn test", ["yarn", "test"]], ["dotnet", ".NET: dotnet test", ["dotnet", "test"]],
@@ -3705,7 +3806,7 @@
       const gmailForm = el("form"), clientId = input("Google Desktop app OAuth client ID", mail.client_id || ""), secret = input("Google client secret", ""); secret.type = "password"; secret.autocomplete = "off";
       const saveMail = submitButton("Save Google settings"), query = input("Gmail search", "newer_than:7d"), messages = el("div"), mailState = el("div", mail.expired ? "hint warn" : "hint", mail.expired ? `Google ended the sign-in for ${mail.email}, so nothing can be sent or read. Press Connect Gmail… again. If your Google Cloud app is in Testing, publish it (OAuth consent screen › Publish app) so the sign-in no longer ends after 7 days.` : mail.connected ? (mail.can_send ? `Connected: ${mail.email} (reads, and sends what you send from Prospects)` : `Connected read-only: ${mail.email}. Connect Gmail again and allow sending to email businesses from Prospects.`) : "Not connected");
       append(gmailForm, mailState, hint("Enable Gmail API in your own Google Cloud project and create a Desktop app OAuth client. Sign-in opens Google's page. Cerebra reads messages to see wins and replies, and sends only the emails you send from Prospects (or Automatic outreach, if you switch it on). It never deletes or changes mail. Messages are not automatically given to AI."), field("Client ID", clientId), field("Client secret", secret), actionsRow(saveMail, button("Connect Gmail…", () => act(value => value.message, () => mutate("/api/business/gmail/authorize"))), button("Disconnect Gmail", () => act(value => { mailState.textContent = "Disconnected"; messages.replaceChildren(); return value.message; }, () => mutate("/api/business/gmail", undefined, "DELETE")))), field("Search your inbox", query), button("Read matching messages", async () => { try { const items = await api(`/api/business/gmail/messages?query=${encodeURIComponent(query.value)}&limit=10`); messages.replaceChildren(...items.map(item => { const card = el("div", "action-card"); append(card, el("strong", "", item.subject), el("div", "row-meta", item.from), el("p", "mail-text", item.body || item.snippet), button("Use as business brief…", () => businessForm({title: item.subject.slice(0,120), brief: item.body || item.snippet}))); return card; })); if (!items.length) messages.textContent = "No matching messages."; } catch (issue) { notice(issue.message, true); } }), messages);
-      wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Read-only Gmail intake", body(withNotes(gmailForm, "gmail")), button("How to connect…", () => guideDialog("gmail"), "button small ghost")));
+      wireForm(gmailForm, saveMail, async () => { await mutate("/api/business/gmail", {client_id: clientId.value.trim(), client_secret: secret.value.trim()}, "PUT"); secret.value = ""; toast("Google settings saved."); }); root.append(panel("Gmail: send and read from your own address", body(withNotes(gmailForm, "gmail")), button("How to connect…", () => guideDialog("gmail"), "button small ghost")));
       const notifyForm = el("form"), ntfy = check("Send progress notifications through ntfy", notifications.ntfy_enabled), telegram = check("Send progress notifications to my Telegram bot", notifications.telegram_enabled);
       const server = input("HTTPS ntfy server", notifications.ntfy_server), bot = input("Telegram bot token (blank keeps saved token)", ""), chat = input("Your private Telegram chat ID", notifications.telegram_chat_id || ""); bot.type = "password"; bot.autocomplete = "off";
       const saveNotify = submitButton("Save notifications"), notifyResult = el("pre", "connection-result");
@@ -4094,7 +4195,10 @@
     try {
       const next = await api("/api/overview"), fingerprint = JSON.stringify(next); data = next; followComfort(next.preferences);
       const status = $("#connection-status"); status.className = "pill good"; status.replaceChildren(el("span", "dot"), document.createTextNode("Connected")); notice("");
-      if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "projects", "approvals", "reports", "activity"].includes(page) || force) render(); else chrome(); if (page === "system" && !force) paintTeamBar(); }
+      // The Projects page is rebuilt only when projects or their tasks change, not on every new event (it used to blink).
+      const projectsPrint = JSON.stringify([next.projects, array(next.tasks).map(task => [task.id, task.project_id, task.state])]);
+      const projectsChanged = projectsPrint !== lastProjectsPrint; lastProjectsPrint = projectsPrint;
+      if (force || fingerprint !== lastFingerprint) { lastFingerprint = fingerprint; if (["overview", "tasks", "approvals", "reports", "activity"].includes(page) || (page === "projects" && projectsChanged) || force) render(); else chrome(); if (page === "system" && !force) paintTeamBar(); }
       if (detailTaskId && dialog.open) await taskDetail(detailTaskId, true);
     } catch (issue) { const status = $("#connection-status"); status.className = "pill bad"; status.replaceChildren(el("span", "dot"), document.createTextNode("Not connected")); notice(`Cerebra isn't answering right now. Close it and open it again. (${issue.message})`, true); }
     finally { fetching = null; done(); }

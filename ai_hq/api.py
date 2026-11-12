@@ -387,10 +387,30 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         totals = {key: sum(row[key] for row in projects) for key in ("tasks", "working", "waiting", "queued", "stuck", "done", "failed", "approvals", "runs", "tokens")}
         return {"projects": projects, "totals": totals}
 
+    def setup_glance():
+        from . import setup as setup_module
+        with db.Session() as session:
+            return setup_module.glance(session, settings)
+
     def look_now():
         from . import assistant as assistant_module
         with db.Session() as session:
             return assistant_module.preferences(session)
+
+    @app.get("/api/setup")
+    def setup_status():
+        """The Setup Center: the owner's goals, the connections they need in order, the next step and a first job per goal."""
+        from . import setup as setup_module
+        with db.Session() as session:
+            return setup_module.status(session, settings)
+
+    @app.put("/api/setup")
+    def setup_save(payload: dict):
+        from . import setup as setup_module
+        with db.Session.begin() as session:
+            setup_module.save(session, payload)
+            session.flush()
+            return setup_module.status(session, settings)
 
     @app.get("/api/preferences")
     def preferences_get():
@@ -445,7 +465,7 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         if not agents:
             agents = [{"name":"claude","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"},{"name":"codex","available":False,"status":"Not probed; run doctor", "authentication":"Not checked"}]
         active = next((task for task in tasks if task["state"] in {"RUNNING","VERIFYING","REVIEWING"}),None)
-        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"earn":earn,"onboarding":workspace_setup,"version":__version__,"preferences":look_now(),"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
+        return {"projects":projects,"tasks":tasks,"agents":agents,"approvals":approvals,"events":events,"settings":public_settings(),"profiles":profiles,"roles":roles,"autopilot":away,"update_progress":updater.progress(),"assistant":assistant_settings,"auto_fix":auto_fix_settings,"assistant_full_access":assistant_access,"routing":route_policy,"catalog":catalog(),"money":money_glance,"freelance":freelance_glance,"books":books_glance,"calls":{"count":len(waiting),"items":waiting[:5]},"earn":earn,"onboarding":workspace_setup,"version":__version__,"preferences":look_now(),"setup":setup_glance(),"supervisor":{"state":"working" if active else "idle","active_task":active["id"] if active else None}}
 
     @app.get("/api/telemetry")
     def telemetry(task_id: str | None = None):
