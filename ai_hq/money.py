@@ -7,6 +7,7 @@ Amounts are the owner's own; Cerebra invents no prices, discounts or terms.
 """
 from __future__ import annotations
 
+from .words import counted
 import html
 import re
 from datetime import date, timedelta
@@ -293,7 +294,7 @@ def quote_from_job(session, job_id):
     pieces = [part for part in (", ".join(scope.get("pages") or []), ", ".join(scope.get("features") or [])) if part]
     items = [{"description": f"{job.title}" + (f": {'; '.join(pieces)}" if pieces else ""), "quantity": 1, "unit_price": price}]
     if scope.get("revisions_included"):
-        items[0]["description"] = (items[0]["description"] + f". Includes {scope['revisions_included']} round(s) of changes")[:300]
+        items[0]["description"] = (items[0]["description"] + f". Includes {counted(scope['revisions_included'], 'round', 'rounds')} of changes")[:300]
     notes = ("Not included: " + ", ".join(scope["exclusions"])) if scope.get("exclusions") else ""
     return create(session, "quote", {"client": scope.get("client") or job.client or job.title, "items": items, "job_id": job.id, "notes": notes,
                                      **({"currency": scope["currency"]} if re.fullmatch(r"[A-Z]{3}", str(scope.get("currency") or "")) else {})})

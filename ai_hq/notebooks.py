@@ -7,6 +7,7 @@ it disagrees.
 """
 from __future__ import annotations
 
+from .words import counted
 import json
 import re
 from pathlib import Path
@@ -161,11 +162,11 @@ def etsy_version(session, folder, book_id, pages=2):
                                                      "printable insert", "log sheet pdf"]
     description = "\n\n".join(part for part in (
         str(listing.get("description") or "").strip(),
-        f"WHAT YOU GET\n- 1 PDF with {info['pages']} page(s), US Letter (8.5 x 11 in)\n- Print at home or at a print shop, as many times as you like, for personal use",
+        f"WHAT YOU GET\n- 1 PDF with {counted(info['pages'], 'page', 'pages')}, US Letter (8.5 x 11 in)\n- Print at home or at a print shop, as many times as you like, for personal use",
         "This is a digital download: nothing is shipped. Colors and lines may look slightly different depending on your printer.",
         "Designed by me and drawn by code, with no AI-generated images.") if part)
     made = {"title": title, "tags": etsy.clean_tags(words), "description": description[:8000], "price": ETSY_PRICE,
-            "product": f"Printable PDF: {path.name} ({info['pages']} page(s), US Letter)"}
+            "product": f"Printable PDF: {path.name} ({counted(info['pages'], 'page', 'pages')}, US Letter)"}
     made["checks"] = etsy.check_listing(made)
     saved = EtsyListing(niche_id=None, title=made["title"], tags=made["tags"], description=made["description"], price=made["price"],
                         product=made["product"], checks=made["checks"], status="draft", model="")

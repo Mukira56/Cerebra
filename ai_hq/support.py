@@ -10,6 +10,7 @@ from a fixed list of standard test runners, so model text can never become an ar
 """
 from __future__ import annotations
 
+from .words import counted
 import json
 import re
 from pathlib import Path
@@ -116,7 +117,7 @@ def brief(session, focus_project=None, message="", limit=14000):
         if error:
             line += f" | error: {_short(error, 500 if focus else 160)}"
         if task.review_findings:
-            line += f" | {len(task.review_findings)} review finding(s): {_short('; '.join(f.get('message', '') for f in task.review_findings[:3]), 300)}"
+            line += f" | {counted(len(task.review_findings), 'review finding', 'review findings')}: {_short('; '.join(f.get('message', '') for f in task.review_findings[:3]), 300)}"
         if focus:
             events = session.scalars(select(Event).where(Event.task_id == task.id).order_by(Event.created_at.desc()).limit(6)).all()
             line += " | recent: " + " / ".join(_short(event.message, 120) for event in events[::-1])

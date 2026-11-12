@@ -17,6 +17,7 @@ handled twice. A failure here never touches the rest of Cerebra.
 """
 from __future__ import annotations
 
+from .words import counted
 import hashlib
 import threading
 
@@ -344,7 +345,7 @@ class Remote:
         words = {"sent": "waiting", "followed_up": "followed up", "done": "all follow-ups sent", "replied": "replied", "opted_out": "said no", "bounced": "bounced"}
         lines = [f"{words.get(stage, stage)}: {count}" for stage, count in counts.items()]
         recent = [f"- {item['name']}: {words.get(item['stage'], item['stage'])}" for item in items[:6]]
-        self.say(settings, f"Emailed {len(items)} business(es)\n" + "\n".join(lines) + "\n\nLatest:\n" + "\n".join(recent))
+        self.say(settings, f"Emailed {counted(len(items), 'business', 'businesses')}\n" + "\n".join(lines) + "\n\nLatest:\n" + "\n".join(recent))
         return 1
 
     # ---- decisions waiting for the owner ----
@@ -411,7 +412,7 @@ class Remote:
         if proposal.get("status") != "ready":
             self.say(settings, f"The proposal couldn't be written: {proposal.get('error') or 'try again'}")
             return 1
-        terms = " · ".join(part for part in (f"price {proposal['price']:g}" if proposal.get("price") else "", f"{proposal['days']} day(s)" if proposal.get("days") else "") if part)
+        terms = " · ".join(part for part in (f"price {proposal['price']:g}" if proposal.get("price") else "", f"{counted(proposal['days'], 'day', 'days')}" if proposal.get("days") else "") if part)
         buttons = []
         if source == "freelancer" and self.bidder is not None and self.bidder.status()["connected"] and proposal.get("price") and proposal.get("days"):
             buttons.append(("Send bid on Freelancer.com", f"bid:{lead_id}"))
@@ -441,7 +442,7 @@ class Remote:
         with self.db.Session() as session:
             ready = session.scalars(select(Book).where(Book.status == "files_ready").order_by(Book.created_at)).all()
             titles = [row.title for row in ready]
-        self.say(settings, (f"{len(titles)} book(s) ready to upload to KDP (about 3 a day):\n" + "\n".join(f"- {title}" for title in titles[:12])
+        self.say(settings, (f"{counted(len(titles), 'book', 'books')} ready to upload to KDP (about 3 a day):\n" + "\n".join(f"- {title}" for title in titles[:12])
                             + "\n\nOpen each in Cerebra › Books to copy its fields and upload its two PDFs.") if titles else "No books waiting. Cerebra › Books › Make all makes the age-group collection.")
         return 1
 

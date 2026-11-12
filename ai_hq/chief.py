@@ -9,6 +9,7 @@ This first part is the backbone the planner will use:
 """
 from __future__ import annotations
 
+from .words import counted
 import json
 import threading
 import time
@@ -365,8 +366,14 @@ def calls(session):
                       "no": {"method": "POST", "path": f"/api/approvals/{approval.id}", "body": {"approve": False}, "done": "Declined."}})
     # Only the columns needed: the Overview asks for this every few seconds, and job posts are long.
     from .freelance import auto_settings
+    # Only the leads that can need the owner: an award, a ready proposal, or a rare chance. SQLite reads those fields
+    # itself, so thousands of open leads aren't decoded on every refresh.
+    from sqlalchemy import func, or_
     leads = session.execute(select(FreelanceLead.title, FreelanceLead.status, FreelanceLead.source, FreelanceLead.proposal, FreelanceLead.updated_at,
-                                   FreelanceLead.extra, FreelanceLead.score, FreelanceLead.id).where(FreelanceLead.status.in_(["awarded", "new", "saved"]))).all()
+                                   FreelanceLead.extra, FreelanceLead.score, FreelanceLead.id)
+                            .where(FreelanceLead.status.in_(["awarded", "new", "saved"]),
+                                   or_(FreelanceLead.status == "awarded", func.json_extract(FreelanceLead.proposal, "$.status") == "ready",
+                                       func.json_extract(FreelanceLead.extra, "$.rare").is_not(None)))).all()
     fresh = _stamp(datetime.now(timezone.utc) - timedelta(hours=48))
     worth = auto_settings(session)["min_score"]  # scores are refreshed hourly: an old, crowded job's proposal stops asking for attention
     for title, status, source, proposal, updated, extra, points, lead_id in leads:
@@ -453,18 +460,18 @@ def brief(session):
     shelf = books_module.glance(session)
     summary = money.summary(session)
     glance = summary.get("by_currency", {}).get(summary.get("currency"), {})
-    lines = [f"Workers ran {day['runs']} time(s) in the last 24 hours" + (f", {day['failed']} failed." if day["failed"] else ", with no failures."),
-             f"{len(waiting)} decision(s) wait for you." if waiting else "Nothing waits for you.",
-             f"Freelance: {work['strong']} strong match(es) waiting, {work['applied']} application(s) out" + (f", {work['awarded']} client(s) chose you." if work["awarded"] else "."),
+    lines = [f"Workers ran {counted(day['runs'], 'time', 'times')} in the last 24 hours" + (f", {day['failed']} failed." if day["failed"] else ", with no failures."),
+             f"{counted(len(waiting), 'decision', 'decisions')} waiting for you." if waiting else "Nothing waits for you.",
+             f"Freelance: {counted(work['strong'], 'strong match', 'strong matches')} waiting, {counted(work['applied'], 'application', 'applications')} out" + (f", {counted(work['awarded'], 'client', 'clients')} chose you." if work["awarded"] else "."),
              f"Money this month: {summary.get('currency', 'USD')} {float(glance.get('earned_month') or 0):,.2f} earned, {float(glance.get('owed') or 0):,.2f} owed."]
     if shelf.get("files_ready") or shelf.get("published"):
         lines.append(f"Books: {shelf.get('files_ready', 0)} ready to upload, {shelf.get('published', 0)} published.")
     # A decision dashboard, risks first (the daily-analysis design): what can't wait, then what to apply to today and why.
     first = [item for item in waiting if item["kind"] in URGENT]
     picks = freelance.today(session)
-    phone = (f"{len(first)} urgent. " if first else "") + (f"{len(waiting)} decision(s) wait for you. " if waiting else "Nothing waits for you. ") + \
+    phone = (f"{len(first)} urgent. " if first else "") + (f"{counted(len(waiting), 'decision', 'decisions')} waiting for you. " if waiting else "Nothing waits for you. ") + \
             (f"Top pick today: score {picks[0]['score']}" + (f", {picks[0]['bids']} bids" if picks[0]["bids"] is not None else "") + ". " if picks else "") + \
-            f"{day['runs']} worker run(s) overnight" + (f", {day['failed']} failed." if day["failed"] else ".") + " Open Cerebra for details."
+            f"{counted(day['runs'], 'worker run', 'worker runs')} overnight" + (f", {day['failed']} failed." if day["failed"] else ".") + " Open Cerebra for details."
     return {"lines": lines, "first": first[:5], "today": picks, "calls": waiting[:10], "phone": phone, "at": now()}
 
 
@@ -599,7 +606,7 @@ def decide_plan(session, registry, goal_id, approve):
         for job in current["plan"]["jobs"]:
             if job["worker"] in registry.workers and session.get(ChiefJob, job["worker"]) is not None:
                 update_job(session, registry, job["worker"], {"enabled": job["run"], "every_minutes": job["every_minutes"]})
-        session.add(Event(kind="chief", message=f"Plan approved: {len(current['plan']['jobs'])} worker(s) set for the goal", data={"goal": goal_id}))
+        session.add(Event(kind="chief", message=f"Plan approved: {counted(len(current['plan']['jobs']), 'worker', 'workers')} set for the goal", data={"goal": goal_id}))
     return _store_plan(session, goal_id, {**current, "status": "approved" if approve else "declined", "decided_at": now()})
 
 

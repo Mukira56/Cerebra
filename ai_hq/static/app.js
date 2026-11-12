@@ -134,6 +134,8 @@
   function array(value) { return Array.isArray(value) ? value : []; }
   function nice(value) { return String(value ?? "—").replaceAll("_", " ").toLowerCase().replace(/^./, c => c.toUpperCase()); }
   function json(value) { return typeof value === "string" ? value : JSON.stringify(value, null, 2); }
+  // "1 email", "3 emails": a count with the right form of the word.
+  function counted(number, one, many) { return `${number} ${Number(number) === 1 ? one : many}`; }
   function date(value) { if (!value) return "—"; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("en-US", {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}); }
   function relative(value) { if (!value) return "—"; const delta = Date.now() - new Date(value).getTime(); if (!Number.isFinite(delta)) return date(value); if (delta < 60000) return "just now"; if (delta < 3600000) return `${Math.floor(delta / 60000)} min ago`; if (delta < 86400000) return `${Math.floor(delta / 3600000)} h ago`; return date(value); }
   const STATE_STYLE = {COMPLETED: "green", RUNNING: "blue", VERIFYING: "blue", REVIEWING: "blue", PLANNING: "blue", READY: "blue", FAILED: "red", REJECTED: "red", CANCELLED: "muted", BLOCKED: "amber", NEEDS_CHANGES: "amber", AWAITING_APPROVAL: "amber", PENDING: "muted", APPROVED: "green"};
@@ -419,7 +421,10 @@
     if (offline.length) node.append(panel("Waiting for the internet", body(el("p", "", "These tasks couldn't reach the AI because the internet or DNS was down. Nothing is lost: Cerebra tries again every 5 minutes, or press Resume in a task to try now."),
       list(offline.map(task => `${task.description.slice(0, 80)} · next try ${date(task.results.retry_after)}`)))));
     const stats = el("div", "grid stats");
-    [["Projects", array(data.projects).length, "authorized repositories", ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length + finishedTasks().length, finishedTasks().length ? "approvals and merges" : "approvals", "amber"], ["Done", tasks.filter(task => task.state === "COMPLETED").length, "finished tasks", "green"], ["Problems", tasks.filter(task => task.state === "FAILED" && !task.finished).length, "failed tasks", "red"]]
+    const one = (count, word, many) => count === 1 ? word : many;  // "1 failed task", "2 failed tasks"
+    const projectCount = array(data.projects).length, doneCount = tasks.filter(task => task.state === "COMPLETED").length,
+      failedCount = tasks.filter(task => task.state === "FAILED" && !task.finished).length;
+    [["Projects", projectCount, one(projectCount, "authorized repository", "authorized repositories"), ""], ["Active", active.length, active.length ? "AI is working" : "nothing running", "cyan"], ["Waiting for you", pendingApprovals().length + finishedTasks().length, finishedTasks().length ? "approvals and merges" : "approvals", "amber"], ["Done", doneCount, one(doneCount, "finished task", "finished tasks"), "green"], ["Problems", failedCount, one(failedCount, "failed task", "failed tasks"), "red"]]
       .forEach(([label, value, note, style]) => {
         const card = append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note));
         const target = {"Projects": ["projects"], "Active": ["tasks", "active"], "Waiting for you": ["approvals"], "Done": ["tasks", "COMPLETED"], "Problems": ["tasks", "FAILED"]}[label];
@@ -613,7 +618,7 @@
         const card = el("div", "action-card"), top = el("div", "row-meta");
         append(top, el("code", "", item.commit.slice(0, 8)), el("strong", "", item.message), el("span", "", date(item.at)),
           item.commit === data.merged ? badge("merged into project", "green") : null, item.commit === data.current ? badge("current", "blue") : null);
-        card.append(top, el("p", "row-meta", `${item.files.length} file(s): ${item.files.slice(0, 6).join(", ")}${item.files.length > 6 ? "…" : ""}`));
+        card.append(top, el("p", "row-meta", `${counted(item.files.length, "file", "files")}: ${item.files.slice(0, 6).join(", ")}${item.files.length > 6 ? "…" : ""}`));
         if (canRestore && item.commit !== data.current) card.append(confirmButton("Restore this checkpoint", "Click again to restore", async () => {
           if (await act("Checkpoint restored. Resume, then Start, to test and review it.", () => mutate(`/api/tasks/${encodeURIComponent(task.id)}/checkpoints/restore`, {commit: item.commit}))) { await refresh(true); taskDetail(task.id); }
         }));
@@ -1450,7 +1455,7 @@
         state.agents_on ? button(writer.state === "writing" ? "Writing posts…" : "✍ Write posts for me", () => act("Your AI model is writing 5 posts from your real work (about a minute). They arrive as drafts to approve.", () => mutate("/api/social/write", {count: 5, channels: ["x", "facebook"]})).then(() => setTimeout(() => render(), 1500)), "button") : null);
       const list = el("div", "row-list");
       posts.forEach(post => list.append(postRow(post, state)));
-      const left = append(el("div"), panel("Your posts", append(el("div"), body(tools, writer.state === "failed" ? hint(`Couldn't write posts: ${writer.error}`, true) : writer.state === "done" ? hint(`${writer.count} new draft(s) written. Read and approve them.`) : null,
+      const left = append(el("div"), panel("Your posts", append(el("div"), body(tools, writer.state === "failed" ? hint(`Couldn't write posts: ${writer.error}`, true) : writer.state === "done" ? hint(`${counted(writer.count, "new draft", "new drafts")} written. Read and approve them.`) : null,
         state.agents_on ? null : hint("Switch AI agents on in Settings to have posts written for you.")),
         posts.length ? list : body(empty("No posts yet", "Share finished work, tips and your services so clients find you. Write one, or have your AI model draft a batch from your real work; nothing goes out until you approve it.", null, "✎"))), null, posts.length));
       const side = append(el("div"), panel("Your accounts", body(socialAccounts(state))), panel("Budget and limits", body(socialLimits(state))),
@@ -1533,7 +1538,7 @@
   }
   // ---------- chief of staff: goals, the workers on their schedules, every run on the record ----------
   const RUN_STYLE = {ok: "green", skipped: "muted", failed: "red", busy: "amber"};
-  function everyText(minutes) { return minutes % 1440 === 0 ? `every ${minutes / 1440} day(s)` : minutes % 60 === 0 ? `every ${minutes / 60} hour(s)` : `every ${minutes} minutes`; }
+  function everyText(minutes) { return minutes % 1440 === 0 ? `every ${counted(minutes / 1440, "day", "days")}` : minutes % 60 === 0 ? `every ${counted(minutes / 60, "hour", "hours")}` : `every ${minutes} minutes`; }
   function chiefView() {
     const root = el("div"), token = renderToken;
     root.append(body(el("p", "", "Loading…")));
@@ -1716,7 +1721,7 @@
         append(el("div", "form-grid"), field("Pitches a day", perDay, "Gmail's own limit applies: about 500 a day on a personal Gmail, 2,000 on Google Workspace."),
           field("Follow up after (days, 0 for none)", days), field("Sending", mode)), pitchWindow.node,
         on.wrap, Object.assign(hint(`Added under every email (US law needs your postal address and an opt-out):\n${state.signature || ""}`), {style: "white-space: pre-line"}), actionsRow(save,
-          button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/partners/run", {}, "POST", 600000)).then(() => render()), "button ghost")));
+          button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/partners/run", {}, "POST")).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/partners", {subject: subject.value, body: text.value, follow_up: followUp.value, per_day: Number(perDay.value || 10), follow_up_days: Number(days.value || 0),
           mode: mode.value, enabled: on.control.checked, personalize: tailor.control.checked, big_subject: bigSubject.value, big_body: bigText.value,
@@ -1755,7 +1760,7 @@
       shown.slice(0, 300).forEach(item => {
         const row = append(el("div", "row clickable"), append(el("div", "row-main"), el("strong", "", item.name), el("div", "row-meta", [item.domain, item.source, item.kind === "big_tech" ? "big tech" : "", item.personal ? "tailored" : ""].filter(Boolean).join(" · ")),
           (item.summary || item.about) ? el("div", "row-meta", (item.summary || item.about).slice(0, 160)) : null,
-          el("div", "row-meta", item.email ? `✉ ${item.email}` : array(item.pages).length ? `${item.pages.length} application page(s): ${item.pages.map(page => page.label).slice(0, 3).join(", ")}` :
+          el("div", "row-meta", item.email ? `✉ ${item.email}` : array(item.pages).length ? `${counted(item.pages.length, "application page", "application pages")}: ${item.pages.map(page => page.label).slice(0, 3).join(", ")}` :
             item.notes || (item.status === "new" ? "Its website is read next" : "No public role address")),
           item.reply?.snippet ? el("div", "row-meta", `↩ ${(item.reply.summary || item.reply.snippet).slice(0, 160)}`) : null),
           item.reply?.verdict === "offered" ? badge("offer", "green") : item.reply?.verdict === "declined" ? badge("said no", "muted") : partnerBadge(item.status));
@@ -1803,11 +1808,11 @@
       const facts = found.dossier || {}, read = array(found.pages).filter(page => page.readable);
       const list = (label, values) => array(values).length ? el("div", "row-meta", `${label}: ${values.join("; ")}`) : null;
       box.replaceChildren(
-        facts.summary ? el("p", "", facts.summary) : hint(read.length ? `${read.length} page(s) of their website read so far; the summary is written once enough is in.` : "Their website hasn't been studied yet: it is read a few pages at a time, the companies about to be pitched first."),
+        facts.summary ? el("p", "", facts.summary) : hint(read.length ? `${counted(read.length, "page", "pages")} of their website read so far; the summary is written once enough is in.` : "Their website hasn't been studied yet: it is read a few pages at a time, the companies about to be pitched first."),
         list("Products", facts.products), list("AI work", facts.ai_work), list("Languages", facts.languages), list("Markets", facts.markets),
         list("Africa", facts.africa), list("Hiring", facts.hiring), list("Priorities", facts.priorities),
         array(facts.facts).length ? append(el("ul", "tips"), ...facts.facts.map(fact => el("li", "", `${fact.fact} (${fact.url})`))) : null,
-        read.length ? el("div", "row-meta", `From ${read.length} page(s) of their own website${found.dossier_at ? `, summarised ${date(found.dossier_at)}` : ""}.`) : null);
+        read.length ? el("div", "row-meta", `From ${counted(read.length, "page", "pages")} of their own website${found.dossier_at ? `, summarised ${date(found.dossier_at)}` : ""}.`) : null);
     }).catch(issue => box.replaceChildren(hint(issue.message, true)));
     return box;
   }
@@ -1836,7 +1841,7 @@
       const all = button("Select all", () => { ticks.forEach(tick => { tick.checked = true; }); label(); }, "button small ghost");
       const none = button("Select none", () => { ticks.forEach(tick => { tick.checked = false; }); label(); }, "button small ghost");
       box.replaceChildren(
-        el("p", "", drafts.length ? `${drafts.length} email(s) ready. Open any one to read it in full; untick the ones you don't want to send.` : "No emails are written yet."),
+        el("p", "", drafts.length ? `${counted(drafts.length, "email", "emails")} ready. Open any one to read it in full; untick the ones you don't want to send.` : "No emails are written yet."),
         hint(`Today you can still send ${state.room_today}. Anything over that waits for tomorrow, to protect your Gmail.` +
           (state.waiting_to_be_written ? ` ${state.waiting_to_be_written} more companies are in line: press Write the next 5 to prepare their emails.` : "")),
         drafts.length ? actionsRow(all, none) : null, drafts.length ? list : null, actionsRow(prepare, drafts.length ? send : null));
@@ -1933,7 +1938,7 @@
         append(el("div"), el("strong", "", "Job boards"), append(el("div", "check-list"), ...boards.map(box => box.wrap))),
         append(el("div", "form-grid"), field("Sending", mode), field("Follow up after (days, 0 for none)", days)), attachCv.wrap, jobWindow.node, on.wrap,
         hint("No daily number in Cerebra: Gmail's own limit applies (about 500 a day on a personal Gmail, 2,000 on Google Workspace). When Gmail refuses, sending waits for the next day."),
-        actionsRow(save, button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/jobs/run", {}, "POST", 900000)).then(() => render()), "button ghost")));
+        actionsRow(save, button("Run once now", () => act(result => result.message || result.skipped || "Done.", () => mutate("/api/jobs/run", {}, "POST")).then(() => render()), "button ghost")));
       wireForm(form, save, async () => {
         await mutate("/api/jobs", {cv: cv.value, signature: signature.value, wanted: wantedWords.value, avoid: avoidWords.value, follow_up_days: Number(days.value || 0),
           mode: mode.value, enabled: on.control.checked, work_modes: modes.filter(box => box.control.checked).map(box => box.control.value),
@@ -1943,10 +1948,9 @@
       // 2. the jobs
       const review = button(`Review ready applications (${state.letters_ready || 0})`, () => jobLettersDialog(), state.letters_ready ? "button primary" : "button");
       const offers = button(`Interviews and offers (${state.offered || 0})`, () => { jobFilter = "offered"; render(); }, jobFilter === "offered" ? "button primary" : "button");
-      const findNow = button("Find jobs now", () => act(result => `Found ${result.added} new job(s).` + (array(result.failed).length ? ` Couldn't reach: ${result.failed.join(", ")}.` : ""),
+      const findNow = button("Find jobs now", () => act(result => `Found ${counted(result.added, "new job", "new jobs")}.` + (array(result.failed).length ? ` Couldn't reach: ${result.failed.join(", ")}.` : ""),
         () => mutate("/api/jobs/find", {}, "POST", 600000)).then(() => render()), "button");
-      const writeMore = button("Write the next 10 letters", () => act(result => `${result.written} letter(s) written.` + (array(result.problems).length ? ` Not written: ${result.problems.slice(0, 2).join("; ")}` : ""),
-        () => mutate("/api/jobs/write", {count: 10}, "POST", 1800000)).then(() => render()), "button ghost");
+      const writeMore = button("Write the next 10 letters", () => act(result => result.message, () => mutate("/api/jobs/write", {count: 10}, "POST")).then(() => render()), "button ghost");
       const filters = {ready: `Ready to email (${counts.ready || 0})`, form: `Apply on their site (${counts.form || 0})`, offered: `Interviews and offers (${state.offered || 0})`,
         applied: "Applied", replied: "Replied or said no", all: "Everything"};
       const pick = select(Object.entries(filters), jobFilter); pick.addEventListener("change", () => { jobFilter = pick.value; render(); });
@@ -2052,7 +2056,7 @@
         .then(result => { if (result) { closeDialog(); render(); } }), "button primary");
       const label = () => { const n = ticks.filter(tick => tick.checked).length; send.textContent = n ? `Send all ${n} selected` : "Nothing selected"; send.disabled = !n; };
       ticks.forEach(tick => tick.addEventListener("change", label)); label();
-      box.replaceChildren(el("p", "", ready.length ? `${ready.length} application(s) ready. Open any one to read it in full; untick the ones you don't want to send.` : "No applications are written yet: press Write the next 10 letters."),
+      box.replaceChildren(el("p", "", ready.length ? `${counted(ready.length, "application", "applications")} ready. Open any one to read it in full; untick the ones you don't want to send.` : "No applications are written yet: press Write the next 10 letters."),
         ready.length ? list : null, ready.length ? actionsRow(send) : null);
     })();
   }
@@ -2318,7 +2322,7 @@
       const programs = array(state.programs), proof = state.evidence || {}, stats = el("div", "grid stats");
       const applied = programs.filter(item => item.applied?.status === "applied").length, accepted = programs.filter(item => item.applied?.status === "accepted").length;
       [["Ready to apply", state.ready, `of ${programs.length} programs`, "green"], ["Applied", applied, "waiting to hear", "amber"], ["Accepted", accepted, "credits or funding won", "cyan"],
-       ["Paying customers", proof.paying_customers ? "Yes" : "Not yet", proof.jobs_won ? `${proof.jobs_won} job(s) won` : "from your records", ""]]
+       ["Paying customers", proof.paying_customers ? "Yes" : "Not yet", proof.jobs_won ? `${counted(proof.jobs_won, "job", "jobs")} won` : "from your records", ""]]
         .forEach(([label, value, note, style]) => stats.append(append(el("div", `stat ${style}`), el("div", "stat-label", label), el("div", "stat-value", value), el("div", "stat-note", note))));
       const list = el("div", "row-list");
       programs.forEach(program => {
@@ -2344,7 +2348,7 @@
   function fundingDraftDialog(program, draft) {
     const root = el("div"), boxes = array(draft.answers).map(item => { const box = textarea("", item.answer); box.rows = 5; return {question: item.question, box}; });
     const gaps = boxes.filter(item => item.box.value.includes("TO FILL:")).length;
-    append(root, gaps ? hint(`${gaps} answer(s) have a TO FILL line: replace it with the real detail before you submit.`, true) : hint("Read every answer: it's your application."),
+    append(root, gaps ? hint(`${counted(gaps, "answer", "answers")} have a TO FILL line: replace it with the real detail before you submit.`, true) : hint("Read every answer: it's your application."),
       ...boxes.map(item => field(item.question, item.box)),
       hint(`Written from your records${draft.model ? ` by ${draft.model}` : ""}. Never submit anything you can't back up. Paste the answers into the program's own form.`),
       actionsRow(button("Draft again", () => act("Drafted again.", () => mutate(`/api/funding/programs/${program.key}/draft`, {}, "POST", 300000)).then(result => { if (result) fundingDraftDialog(program, result); }), "button ghost"),
@@ -2450,7 +2454,7 @@
       const list = el("div", "row-list");
       data.niches.forEach(item => {
         const niche = niches.find(entry => entry.id === item.id), row = append(el("div", `row${niche ? " clickable" : ""}`), append(el("div", "row-main"), el("strong", "", item.keyword),
-          el("div", "row-meta", `${item.units} sold in ${item.orders} order(s) from ${item.listings} listing(s)${item.last_sale ? ` · last sale ${new Date(`${item.last_sale}T12:00:00`).toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"})}` : ""}`)),
+          el("div", "row-meta", `${item.units} sold in ${counted(item.orders, "order", "orders")} from ${counted(item.listings, "listing", "listings")}${item.last_sale ? ` · last sale ${new Date(`${item.last_sale}T12:00:00`).toLocaleDateString("en-US", {month: "short", day: "numeric", year: "numeric"})}` : ""}`)),
           el("span", "badge green", worth(item.revenue)));
         if (niche) { row.tabIndex = 0; row.setAttribute("role", "button"); row.title = "Write another listing for this niche";
           row.addEventListener("click", () => etsyNicheDialog(niche)); row.addEventListener("keydown", event => { if (event.key === "Enter") etsyNicheDialog(niche); }); }
@@ -2461,7 +2465,7 @@
     root.append(el("h4", "", "Best-selling listings"), table(["Listing", "Niche", "Sold", "Earned"], data.listings.map(item => [item.title || item.listing_id, item.keyword || (item.made_here ? "—" : "made outside Cerebra"), String(item.units), worth(item.revenue)])));
     if (data.outside.units) root.append(hint(`${data.outside.units} sold (${worth(data.outside.revenue)}) from listings Cerebra didn't make or that have no niche yet.`));
     root.append(hint("Earned is the item price times quantity, before discounts and Etsy's fees."));
-    return panel("What sells", body(root), null, `${data.orders} order(s)`);
+    return panel("What sells", body(root), null, `${counted(data.orders, "order", "orders")}`);
   }
   function etsyNicheDialog(niche) {
     const data = niche.data || niche, root = el("div");
@@ -2475,7 +2479,7 @@
       hint("Titles and tags are other sellers' words: use them to understand the niche, never copy a listing."),
       niche.id ? append(el("div"), el("h4", "", "Listings written for it"), (() => { const holder = el("div", "row-list");
         api(`/api/etsy/listings?niche=${encodeURIComponent(niche.id)}`).then(rows => array(rows).forEach(listing => { const row = append(el("div", "row clickable"),
-          append(el("div", "row-main"), el("strong", "", listing.title), el("div", "row-meta", [`$${Number(listing.price).toFixed(2)}`, listing.checks.length ? `${listing.checks.length} thing(s) to fix` : "passes Cerebra's checks"].join(" · "))));
+          append(el("div", "row-main"), el("strong", "", listing.title), el("div", "row-meta", [`$${Number(listing.price).toFixed(2)}`, listing.checks.length ? `${counted(listing.checks.length, "thing", "things")} to fix` : "passes Cerebra's checks"].join(" · "))));
           row.addEventListener("click", () => etsyListingDialog(listing, niche)); holder.append(row); })).catch(() => {}); return holder; })()) : null,
       niche.id ? actionsRow(button("Remove", () => act("Removed.", () => api(`/api/etsy/niches/${niche.id}`, {method: "DELETE"})).then(() => { closeDialog(); render(); }), "button ghost"),
         button("✍ Write a listing", () => act("Writing a listing with your AI model (about a minute)…", () => mutate(`/api/etsy/niches/${niche.id}/listing`, {}, "POST", 300000)).then(listing => { if (listing) etsyListingDialog(listing, niche); }), "button primary")) : null);
@@ -2844,7 +2848,7 @@
     if (["new", "saved"].includes(lead.status)) actions.append(button("I applied", () => setLead(lead, {status: "applied", notes: notes.value}, "Marked as applied. Good luck!"), "button"));
     if (lead.status === "applied") actions.append(button("Client replied", () => setLead(lead, {status: "interview", notes: notes.value}, "Marked as talking with the client."), "button"));
     if (lead.status === "awarded" && lead.source === "freelancer") actions.append(button("Accept the award", () => showDialog("Accept this award?", append(el("div"),
-      el("p", "", `Accepting commits you to “${lead.title}” at your bid (${lead.currency || "USD"} ${lead.proposal?.price || "?"}, ${lead.proposal?.days || "?"} day(s)). Cerebra then starts the work.`),
+      el("p", "", `Accepting commits you to “${lead.title}” at your bid (${lead.currency || "USD"} ${lead.proposal?.price || "?"}, ${counted(lead.proposal?.days || "?", "day", "days")}). Cerebra then starts the work.`),
       actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Accept", () => act(result => result.message, () => mutate("/api/freelance/accept-award", {id: lead.id})).then(result => { if (result) { closeDialog(); render(); } }), "button primary")))), "button primary"));
     if (lead.status === "awarded" && lead.source !== "freelancer") root.append(hint(`The client chose you. Accept the offer on ${lead.source_label}; when the contract starts, Cerebra sees it in your email and starts the work.`));
     if (lead.status === "won") root.append(lead.job_id ? append(hint("Won. Cerebra is building this job by itself; you review it before anything goes to the client."), link("Open the job →", `job/${lead.job_id}`))
@@ -2911,7 +2915,7 @@
         ? button("Send bid on Freelancer.com", async () => { if (!await act("", save)) return;
             const connected = array(state.freelancer_account.accounts).filter(item => item.connected), from = select(connected.map(item => [item.id, item.holder ? `${item.username} (${item.holder})` : item.username]), connected[0]?.id);
             showDialog("Send this bid?", append(el("div"),
-            el("p", "", `Sends your proposal as a bid of ${lead.currency || "USD"} ${Number(price.value || 0).toLocaleString()} with delivery in ${days.value} day(s) on “${lead.title}”.`),
+            el("p", "", `Sends your proposal as a bid of ${lead.currency || "USD"} ${Number(price.value || 0).toLocaleString()} with delivery in ${counted(days.value, "day", "days")} on “${lead.title}”.`),
             connected.length > 1 ? field("From the account", from) : el("p", "", `From your Freelancer.com account ${state.freelancer_account.username}.`),
             actionsRow(button("Back", () => leadDialog(lead, state), "button ghost"), button("Send bid", async () => { const result = await act(outcome => outcome.message, () => mutate("/api/freelance/bid", {id: lead.id, confirmed: true, account: from.value || null})); if (result) { closeDialog(); render(); } }, "button primary")))); }, "button primary")
         : hint("Connect your Freelancer.com account (Freelance page › Freelancer.com account) to send bids from here.", true));
@@ -2973,7 +2977,7 @@
       };
       const ways = array(result.ways).map(row => ({...row, label: row.name === "automatic" ? "By Cerebra" : "By you"}));
       root.replaceChildren(
-        hint(totals.applied ? `${totals.applied} application(s), ${totals.awarded || 0} chosen by the client, ${totals.won || 0} won, ${paid ? `${earned(totals.earned)} earned from won jobs` : "nothing earned from won jobs yet"}.` : `${totals.found || 0} job(s) found so far and none applied to yet. Mark the jobs you apply to (or switch on Apply automatically) and this shows where you win.`),
+        hint(totals.applied ? `${counted(totals.applied, "application", "applications")}, ${totals.awarded || 0} chosen by the client, ${totals.won || 0} won, ${paid ? `${earned(totals.earned)} earned from won jobs` : "nothing earned from won jobs yet"}.` : `${counted(totals.found || 0, "job", "jobs")} found so far and none applied to yet. Mark the jobs you apply to (or switch on Apply automatically) and this shows where you win.`),
         totals.applied ? append(el("ul", "tips"), ...array(result.advice).map(tip => el("li", "", tip))) : null,
         append(el("div"), el("h4", "", "By where the job came from"), grid("Source", result.sources)),
         append(el("div"), el("h4", "", "By the kind of work"), grid("Service", result.services)),
@@ -3009,7 +3013,7 @@
         link("Manage worker schedules →", "chief"),
         hint(`Bidding: ${state.applier?.message || "waiting for the next round"}`),
         hint(gmail.connected || gmail.authorized ? "Gmail: Cerebra reads messages from Upwork, Fiverr and Freelancer.com to see what you've won." : "Connect Gmail in Business connections, so Cerebra can see hires, offers and orders from Upwork and Fiverr in your email.", !(gmail.connected || gmail.authorized)),
-        append(el("div", "actions"), button("Run a round now", () => act(result => `Done: ${result.bids?.sent || 0} bid(s) sent, ${Number(result.wins?.freelancer || 0) + Number(result.wins?.email || 0)} win(s) found, ${result.work || 0} work step(s) moved on.`, () => mutate("/api/freelance/auto/run", {}, "POST", 900000)).then(() => render()), "button small"), link("Connect Gmail →", "connections")),
+        append(el("div", "actions"), button("Run a round now", () => act(result => `Done: ${counted(result.bids?.sent || 0, "bid", "bids")} sent, ${counted(Number(result.wins?.freelancer || 0) + Number(result.wins?.email || 0), "win", "wins")} found, ${counted(result.work || 0, "work step", "work steps")} moved on.`, () => mutate("/api/freelance/auto/run", {}, "POST", 900000)).then(() => render()), "button small"), link("Connect Gmail →", "connections")),
         hint("Only Freelancer.com is bid on by itself: Upwork and Fiverr ban automated proposals and suspend accounts that use them, so for them Cerebra writes the proposal and you paste it. Win monitoring and won-job processing run only when their workers are enabled in Chief of Staff. You review work before anything is delivered."));
     }).catch(issue => root.replaceChildren(hint(issue.message, true)));
     return root;
@@ -3160,7 +3164,7 @@
   }
   function exportRow(state) {
     const thisYear = Number((state.summary.today || new Date().toISOString()).slice(0, 4)), year = select([[String(thisYear), String(thisYear)], [String(thisYear - 1), String(thisYear - 1)]]);
-    return append(el("div", "actions"), year, button("Export the year (CSV) for my accountant", () => act(result => `Saved ${result.rows} row(s) to ${result.path}. It opens in Excel.`,
+    return append(el("div", "actions"), year, button("Export the year (CSV) for my accountant", () => act(result => `Saved ${counted(result.rows, "row", "rows")} to ${result.path}. It opens in Excel.`,
       () => mutate("/api/money/export", {year: Number(year.value)})), "button small"));
   }
   function plansPanel(state) {
@@ -3250,7 +3254,7 @@
     Object.entries(names).forEach(([source, [label, meaning]]) => {
       const info = channels?.[source] || {}, totals = Object.entries(info.totals || {}).map(([currency, amount]) => cash(amount, currency)).join(", ") || "nothing yet";
       append(root, append(el("div", "action-card"), append(el("div", "row-meta"), badge(info.connected ? "connected" : "not connected", info.connected ? "green" : "muted"), el("strong", "", label)),
-        el("p", "", `${info.count || 0} order(s): ${totals}. ${label} ${meaning}.${info.last_import ? ` Last import ${date(info.last_import)}.` : ""}`),
+        el("p", "", `${counted(info.count || 0, "order", "orders")}: ${totals}. ${label} ${meaning}.${info.last_import ? ` Last import ${date(info.last_import)}.` : ""}`),
         info.connected ? button(`Import ${label} orders`, () => act(result => result.message, () => mutate(`/api/money/channels/${source}/import`, {}, "POST", 180000)).then(() => render()), "button small")
           : link(`Connect ${label} →`, "connections")));
     });
@@ -3279,7 +3283,7 @@
     const text = await act("", () => api(`/api/money/documents/${doc.id}/reminder`)); if (!text) return;
     const subject = input("", text.subject), message = textarea("", text.body); subject.readOnly = true; message.readOnly = true; message.rows = 14;
     const sent = array(text.sent), tone = {friendly: "Friendly", firm: "Firm", final: "Final"}[text.tone] || text.tone;
-    const root = append(el("div"), hint(`${tone} reminder${text.days_late > 0 ? ` · ${text.days_late} day(s) overdue` : ""}. Cerebra never sends it: copy it into WhatsApp or email, or open it in your email app, and send it yourself.${state.settings?.business_name ? "" : " Add your business name under Your business so reminders are signed."}${sent.length ? ` Reminders you sent: ${sent.map(item => `${item.date} (${item.tone})`).join(", ")}.` : ""}`),
+    const root = append(el("div"), hint(`${tone} reminder${text.days_late > 0 ? ` · ${counted(text.days_late, "day", "days")} overdue` : ""}. Cerebra never sends it: copy it into WhatsApp or email, or open it in your email app, and send it yourself.${state.settings?.business_name ? "" : " Add your business name under Your business so reminders are signed."}${sent.length ? ` Reminders you sent: ${sent.map(item => `${item.date} (${item.tone})`).join(", ")}.` : ""}`),
       field("To", el("div", "", text.to || "No email saved on this invoice: copy the text instead.")), field("Subject", subject), field("Message", message),
       actionsRow(button("Back", () => moneyDocDialog(doc, state), "button ghost"),
         button("Copy text", () => navigator.clipboard.writeText(`${text.subject}\n\n${text.body}`).then(() => toast("Copied. Paste it into your email or WhatsApp."), () => toast("Couldn't copy; select the text and copy it.", true)), "button"),
@@ -3490,7 +3494,7 @@
       const used = info.revisions.length, included = info.revisions_included;
       append(changeForm, request, actionsRow(sendChange));
       wireForm(changeForm, sendChange, async () => { const result = await mutate(jobPath("/changes"), {request: request.value}); toast(result.extra ? "Change task created. This is beyond the included revisions: consider charging for it." : "Change task created."); load(); });
-      parts.push(panel(`Change requests (${used} of ${included} included)`, body(used > included ? hint(`${used - included} change(s) beyond the agreed revisions.`, true) : null,
+      parts.push(panel(`Change requests (${used} of ${included} included)`, body(used > included ? hint(`${counted(used - included, "change", "changes")} beyond the agreed revisions.`, true) : null,
         info.revisions.length ? list(info.revisions.map(item => `${date(item.at)} · ${item.request.slice(0, 100)} · task ${item.task_id.slice(0, 8)} (${nice(item.state)})${item.extra ? " · extra" : ""}`)) : null, changeForm)));
       holder.replaceChildren(...parts);
     }
@@ -3541,7 +3545,7 @@
       fields.value = json({title: job.title, description: job.brief, blueprint_id: Number(product.value), print_provider_id: Number(provider.value),
         variants: ids.map(id => ({id, price: cents, is_enabled: true})),
         print_areas: [{variant_ids: ids, placeholders: [{position: position.value, images: [{id: image.value.trim() || "PASTE_UPLOADED_IMAGE_ID", x: .5, y: .5, scale: 1, angle: 0}]}]}]});
-      status.textContent = `${ids.length} variant(s) at $${(cents / 100).toFixed(2)} each. Check Printify's cost for this product: your price must be above it.`;
+      status.textContent = `${counted(ids.length, "variant", "variants")} at $${(cents / 100).toFixed(2)} each. Check Printify's cost for this product: your price must be above it.`;
     };
     const loadVariants = async () => {
       if (!provider.value) return;
@@ -3563,7 +3567,7 @@
       append(el("div", "form-grid"), field("Product", query), field("Results", product)),
       actionsRow(button("Search the catalog", () => act("", () => api(`/api/business/printify/catalog?query=${encodeURIComponent(query.value)}`)).then(list => {
         if (!list) return; product.replaceChildren(...list.map(item => { const option = el("option", "", `${item.title}${item.brand ? ` · ${item.brand}` : ""}`); option.value = item.id; return option; }));
-        status.textContent = list.length ? `${list.length} product(s) found.` : "Nothing found: try fewer words."; if (list.length) loadProviders().catch(issue => notice(issue.message, true)); }), "button small")),
+        status.textContent = list.length ? `${counted(list.length, "product", "products")} found.` : "Nothing found: try fewer words."; if (list.length) loadProviders().catch(issue => notice(issue.message, true)); }), "button small")),
       append(el("div", "form-grid"), field("Print provider", provider), field("Only variants containing", filter), field("Your price (USD)", price), field("Print position", position)),
       field("Uploaded image ID", image), status, actionsRow(button("Fill the draft fields", fill, "button small primary")));
     return root;
@@ -4018,7 +4022,7 @@
     root.append(panel("Where your data lives", body(kv([["Everything Cerebra records", `${values.data_dir}\\hq.sqlite3`], ["AI working copies", `${values.data_dir}\\worktrees`], ["What each AI said (logs)", `${values.data_dir}\\logs`], ["AI plans", `${values.data_dir}\\artifacts`], ["Projects created here", `${values.data_dir}\\projects`], ["Backups", `${values.data_dir}\\backups`]]), hint("All of this stays on this computer. Stop Cerebra before copying it for a backup."))));
 
     const cleanup = el("div");
-    (async () => { try { const preview = await api("/api/maintenance/demo-data"); if (!preview.tasks && !preview.projects.length) { cleanup.replaceChildren(el("p", "", "No old demo data. ✓")); return; } const go = button(`Remove ${preview.tasks} demo task(s)${preview.projects.length ? ` and ${preview.projects.length} demo project(s)` : ""}`, async () => { go.disabled = true; const result = await act(r => `Removed ${r.tasks_removed} demo tasks. Backup saved.`, () => mutate("/api/maintenance/demo-data", {confirm: true}, "POST", 120000)); if (result) { await refresh(true); } else go.disabled = false; }, "button danger"); fill(cleanup, el("p", "", "Earlier versions had a simulated demo. Its records are no longer used. Real tasks and projects are kept, and the database is backed up first."), preview.projects.length ? el("p", "row-meta", `Demo projects: ${preview.projects.join(", ")}`) : null, go); } catch (issue) { cleanup.replaceChildren(hint(issue.message, true)); } })();
+    (async () => { try { const preview = await api("/api/maintenance/demo-data"); if (!preview.tasks && !preview.projects.length) { cleanup.replaceChildren(el("p", "", "No old demo data. ✓")); return; } const go = button(`Remove ${counted(preview.tasks, "demo task", "demo tasks")}${preview.projects.length ? ` and ${counted(preview.projects.length, "demo project", "demo projects")}` : ""}`, async () => { go.disabled = true; const result = await act(r => `Removed ${r.tasks_removed} demo tasks. Backup saved.`, () => mutate("/api/maintenance/demo-data", {confirm: true}, "POST", 120000)); if (result) { await refresh(true); } else go.disabled = false; }, "button danger"); fill(cleanup, el("p", "", "Earlier versions had a simulated demo. Its records are no longer used. Real tasks and projects are kept, and the database is backed up first."), preview.projects.length ? el("p", "row-meta", `Demo projects: ${preview.projects.join(", ")}`) : null, go); } catch (issue) { cleanup.replaceChildren(hint(issue.message, true)); } })();
     root.append(panel("Old demo data", body(cleanup)));
     return root;
   }
@@ -4112,7 +4116,11 @@
       csrf = (await api("/api/session")).csrf_token; if (!csrf) throw new Error("No session token was returned.");
       route(); await refresh(true);
       api("/api/providers").then(result => { cache.providers = result; if (page === "overview") render(); }).catch(() => {});
-      setInterval(() => { if (!document.hidden) refresh(); }, 3000);
+      // Every 3 seconds, but never faster than Cerebra can answer: when it is busy (a slow answer), the page waits twice as long
+      // as the last answer took (up to 30 seconds), so the screens never add to the load.
+      let wait = 3000;
+      const tick = async () => { if (!document.hidden) { const started = performance.now(); await refresh(); wait = Math.min(30000, Math.max(3000, 2 * (performance.now() - started))); } setTimeout(tick, wait); };
+      setTimeout(tick, wait);
       document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
     } catch (issue) {
       notice(`Session required. Use the Cerebra tray menu: Restart workspace. ${issue.message}`, true);

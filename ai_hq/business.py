@@ -11,6 +11,7 @@ was sold, delivered or published.
 """
 from __future__ import annotations
 
+from .words import counted
 import hashlib
 import json
 import re
@@ -429,7 +430,7 @@ def export(session_factory, job_id, make_zip=False):
                 "note": "A local package for you to deliver. Exporting does not sell, publish or deliver anything."}
     lines = [f"# {title}", "", f"{kind_label} made with Cerebra for {client or 'your client'}.", "", "## Files", *[f"- `{item['path']}` ({item['bytes']} bytes)" for item in files],
              "", "## Checks", *([f"- {'Passed' if check['passed'] else 'FAILED'}: deliverable checks" for check in manifest["checks"]] or ["- No checks recorded"]),
-             "", f"## Review\nIndependent review by {manifest['review']['reviewer'] or 'the reviewer'}: {len(findings)} finding(s); see review-findings.md.",
+             "", f"## Review\nIndependent review by {manifest['review']['reviewer'] or 'the reviewer'}: {counted(len(findings), 'finding', 'findings')}; see review-findings.md.",
              "", "## Before you deliver", "- Read every file yourself; you are responsible for what you send.", "- Tell the client how the work was made if their platform or they require it."]
     # Website and SVG jobs already contain a reviewed README. Never replace that deliverable.
     instructions = "CEREBRA-EXPORT.md" if (target / "README.md").exists() else "README.md"
@@ -516,7 +517,7 @@ def results(session, job_id):
     from .models import Run
     reviewed = bool(task and session.scalars(select(Run).where(Run.task_id == task.id, Run.role == "review", Run.status == "succeeded")).first())
     if findings:
-        attention.append(f"The reviewer reported {len(findings)} finding(s): " + "; ".join(f.get("message", "")[:160] for f in findings[:3]))
+        attention.append(f"The reviewer reported {counted(len(findings), 'finding', 'findings')}: " + "; ".join(f.get("message", "")[:160] for f in findings[:3]))
     elif reviewed:
         passed.append("The independent reviewer found no problems.")
     if pending:
@@ -531,7 +532,7 @@ def results(session, job_id):
         if path.is_file() and path.suffix.lower() in {".html", ".htm", ".md", ".txt"}:
             placeholders += path.read_text(encoding="utf-8", errors="replace").count("[ADD")
     if placeholders:
-        attention.append(f"{placeholders} placeholder(s) like [ADD: …] still need real facts from the client before delivery.")
+        attention.append(f"{counted(placeholders, 'placeholder', 'placeholders')} like [ADD: …] still need real facts from the client before delivery.")
     next_step = {"scope": "Fill in the scope (services, areas, form address, price) and press Approve scope.", "intake": "Wait a moment while Cerebra prepares the plan.", "planning": "Cerebra is preparing the plan.",
                  "waiting": "Open Approvals and answer the waiting step.", "creating": "Nothing to do: the creator is working.",
                  "checking": "Nothing to do: the work is being checked.", "ready": "Press Export to write the package (README, manifest and review findings).",

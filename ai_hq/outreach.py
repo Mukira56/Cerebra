@@ -20,6 +20,7 @@ receive mail are skipped and too many bounces pause automatic sending (ai_hq/del
 """
 from __future__ import annotations
 
+from .words import counted
 import re
 import threading
 from datetime import datetime, timedelta, timezone
@@ -462,7 +463,7 @@ class Outreach:
                 drafted = self.drafts(PER_RUN, rules)
             if rules["enabled"] and sent + drafted < room:
                 searched = self.next_search(rules)
-            message = f"Sent {sent} email(s)" + (f", drafted {drafted} for you to read and send" if drafted else "") + f"; {replies} new repl(ies)" + \
+            message = f"Sent {counted(sent, 'email', 'emails')}" + (f", drafted {drafted} for you to read and send" if drafted else "") + f"; {counted(replies, 'new reply', 'new replies')}" + \
                 (f"; searched {searched}" if searched else "")
             return {**self._note(message), "sent": sent, "drafted": drafted, "replies": replies, "searched": searched}
         except ValueError as exc:  # a Gmail or model problem: stop this round, say why, never retry blindly

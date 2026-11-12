@@ -131,7 +131,7 @@ def test_the_morning_brief_comes_once_a_day_at_the_owners_hour_and_says_only_cou
     assert chief.send_brief(db, Phone(), early) == {"skipped": "not time yet"} and sent == []
     assert chief.send_brief(db, Phone(), morning)["calls"] == 1 and len(sent) == 1
     assert chief.send_brief(db, Phone(), morning.replace(hour=14)) == {"skipped": "not time yet"}  # once a day
-    assert "1 decision(s) wait for you" in sent[0] and "Secret Client" not in sent[0]
+    assert "1 decision waiting for you" in sent[0] and "Secret Client" not in sent[0]
     events = client.get("/api/overview").json()["events"]
     assert any(event["message"].startswith("Morning brief:") for event in events)
     assert client.put("/api/chief/settings", json={"brief_hour": 30}).status_code == 400

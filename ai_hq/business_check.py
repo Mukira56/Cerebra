@@ -8,6 +8,7 @@ Exit code 0 = every check passed; 1 = at least one check failed (each problem is
 """
 from __future__ import annotations
 
+from .words import counted
 import json
 import re
 import sys
@@ -198,7 +199,7 @@ def main(root="."):
         check_site(root, brief, problems)
     for line in problems:
         print("FAIL", line)
-    print(f"{len(checked)} file(s) checked, {len(problems)} problem(s)")
+    print(f"{counted(len(checked), 'file', 'files')} checked, {counted(len(problems), 'problem', 'problems')}")
     return 1 if problems else 0
 
 

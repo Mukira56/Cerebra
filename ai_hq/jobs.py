@@ -18,6 +18,7 @@ is the only one, and when Gmail refuses, sending waits for the next day.
 """
 from __future__ import annotations
 
+from .words import counted
 import json
 import re
 import threading
@@ -587,7 +588,7 @@ class Jobs:
                 if "Gmail" in str(exc) or getattr(exc, "stop", False):
                     break
         return {"sent": sent, "problems": problems,
-                "message": f"Sent {sent} application(s) from your Gmail." + (f" Not sent: {'; '.join(problems[:3])}" if problems else "")}
+                "message": f"Sent {counted(sent, 'application', 'applications')} from your Gmail." + (f" Not sent: {'; '.join(problems[:3])}" if problems else "")}
 
     def follow_ups(self):
         from .outreach import blocked
@@ -820,13 +821,13 @@ class Jobs:
             from . import sendwindow
             waiting_for_hours = sendwindow.closed(rules, self.clock() if callable(getattr(self, "clock", None)) else None) if rules["mode"] == "send" else ""
             if waiting_for_hours:
-                return self._note(f"Found {found['added']} new jobs and wrote {written} applications; {replies} new repl(ies). {waiting_for_hours}")
+                return self._note(f"Found {found['added']} new jobs and wrote {written} applications; {counted(replies, 'new reply', 'new replies')}. {waiting_for_hours}")
             if rules["mode"] == "send":
                 self.follow_ups()
                 with self.db.Session() as session:
                     ids = [row.id for row in session.scalars(select(JobPosting).where(JobPosting.status == "ready")).all() if row.letter]
                 sent = self.send_many(ids)["sent"]
-            return self._note(f"Found {found['added']} new jobs, wrote {written} applications, sent {sent}; {replies} new repl(ies).")
+            return self._note(f"Found {found['added']} new jobs, wrote {written} applications, sent {sent}; {counted(replies, 'new reply', 'new replies')}.")
         except ValueError as exc:
             return self._note(f"Stopped: {exc}", "error")
         finally:

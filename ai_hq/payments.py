@@ -8,6 +8,7 @@ the client pays Stripe directly. Error text from Stripe is shown (it explains a 
 """
 from __future__ import annotations
 
+from .words import counted
 import hashlib
 import threading
 from datetime import datetime, timedelta, timezone
@@ -229,7 +230,7 @@ class Payments:
                         doc = money._get(session, identifier)
                         doc.provider = {**doc.provider, "stripe": {**doc.provider["stripe"], "active": False}}
             sold = self._sync_products()
-            words = [f"{found} invoice payment(s)" if found else "", f"{sold} product sale(s)" if sold else ""]
+            words = [f"{counted(found, 'invoice payment', 'invoice payments')}" if found else "", f"{counted(sold, 'product sale', 'product sales')}" if sold else ""]
             return {"new_payments": found, "new_sales": sold, "message": ("Recorded " + " and ".join(word for word in words if word) + " from Stripe.") if found or sold else "No new Stripe payments."}
 
     def _sync_products(self):

@@ -8,6 +8,7 @@ another box already says, adds nothing, so the useful number is how many new sea
 """
 from __future__ import annotations
 
+from .words import counted
 import re
 
 from .etsy import TRADEMARKS
@@ -67,5 +68,5 @@ def audit(title, subtitle="", keywords=()):
         seen.append(terms)
         new |= terms - named
     score, label = grade(fix, improve, max(0, empty - 1))
-    return {"score": score, "label": label, "reach": len(new), "summary": f"Your boxes add {len(new)} search word(s) your title doesn't have.",
+    return {"score": score, "label": label, "reach": len(new), "summary": f"Your boxes add {counted(len(new), 'search word', 'search words')} your title doesn't have.",
             "used": sum(len(item) for item in filled), "fix": fix, "improve": improve}

@@ -6,6 +6,7 @@ is fine on Etsy, unlike a KDP keyword box, so it isn't flagged. The main keyword
 """
 from __future__ import annotations
 
+from .words import counted
 import re
 from collections import Counter
 
@@ -38,4 +39,4 @@ def audit(listing, keyword=""):
         seen.append(terms)
         covered |= terms
     score, label = grade(fix, improve)
-    return {"score": score, "label": label, "reach": len(covered), "summary": f"Your tags cover {len(covered)} different search word(s).", "fix": fix, "improve": improve}
+    return {"score": score, "label": label, "reach": len(covered), "summary": f"Your tags cover {counted(len(covered), 'different search word', 'different search words')}.", "fix": fix, "improve": improve}

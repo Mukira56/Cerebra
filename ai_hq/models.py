@@ -666,6 +666,8 @@ Index("ix_execution_events_task_id", Event.task_id)
 Index("ix_execution_events_created_at", Event.created_at)
 Index("ix_chat_messages_conversation_id", ChatMessage.conversation_id)
 Index("ix_business_jobs_task_id", BusinessJob.task_id)
+# Freelance leads pile up by the thousand; the Overview (polled every few seconds) counts and picks them by status and score.
+Index("ix_freelance_leads_status_score", FreelanceLead.status, FreelanceLead.score)
 
 def as_dict(row):
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}

@@ -137,8 +137,20 @@ class PublicGitHub:
     """Reads Cerebra's releases from GitHub, with no sign-in. The public API allows 60 checks an hour per internet address, and
     an address can be shared with many other people, so when it says no, the same facts come from GitHub's ordinary web pages."""
 
+    LATEST_SECONDS = 300  # the newest release is asked for again after 5 minutes: opening Settings twice doesn't wait twice
+
     def release(self, tag=None):
         """The newest release (or the one with this tag) as {tagName, name, body, publishedAt, assets: [{name, size, url}]}, or None."""
+        if tag is None:
+            kept = getattr(self, "_latest", None)
+            if kept and time.monotonic() - kept[0] < self.LATEST_SECONDS:
+                return kept[1]
+            found = self._release(None)
+            self._latest = (time.monotonic(), found)
+            return found
+        return self._release(tag)
+
+    def _release(self, tag=None):
         if not REPOSITORY:
             raise ValueError("No update channel is configured for this edition")
         import httpx

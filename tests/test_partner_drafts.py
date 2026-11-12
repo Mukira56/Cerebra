@@ -30,7 +30,7 @@ def test_one_click_sends_only_the_ticked_emails(client):  # noqa: F811
     keep, skip, other = (company(client, name, f"{name.split()[0].lower()}.example") for name in ("Voice Co", "Text Co", "Third Co"))
     assert robot.prepare(5)["written"] == 3
     result = client.post("/api/partners/send-drafts", json={"ids": [keep, other]}).json()
-    assert result["sent"] == 2 and "Sent 2 email(s)" in result["message"]
+    assert result["sent"] == 2 and "Sent 2 emails" in result["message"]
     assert [mail["to"] for mail in robot.gmail.sent] == ["partners@voice.example", "partners@third.example"]
     listed = {item["id"]: item["status"] for item in client.get("/api/partners").json()["companies"]}
     assert listed[keep] == listed[other] == "sent" and listed[skip] == "ready"  # the unticked one is still in line

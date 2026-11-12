@@ -1,6 +1,7 @@
 """Persistent, deterministic orchestration. Agent text never supplies executable commands."""
 from __future__ import annotations
 
+from .words import counted
 import json
 import hashlib
 from fnmatch import fnmatchcase
@@ -1374,7 +1375,7 @@ class Supervisor:
             stored = self._get(session, task_id)
             stored.results = {**stored.results, "baseline": {**summary, "commit": stored.base_commit, "recorded_at": now()}}
             failing = sum(1 for item in summary["commands"] if not item["passed"])
-            self._event(session, task_id, "baseline", f"Before the change: {failing} of {len(results)} test command(s) failed" if failing else
+            self._event(session, task_id, "baseline", f"Before the change: {failing} of {counted(len(results), 'test command', 'test commands')} failed" if failing else
                         "Before the change: all tests passed", {"failing": summary["failing"][:20]})
         return True
 

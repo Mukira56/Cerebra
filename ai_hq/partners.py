@@ -21,6 +21,7 @@ get the owner's second pitch, written for them, when there is one.
 """
 from __future__ import annotations
 
+from .words import counted
 import html as html_module
 import re
 import hashlib
@@ -610,7 +611,7 @@ class Partners:
                 studied = self.study(rounds=3)
                 written = self.write_ahead()
                 self.search["message"] = (f"Done: {added} new companies listed; {checked} websites read, {found} with an email to pitch; "
-                                          f"{studied['pages']} pages of research read and {written} email(s) written for you to review. "
+                                          f"{studied['pages']} pages of research read and {counted(written, 'email', 'emails')} written for you to review. "
                                           "Research carries on by itself every 20 minutes. " + ("Press again to read more." if checked >= limit else ""))
             except (httpx.HTTPError, ValueError) as exc:
                 self.search["message"] = f"Stopped: {exc if isinstance(exc, ValueError) else 'the internet connection dropped'}. Press again to carry on."
@@ -828,7 +829,7 @@ class Partners:
                 problems.append(str(exc))
                 if exc.stop:
                     break
-        message = f"{written} email(s) written and ready to review." + (f" Not written: {'; '.join(problems[:3])}" if problems else "") + \
+        message = f"{counted(written, 'email', 'emails')} written and ready to review." + (f" Not written: {'; '.join(problems[:3])}" if problems else "") + \
             (f" {studying} more are still being researched." if studying else "")
         return {"written": written, "message": message, "problems": problems}
 
@@ -858,7 +859,7 @@ class Partners:
                 if "Gmail" in str(exc) or getattr(exc, "stop", False):
                     break
         later = max(0, len(ids) - sent - len(problems))
-        message = f"Sent {sent} email(s) from your Gmail." + (f" {later} wait for tomorrow (your daily number is {self.limit_now()})." if later else "") + \
+        message = f"Sent {counted(sent, 'email', 'emails')} from your Gmail." + (f" {later} wait for tomorrow (your daily number is {self.limit_now()})." if later else "") + \
             (f" Not sent: {'; '.join(problems[:3])}" if problems else "")
         return {"sent": sent, "message": message, "problems": problems}
 
@@ -893,7 +894,7 @@ class Partners:
                 problems.append(str(exc))
                 if "Gmail" in str(exc) or getattr(exc, "stop", False):
                     break  # Gmail or the writing model itself said no: stop, don't try the rest
-        message = f"Sent {sent} pitch(es)." + (f" Skipped: {'; '.join(problems[:3])}" if problems else "") +             (f" {len(studying)} more are still being researched; their emails go once Cerebra has studied their websites." if studying else
+        message = f"Sent {counted(sent, 'pitch', 'pitches')}." + (f" Skipped: {'; '.join(problems[:3])}" if problems else "") +             (f" {len(studying)} more are still being researched; their emails go once Cerebra has studied their websites." if studying else
              "" if queue else " Nobody is waiting: find companies first.")
         return {"sent": sent, "message": message, "problems": problems}
 
@@ -1113,7 +1114,7 @@ class Partners:
             if sending and sent < room:
                 result = self.send_next(room - sent)
                 sent, skipped = sent + result["sent"], result.get("problems", [])
-            message = f"Sent {sent} email(s); {replies} new repl(ies)." + (f" Not sent: {'; '.join(skipped[:3])}" if skipped else "")
+            message = f"Sent {counted(sent, 'email', 'emails')}; {counted(replies, 'new reply', 'new replies')}." + (f" Not sent: {'; '.join(skipped[:3])}" if skipped else "")
             gmail_down = next((item for item in skipped if "Gmail" in item), "")
             if gmail_down and self.notifier and self.status.get("message") != message:
                 self.notifier.send("Company pitches can't send", gmail_down[:300], tags="email")  # once, not every 20 minutes

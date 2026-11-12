@@ -1,5 +1,6 @@
 """Portable user-session process manager. No services, elevation or policy edits."""
 from __future__ import annotations
+from .words import counted
 import argparse
 import ctypes
 import json
@@ -161,7 +162,7 @@ def stop(settings):
         os.kill(owned["pid"],signal.SIGTERM)
     (settings.data_dir/"server.json").unlink(missing_ok=True)
     paused = pause_after_stop(settings)
-    print("Stopped the verified Cerebra process tree." + (f" {paused} running task(s) were paused; resume them when you open Cerebra again." if paused else ""))
+    print("Stopped the verified Cerebra process tree." + (f" {counted(paused, 'running task', 'running tasks')} were paused; resume them when you open Cerebra again." if paused else ""))
 
 def serve(settings):
     # One backend process owns this data directory; release the lock on exit/crash.

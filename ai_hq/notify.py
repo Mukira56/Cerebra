@@ -5,6 +5,7 @@ messages. Only the task's short title and state leave the computer, never code, 
 """
 from __future__ import annotations
 
+from .words import counted
 import secrets
 import threading
 
@@ -153,10 +154,10 @@ class Notifier:
                 if event.kind == "freelance":
                     if (event.data or {}).get("notify") == "rare":  # counts only: ntfy topics travel through a public server
                         best = event.data.get("best") or {}
-                        messages.append(("Cerebra · a rare chance", f"{int(event.data.get('count') or 0)} strong match(es) with few bids so far and a real budget"
+                        messages.append(("Cerebra · a rare chance", f"{counted(int(event.data.get('count') or 0), 'strong match', 'strong matches')} with few bids so far and a real budget"
                                          + (f" (best: score {int(best.get('score') or 0)}, {int(best.get('bids') or 0)} bids)" if best else "") + ". Apply soon: open Freelance in Cerebra.", "zap"))
                     elif (event.data or {}).get("notify") == "leads":
-                        messages.append(("Cerebra · new freelance work", f"{int(event.data.get('count') or 0)} strong new match(es) for what you sell. Open Freelance in Cerebra.", "briefcase"))
+                        messages.append(("Cerebra · new freelance work", f"{counted(int(event.data.get('count') or 0), 'strong new match', 'strong new matches')} for what you sell. Open Freelance in Cerebra.", "briefcase"))
                     continue
                 if event.kind == "money":
                     # Money news, kept generic: ntfy topics travel through a public server, so no client names or amounts.
@@ -166,7 +167,7 @@ class Notifier:
                     elif kind == "sold":
                         messages.append(("Cerebra · you made a sale", "A product sold through your Stripe link. Open Money in Cerebra for details.", "moneybag"))
                     elif kind == "plans":
-                        messages.append(("Cerebra · invoices to send", f"{int(event.data.get('count') or 0)} recurring invoice(s) are ready. Open Money in Cerebra to send them.", "receipt"))
+                        messages.append(("Cerebra · invoices to send", f"{counted(int(event.data.get('count') or 0), 'recurring invoice', 'recurring invoices')} are ready. Open Money in Cerebra to send them.", "receipt"))
                     continue
                 if event.kind == "order":
                     messages.append(("Cerebra · new order", "New intake recorded. Open Cerebra on your laptop to read it.", "package"))

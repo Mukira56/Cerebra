@@ -20,6 +20,7 @@ Safety:
 """
 from __future__ import annotations
 
+from .words import counted
 import json
 import re
 import secrets
@@ -224,7 +225,7 @@ class Assistant:
                 jobs = [f"{item.get('label') or item.get('id')}: {'on' if item.get('enabled') else 'off'}" for item in data.get("jobs") or []][:25]
                 calls = data.get("calls") or []
                 lines.append(f"{label}: " + "; ".join(jobs))
-                lines.append(f"Waiting for the owner: {len(calls)} item(s).")
+                lines.append(f"Waiting for the owner: {counted(len(calls), 'item', 'items')}.")
         return "\n".join(lines)
 
     def _converse(self, text, rounds=ROUNDS):
