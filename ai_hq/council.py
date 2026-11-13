@@ -116,6 +116,24 @@ def _proposals(items, providers):
     return proposals
 
 
+ENDED = "\n\nWHERE THE LAST MEETING ENDED:"
+WRAPPED = re.compile(r'^\s*(?:The owner asked:\s*[\u201c"]\s*)+', re.I)
+TRAILER = re.compile(r'[\u201d"]+\s*(?:\u00b7[^\n]*)?$')
+
+
+def clean_topic(topic):
+    """The question itself, without the page's own 'The owner asked: "..."' wrapper, which an assistant reading the page
+    sometimes copied into a new meeting's topic (once or several times over)."""
+    text = str(topic or "").strip()
+    stripped = WRAPPED.sub("", text)
+    if stripped == text:
+        return text
+    first, _, rest = stripped.partition("\n")
+    for _ in range(text.count("The owner asked")):
+        first = TRAILER.sub("", first).rstrip()
+    return (first + ("\n" + rest if rest else "")).strip()
+
+
 def project_scope(project, session, topic):
     """Facts both models see each turn: the project, its tests, its GitHub remote and history, and key docs."""
     root = Path(project.path)
@@ -216,7 +234,7 @@ class CouncilService:
             return {**as_dict(row), "messages": [as_dict(message) for message in messages], "busy": busy, **(extra.value if extra else {})}
 
     def start(self, project_id, topic, rounds=3, first="codex", second="claude", send_to_support=False):
-        topic = (topic or "").strip()
+        topic = clean_topic(topic)
         if not topic:
             raise ValueError("Write what the meeting should decide")
         rounds = max(UNTIL_AGREED, int(rounds))
@@ -269,7 +287,8 @@ class CouncilService:
         if running:
             return {"message": "Added. Both models read it before their next turn.", "meeting_id": session_id}
         summary = self.get(session_id).get("summary") or ""
-        follow_up = (f"{topic}\n\nWHERE THE LAST MEETING ENDED: {summary[:1500] or '(no agreed conclusion)'}\n\n"
+        question = topic.split(ENDED)[0].strip()  # the owner's question, not every earlier meeting's summary again
+        follow_up = (f"{question}{ENDED} {summary[:1500] or '(no agreed conclusion)'}\n\n"
                      f"THE OWNER ADDS (their words decide): {text}")
         started = self.start(project_id, follow_up, rounds, first, second)
         return {"message": "The meeting had ended, so a follow-up meeting started with your note.", "meeting_id": started["id"]}

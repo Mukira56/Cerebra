@@ -372,3 +372,25 @@ def test_each_round_hunts_somewhere_new_and_thin_tracks_demand_new_ideas():
     assert "hunting ground" not in critic
     weak = service.direction(3, "customer", [Idea("floor", 40)] * 3 + [Idea("big", 90)] * 3)
     assert "The floor track" in weak and "too weak" in weak
+
+
+def test_a_turn_that_stops_on_a_progress_note_is_finished_by_the_same_model(lab_app):
+    client, app = lab_app
+
+    class Unfinished(LabRegistry):
+        def chat(self, name, prompt, workdir, model="", cancel_event=None):
+            if "YOUR TURN: Research and propose" in prompt and "STOPPED BEFORE IT WAS FINISHED" not in prompt:
+                self.turns.append((name, prompt, workdir))
+                return AgentResult(True, "I'm checking that distinction against source pages before scoring it.")
+            return super().chat(name, prompt, workdir, model, cancel_event)
+
+    app.state.supervisor.registry = registry = Unfinished()
+    lab = client.post("/api/research", json={"pace": 3600}).json()
+    state = wait_for(lambda: (lambda s: s if s["turn"] >= 1 else None)(client.get(f"/api/research/{lab['id']}").json()))
+    first = [turn for turn in state["turns"] if turn["stage"] == "scout"]
+    assert [turn["status"] for turn in first] == ["done"] and first[0]["provider"] == registry.turns[0][0]
+    assert first[0]["content"].startswith("I'm checking that distinction") and "cerebra-research" in first[0]["content"]
+    finish = registry.turns[1]
+    assert finish[0] == registry.turns[0][0] and "It wrote only this:\n---\nI'm checking that distinction" in finish[1]
+    assert any(idea["name"] == "Fax-to-EHR inbox" for idea in state["ideas"])
+    client.post(f"/api/research/{lab['id']}/stop")

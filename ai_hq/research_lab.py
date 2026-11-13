@@ -202,6 +202,14 @@ Every link used, one per line.
 
 Reply with the report only."""
 REPORT_MIN_CHARACTERS = 2500
+FINISH = """
+
+YOUR LAST ATTEMPT AT THIS TURN STOPPED BEFORE IT WAS FINISHED. It wrote only this:
+---
+{partial}
+---
+Finish the turn now: complete the research you started, then write the whole turn (your findings to the other
+researcher) and end with the cerebra-research block. Don't stop to report progress; reply with the finished turn."""
 
 STAGE_TASK = {
     "scout": "Research and propose. Answer the open questions first. Then dig through buyer communities (Reddit, X, forums, "
@@ -534,6 +542,17 @@ class ResearchLabService:
             except Exception as exc:  # recorded on the turn, never raised into the server
                 success, content, failure = False, "", redact(str(exc))
             parsed = parse_turn(content) if success else None
+            if success and parsed is None and not stop.is_set():
+                # A model sometimes ends its turn on a progress note ("I'm checking that against the sources...") before
+                # writing its findings (a live ChatGPT turn did). Ask the same model once to finish, with what it wrote.
+                try:
+                    more = research(speaking["provider"], prompt + FINISH.format(partial=content.strip()[-6000:]), str(folder),
+                                    speaking.get("model", ""), stop)
+                    if more.success and parse_turn(more.output or "") is not None:
+                        content = (content.strip() + "\n\n" + (more.output or "").strip()).strip()
+                        parsed = parse_turn(content)
+                except Exception:  # noqa: BLE001 - the turn just counts as failed below
+                    pass
             if success and parsed is None:
                 success, failure = False, "The turn had no valid research block, so nothing was saved from it."
             gains = self.save(lab_id, number, stage, speaking["provider"], parsed, content) if success else {}
