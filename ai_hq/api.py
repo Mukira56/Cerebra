@@ -773,6 +773,30 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
             else: session.add(Metadata(key="sign_in_status", value=values))
         return status
 
+    # When a provider's sign-in expires mid-work, remember it (Setup and Models show it) and tell the owner's phone once
+    # every 6 hours per provider, with how to fix it.
+    def on_signed_out(name, detail):
+        from datetime import datetime, timedelta, timezone
+        from . import agents as agents_module
+        label = agents_module.PROVIDER_LABELS.get(name, name)
+        with db.Session.begin() as session:
+            row = session.get(Metadata, "signed_out_alerts")
+            alerts = dict(row.value) if row else {}
+            last = alerts.get(name)
+            due = not last or datetime.fromisoformat(last) < datetime.now(timezone.utc) - timedelta(hours=6)
+            if due:
+                alerts[name] = now()
+                if row: row.value = alerts
+                else: session.add(Metadata(key="signed_out_alerts", value=alerts))
+                session.add(Event(kind="sign_in", message=f"{label} is signed out: its sign-in expired", data={"provider": name}))
+        remember_sign_in(name, {"provider": name, "installed": True, "signed_in": False, "checked_at": now(),
+                                "detail": "Signed out: the sign-in expired. Press Sign in."})
+        if due:
+            notifier.send("Cerebra needs you", f"{label} is signed out: its sign-in expired, so work that uses it is waiting. "
+                                               f"On the laptop, open Cerebra › Models and press Sign in for {label}.")
+    from . import agents as agents_module
+    agents_module.signed_out_watchers[:] = [on_signed_out]
+
     @app.post("/api/providers/{name}/check")
     def check_sign_in(name: str): return remember_sign_in(name, integrations.sign_in_status(name))
 

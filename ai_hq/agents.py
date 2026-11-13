@@ -108,6 +108,35 @@ OFFLINE_MARKERS = ("enotfound", "can't reach the api", "cannot reach the api", "
                    "failed to connect", "dns error", "no such host", "temporary failure in name resolution")
 
 
+# Words the CLIs print when their sign-in has expired or was revoked (a live Council meeting failed with "Failed to
+# authenticate: OAuth session expired and could not be refreshed"). Nothing works for that provider until the owner signs
+# in again, so Cerebra says so plainly and tells the owner's phone once, instead of waiting and retrying in silence.
+SIGNED_OUT_MARKERS = ("failed to authenticate", "oauth session expired", "could not be refreshed", "please run /login", "run /login",
+                      "not logged in", "please log in", "login required", "invalid api key", "token has expired", "token expired",
+                      "refresh token", "401 unauthorized", "authentication_error")
+PROVIDER_LABELS = {"claude": "Claude", "codex": "ChatGPT (Codex)"}
+signed_out_watchers = []  # callables (provider, detail) told when a provider's sign-in has expired (set by the app)
+
+
+def signed_out(detail):
+    text = str(detail or "").lower()
+    return any(marker in text for marker in SIGNED_OUT_MARKERS)
+
+
+def report_signed_out(name, detail):
+    for watcher in list(signed_out_watchers):
+        try:
+            watcher(name, redact(str(detail))[:300])
+        except Exception:  # noqa: BLE001 - an alert that fails never breaks the turn that found the problem
+            pass
+
+
+def signed_out_message(name, detail):
+    label = PROVIDER_LABELS.get(name, name)
+    return (f"authentication_error: {label} is signed out (its sign-in expired). Sign in again: in Cerebra open Models, "
+            f"then Sign in for {label}. ({redact(str(detail))[:200]})")
+
+
 def failure_detail(text):
     """The readable part of a CLI's failure output: Claude's `result` / Codex's error message instead of the whole JSON record."""
     for line in reversed(str(text or "").strip().splitlines()):
@@ -317,6 +346,9 @@ class _CliAdapter:
                 detail = failure_detail(result.stderr or result.stdout)
                 if any(marker in detail.lower() for marker in OFFLINE_MARKERS):  # one plain sentence instead of pages of connection logs
                     return AgentResult(False, "", error=f"offline: {self.name} couldn't reach its servers: the internet or DNS isn't working. Try again when you're online.")
+                if not result.cancelled and signed_out(detail):
+                    report_signed_out(self.name, detail)
+                    return AgentResult(False, "", error=signed_out_message(self.name, detail))
                 return AgentResult(False, "", error=redact(f"{self.name} {reason}: " + detail[-600:]))
             text = final_text(result.stdout)
             if not text.strip():
@@ -349,6 +381,9 @@ class _CliAdapter:
                 reason = "cancelled" if result.cancelled else "timeout" if result.timed_out else f"agent exited with code {result.exit_code}"
                 detail = failure_detail(result.stderr or raw_output)[:2000]
                 category = "offline: " if any(marker in detail.lower() for marker in OFFLINE_MARKERS) else "rate_limited: " if any(marker in detail.lower() for marker in ("rate limit", "rate_limit", "429", "usage limit")) else "authentication_error: " if any(marker in detail.lower() for marker in ("unauthorized", "authentication", "not logged in", "please log in", "401")) else ""
+                if not result.cancelled and signed_out(detail):
+                    report_signed_out(self.name, detail)
+                    return AgentResult(False, output, error=signed_out_message(self.name, detail))
                 return AgentResult(False, output, error=redact(category + reason + ": " + detail))
             findings = []
             structured_review = False
