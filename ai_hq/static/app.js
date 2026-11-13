@@ -1049,7 +1049,8 @@
           actionsRow(button("Cancel", closeDialog, "button ghost"), button("Delete", async () => { closeDialog(); if (await act("Lab deleted.", () => api(`/api/research/${id}`, {method: "DELETE"}))) { labId = ""; labShown = ""; load(); } }, "button danger")))), "button ghost") : null);
       const stats = append(el("div", "lab-stats"), badge(status, status === "running" ? "blue" : status === "waiting" ? "amber" : "muted"),
         el("span", "", `${counted(counts.turns || 0, "turn", "turns")} · ${counted(counts.notes || 0, "research note", "research notes")} · ${counted(counts.ideas || 0, "idea", "ideas")} on the board · ${counts.killed || 0} killed`));
-      parts.push(panel("Business research lab", body(stats, line, controls, append(el("details", "lab-goal"), el("summary", "", "The goal"), el("p", "", state.goal)))));
+      const hunting = state.hunting ? el("p", "hint", `This round searches first in: ${state.hunting}. Each round moves to a new part of the market.`) : null;
+      parts.push(panel("Business research lab", body(stats, line, hunting, controls, append(el("details", "lab-goal"), el("summary", "", "The goal"), el("p", "", state.goal)))));
       // The current leaders, from the latest judging turn
       const report = state.report || {};
       const leaders = el("div", "lab-leaders");

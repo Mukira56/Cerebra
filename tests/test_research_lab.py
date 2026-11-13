@@ -352,3 +352,23 @@ def test_telegram_gets_the_message_then_each_file(lab_app):
     assert "Fax inbox" in posts[0][1]["text"] and posts[1][2] == {"chat_id": "42"} and posts[2][3]["document"][0] == "a.md"
     remote._settings = lambda: None
     assert remote.send_report("x", "y", []) == ""  # Telegram not set up
+
+
+def test_each_round_hunts_somewhere_new_and_thin_tracks_demand_new_ideas():
+    service = research_lab.ResearchLabService(None, None, None)
+    grounds = [service.hunting_ground(number) for number in (1, 5, 6, 11)]
+    assert grounds[0] == grounds[1] != grounds[2] != grounds[3]  # one ground per round of five turns
+    assert len({service.hunting_ground(1 + 5 * n) for n in range(len(research_lab.HUNTING_GROUNDS))}) == len(research_lab.HUNTING_GROUNDS)
+
+    class Idea:
+        def __init__(self, track, score):
+            self.track, self.score = track, score
+
+    strong = [Idea("big", 80), Idea("big", 70), Idea("big", 65), Idea("floor", 75), Idea("floor", 62), Idea("floor", 61)]
+    scout = service.direction(1, "scout", strong)
+    assert "hunting ground" in scout and "too thin" not in scout and "too weak" not in scout
+    critic = service.direction(2, "critic", [Idea("big", 47), Idea("floor", 75), Idea("floor", 70), Idea("floor", 66)])
+    assert "The big track" in critic and "too thin" in critic and "stronger replacement" in critic and "The floor track" not in critic
+    assert "hunting ground" not in critic
+    weak = service.direction(3, "customer", [Idea("floor", 40)] * 3 + [Idea("big", 90)] * 3)
+    assert "The floor track" in weak and "too weak" in weak

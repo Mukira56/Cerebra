@@ -42,6 +42,32 @@ PACES = {0: "no pause", 60: "1 minute", 300: "5 minutes", 900: "15 minutes", 360
 MAX_NOTES_PER_TURN, MAX_IDEAS_PER_TURN = 40, 6
 WAIT_FIRST, WAIT_MOST = 300, 3600  # after a failed turn: wait 5 minutes, doubling up to an hour
 MAX_RUNNING = 2
+# Where each round's scout hunts first, in turn, so the lab explores the whole market instead of digging one niche for
+# ever (a live lab drifted into narrow compliance niches whose best idea scored 47). The scout may still bring the best
+# idea from anywhere; the owner's notes always come first.
+HUNTING_GROUNDS = (
+    "consumers' money: bills, subscriptions, refunds, taxes, side income, saving on big purchases",
+    "small local businesses: trades, salons, clinics, restaurants, shops (leads, bookings, reviews, admin)",
+    "creators, coaches and online sellers (Etsy, Amazon, Shopify, TikTok Shop, YouTube, newsletters)",
+    "careers and jobs: job seekers, freelancers, recruiters, people changing careers",
+    "health admin, not medicine: insurance, medical bills, caregiving, appointments, benefits",
+    "real estate: landlords, tenants, agents, property managers, home buyers, home maintenance",
+    "families and parents: school, childcare, activities, elderly parents, household logistics",
+    "governments and public bodies: cities, counties, schools, permits, grants, public records, procurement",
+    "nonprofits, churches and associations: donors, volunteers, grants, members, events",
+    "professional services: accountants, lawyers, consultants, agencies, insurance brokers",
+    "logistics and trucking: owner-operators, small fleets, dispatch, compliance, freight brokers",
+    "education and students: tutoring, test prep, admissions, teachers' admin, online courses",
+    "sales and marketing teams: lead generation, outreach, content, ads, CRM clean-up",
+    "e-commerce operations: returns, customer service, inventory, product listings, chargebacks",
+    "investors and traders: research, tax records, portfolio tracking and alerts (tools sold to them, never advice or promised returns)",
+    "AI-native replacements of expensive human services that people already pay for monthly",
+    "immigrants and travelers: visas, documents, money transfers, settling into the US or Europe",
+    "construction and home services: estimates, permits, subcontractors, materials, scheduling",
+    "restaurants and food businesses: menus, delivery platforms, staffing, food cost, reviews",
+    "HR and small-business payroll: hiring, onboarding, scheduling, compliance, contractor payments",
+)
+GOOD_SCORE, MIN_ALIVE = 60, 3  # below these a track is too thin or too weak, and the lab widens its search
 BLOCK = re.compile(r"```cerebra-research\s*(.*?)```", re.S)
 
 GOAL = ("Find business ideas that real customers in the United States (then Europe) will pay for because they make a person's, "
@@ -406,7 +432,7 @@ class ResearchLabService:
                     "reports": [{key: value for key, value in as_dict(report).items() if key != "body"} for report in reports],
                     "turns": [as_dict(turn) for turn in reversed(recent)],
                     "now": {"stage": pending.stage, "provider": pending.provider, "since": pending.created_at} if pending else None,
-                    "paces": PACES, "tracks": TRACKS}
+                    "paces": PACES, "tracks": TRACKS, "hunting": self.hunting_ground(row.turn + 1)}
 
     def notes(self, lab_id, query="", kind="", limit=100):
         with self.db.Session() as session:
@@ -761,6 +787,31 @@ class ResearchLabService:
         (folder / "TURNS.md").write_text("# The latest turns (newest first)\n\n" + "\n\n".join(
             f"## Turn {turn.number}: {turn.stage} by {turn.provider}\n{prose(turn.content, 6000)}" for turn in turns) + "\n", encoding="utf-8")
 
+    @staticmethod
+    def hunting_ground(number):
+        """The sector this round's scout searches first (rounds walk through the list in turn)."""
+        return HUNTING_GROUNDS[((number - 1) // len(STAGES)) % len(HUNTING_GROUNDS)]
+
+    def direction(self, number, stage, alive):
+        """Keep the lab ambitious and wide: a hunting ground for every scout, and a demand for new ideas when a track is
+        thin (fewer than MIN_ALIVE ideas) or weak (nothing at GOOD_SCORE)."""
+        lines = ["DIRECTION FOR THIS TURN:"]
+        if stage == "scout":
+            lines.append(f"- This round's hunting ground: {self.hunting_ground(number)}. Spend most of your searching there and bring at "
+                         "least two new ideas from it, unless the owner's notes point elsewhere. Bring the best idea you find anywhere too.")
+        for track, meaning in TRACKS.items():
+            mine = [idea for idea in alive if idea.track == track]
+            best = max((idea.score for idea in mine), default=0)
+            if len(mine) < MIN_ALIVE or best < GOOD_SCORE:
+                lines.append(f"- The {track} track ({meaning}) is too {'thin' if len(mine) < MIN_ALIVE else 'weak'}: {len(mine)} ideas alive, "
+                             f"best score {best}. Widen the search: look in different sectors and buyers, think bigger, and prefer "
+                             "large markets of buyers who already pay for a worse solution.")
+                if stage == "critic":
+                    lines.append(f"- In the {track} track, kill an idea only together with a stronger replacement you propose.")
+        lines.append("- Think big and broad: the owner wants products that sell themselves to many buyers, not narrow compliance "
+                     "niches. A niche is only worth it if it is large, urgent and already paying.")
+        return "\n".join(lines)
+
     def prompt(self, lab_id, number, stage, me, other, owner_notes):
         names = {"me": me["provider_label"], "other": other["provider_label"]}
         with self.db.Session() as session:
@@ -800,5 +851,6 @@ class ResearchLabService:
                  "THE LATEST TURNS (newest first):\n" + ("\n\n".join(f"{turn.provider} ({turn.stage}, turn {turn.number}):\n{prose(turn.content)}" for turn in turns) or "(you open the lab)")]
         if owner_notes:
             parts.append("THE OWNER JUST ADDED (their words decide; answer them in this turn):\n" + "\n".join(f"- {note}" for note in owner_notes))
+        parts.append(self.direction(number, stage, alive))
         parts.append(progress + "YOUR TURN: " + STAGE_TASK[stage].format(**names) + f"\n\n{names['me']}:")
         return "\n\n".join(part for part in parts if part)
