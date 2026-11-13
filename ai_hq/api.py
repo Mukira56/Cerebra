@@ -1097,6 +1097,26 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
     app.state.research = research
     research.on_report = lambda lab_id, text: notifier.send("Research lab", text)
 
+    def deliver_report(lab_id, report):
+        """A finished product report goes to the owner's phone: Telegram gets the message and the files; without
+        Telegram, the other phone alerts get a short note to open it in Cerebra."""
+        import html as html_module
+        import re as re_module
+        from .ebooks import markdown_to_xhtml
+        name = re_module.sub(r"[^A-Za-z0-9]+", "-", report["idea"] or "product").strip("-")[:60] or "product"
+        page = ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+                f"<title>{html_module.escape(report['title'])}</title><style>body{{font-family:system-ui,sans-serif;max-width:46rem;margin:auto;padding:1rem;"
+                "line-height:1.55;color:#1d232c}h1{color:#2b3a8c}h2{color:#24305e;border-bottom:1px solid #d6dae6;padding-bottom:.2rem;margin-top:1.6rem}"
+                "li{margin:.25rem 0}</style></head><body>" + markdown_to_xhtml(report["body"]) + "</body></html>")
+        sent = app.state.remote.send_report(report["title"], report["summary"][:1500],
+                                            [(f"{name}-report.html", page.encode("utf-8"), "text/html"),
+                                             (f"{name}-build-brief-for-Claude.md", report["body"].encode("utf-8"), "text/markdown")])
+        if sent:
+            return sent
+        result = notifier.send("Research lab", f"A product report is ready: {report['title']}. Read it on the Research lab page in Cerebra.")
+        return ", ".join(result.get("sent") or []) or "not sent: phone alerts aren't set up"
+    research.on_product_report = deliver_report
+
     @app.get("/api/research")
     def research_list(): return research.list()
 
@@ -1109,6 +1129,12 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
 
     @app.get("/api/research/{lab_id}/notes")
     def research_notes(lab_id: str, q: str = "", kind: str = "", limit: int = 100): return research.notes(lab_id, q, kind, limit)
+
+    @app.post("/api/research/{lab_id}/report")
+    def research_report_now(lab_id: str, payload: dict): return chat_or_404(research.request_report, lab_id, payload.get("track") or "")
+
+    @app.get("/api/research/reports/{report_id}")
+    def research_report(report_id: str): return chat_or_404(research.report, report_id)
 
     @app.post("/api/research/{lab_id}/say")
     def research_say(lab_id: str, payload: dict): return chat_or_404(research.say, lab_id, payload.get("text"))

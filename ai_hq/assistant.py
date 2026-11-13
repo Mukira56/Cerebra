@@ -50,7 +50,7 @@ DENY_PATH = re.compile(r"^/api/(session|open-link|logs/|business/notifications|b
 DENY_BODY = re.compile(r"token|secret|password|api_?key|credential", re.I)
 # Changes that go ahead at once (and are reported): how Cerebra looks, settings that don't start sending, new tasks
 # (each still waits for its plan approval), project priorities and pausing work.
-SAFE_CHANGE = re.compile(r"^(PUT /api/preferences|POST /api/council/[^/]+/say|POST /api/research(/[^/]+/(say|stop|resume))?|PUT /api/research/[^/]+|PUT /api/(partners|jobs|outreach|books/settings|chief/settings|backups/settings|social/settings|"
+SAFE_CHANGE = re.compile(r"^(PUT /api/preferences|POST /api/council/[^/]+/say|POST /api/research(/[^/]+/(say|stop|resume|report))?|PUT /api/research/[^/]+|PUT /api/(partners|jobs|outreach|books/settings|chief/settings|backups/settings|social/settings|"
                          r"money/settings|business/settings|routing|autopilot|models/hub|freelance/auto|freelance/profile|owner|support)|"
                          r"POST /api/tasks|PUT /api/projects/[^/]+/priority|POST /api/tasks/[^/]+/(pause|resume))$")
 STARTS_SENDING = ("enabled", "mode", "auto", "autopilot", "send")

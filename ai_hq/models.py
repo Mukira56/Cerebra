@@ -342,6 +342,7 @@ class ResearchLab(Base):
     report: Mapped[dict] = mapped_column(JSON, default=dict)  # the latest synthesis: leading idea per track
     questions: Mapped[list] = mapped_column(JSON, default=list)  # open research questions for the next turns
     notes_seen: Mapped[list] = mapped_column(JSON, default=list)  # owner notes not yet read by a turn
+    pending_reports: Mapped[list] = mapped_column(JSON, default=list)  # product reports to write next: [{"track", "idea", "tries"}]
     created_at: Mapped[str] = mapped_column(String, default=now)
     updated_at: Mapped[str] = mapped_column(String, default=now)
 
@@ -374,6 +375,23 @@ class ResearchNote(Base):
     source: Mapped[str] = mapped_column(String, default="")
     confidence: Mapped[str] = mapped_column(String, default="medium")
     by: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+class ResearchReport(Base):
+    """A full product report: written when a track's leading idea is ready, sent to the owner's phone, kept to read."""
+    __tablename__ = "research_reports"
+    __table_args__ = (Index("ix_research_reports_lab", "lab_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    lab_id: Mapped[str] = mapped_column(ForeignKey("research_labs.id"))
+    track: Mapped[str] = mapped_column(String, default="big")
+    idea: Mapped[str] = mapped_column(String, default="")
+    version: Mapped[int] = mapped_column(Integer, default=0)  # the idea's version the report describes
+    title: Mapped[str] = mapped_column(String, default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text, default="")  # Markdown
+    turn: Mapped[int] = mapped_column(Integer, default=0)
+    by: Mapped[str] = mapped_column(String, default="")
+    sent: Mapped[str] = mapped_column(String, default="")  # where it was delivered (telegram, ntfy) or why not
     created_at: Mapped[str] = mapped_column(String, default=now)
 
 class ResearchIdea(Base):

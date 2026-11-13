@@ -984,7 +984,7 @@
   // ---------- business research lab: two models research and improve business ideas for as long as you let them ----------
   let labId = "", labPoll = 0, labShown = "", labDraft = "", labSearch = "", labKind = "";
   const labOpen = new Set();
-  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", customer: "tests as the customer", offer: "builds the offer that sells", synthesis: "judges and re-scores", owner: "your note"};
+  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", customer: "tests as the customer", offer: "builds the offer that sells", synthesis: "judges and re-scores", report: "writes the product report", owner: "your note"};
   const LAB_FIELDS = [["customer", "Customer"], ["problem", "Problem"], ["offer", "Offer"], ["price", "Price"], ["revenue_math", "Revenue math"], ["channel", "How buyers find it"],
     ["sells_itself", "Why it sells itself"], ["evidence", "Evidence"], ["risks", "Risks"], ["first_step", "First step"]];
   const LAB_SCORES = [["pain", "Pain"], ["willingness_to_pay", "Will pay"], ["sells_itself", "Sells itself"], ["reach", "Reach"], ["speed_to_cash", "Speed to cash"],
@@ -1005,7 +1005,7 @@
       try { state = await api(`/api/research/${encodeURIComponent(labId)}`); } catch (issue) { if (!poll) root.replaceChildren(body(empty("Lab unavailable", issue.message))); return; }
       if (token !== renderToken || page !== "lab") return;
       // Repaint only when something changed: a turn can take minutes, and repainting would close what you have open.
-      const print = JSON.stringify([labs.map(item => [item.id, item.status, item.turn]), state.status, state.turn, state.error, state.next_at, state.now, state.turns.map(turn => [turn.id, turn.status]), state.pace]);
+      const print = JSON.stringify([labs.map(item => [item.id, item.status, item.turn]), state.status, state.turn, state.error, state.next_at, state.now, state.turns.map(turn => [turn.id, turn.status]), state.pace, array(state.reports).map(item => item.id), state.pending_reports]);
       if (print !== labShown) { labShown = print; const y = window.scrollY; paint(labs, state); window.scrollTo(window.scrollX, y); }
       if (state.busy) labPoll = setTimeout(() => load(true), 5000);
     }
@@ -1057,11 +1057,32 @@
         const lead = report[track], idea = array(state.ideas).find(item => lead && item.name === lead.idea);
         leaders.append(append(el("div", "lab-leader"), el("small", "", title), el("strong", "", lead ? lead.idea : "Not decided yet"),
           idea ? el("span", "lab-score", `score ${idea.score} / 100`) : null, lead?.why ? el("p", "", lead.why) : null,
-          array(lead?.plan).length ? append(el("ol"), ...lead.plan.map(step => el("li", "", step))) : null));
+          array(lead?.plan).length ? append(el("ol"), ...lead.plan.map(step => el("li", "", step))) : null,
+          (lead || array(state.ideas).some(item => item.track === track && item.status === "alive")) ? button("Write the full product report now", () => act(result => result.message,
+            () => mutate(`/api/research/${id}/report`, {track})).then(() => { labShown = ""; load(); }), "button small ghost") : null));
       });
       parts.push(panel("Current leaders", body(leaders,
         report.summary ? el("p", "", report.summary) : hint("The lead researcher names a leader for each track at the end of every round (every 5 turns)."),
         report.confidence ? el("p", "hint", `How sure: ${report.confidence}`) : null, report.turn ? el("small", "", `As judged at turn ${report.turn}, ${relative(report.at)}.`) : null)));
+      // Product reports: written when a track's leader is ready, sent to the phone, kept here to read and hand to Claude
+      const shelf = el("div", "lab-reports");
+      array(state.pending_reports).forEach(item => shelf.append(hint(`Writing the full product report for ${item.idea} (${LAB_TRACK[item.track] || item.track})… it arrives on your phone and here.`)));
+      array(state.reports).forEach(item => {
+        const card = append(el("details", "lab-idea"), append(el("summary"), el("strong", "", item.title || item.idea),
+          el("small", "", ` ${LAB_TRACK[item.track] || item.track} · ${relative(item.created_at)}${item.sent ? ` · ${item.sent.startsWith("not sent") ? item.sent : "sent to " + item.sent}` : ""}`)));
+        const holder = el("div");
+        card.append(el("p", "", item.summary), holder);
+        card.addEventListener("toggle", async () => {
+          if (!card.open || holder.childElementCount) return;
+          let full; try { full = await api(`/api/research/reports/${encodeURIComponent(item.id)}`); } catch (issue) { holder.append(hint(issue.message, true)); return; }
+          const copy = button("Copy the report for Claude", async () => { try { await navigator.clipboard.writeText(full.body); toast("Copied. Paste it to Claude to build the product."); } catch (issue) { toast("Couldn't copy: select the text instead.", true); } }, "button small primary");
+          const save = button("Download (.md)", () => { const link = el("a"); link.href = URL.createObjectURL(new Blob([full.body], {type: "text/markdown"})); link.download = `${(full.idea || "product").replace(/[^A-Za-z0-9]+/g, "-")}-report.md`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 5000); }, "button small ghost");
+          holder.append(append(el("div", "lab-controls"), copy, save), markdown(full.body));
+        });
+        shelf.append(card);
+      });
+      if (!array(state.reports).length && !array(state.pending_reports).length) shelf.append(hint("When the lead researcher judges a product ready, the lab writes its full report: the product, the buyers, the proof, the offer, how to sell it, and a build brief Claude can follow from scratch. It arrives on your phone (Telegram) and here. You can also ask for one now on a leader above."));
+      parts.push(panel("Product reports", body(shelf), null, array(state.reports).length));
       // Your thoughts
       const note = textarea("Add your thoughts: a market to look at, an idea, a doubt, a customer you know… The next turn reads it first and your words decide.", labDraft);
       note.addEventListener("input", () => { labDraft = note.value; });

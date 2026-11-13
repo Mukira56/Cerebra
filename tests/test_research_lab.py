@@ -21,6 +21,10 @@ def block(**data):
     return f"My reasoning for the other researcher.\n```cerebra-research\n{json.dumps(data)}\n```"
 
 
+REPORT = ("# Fax-to-EHR inbox: never retype a referral again" + chr(10) + "## In one minute" + chr(10)
+          + "Orthodontists stop retyping faxed referrals. It costs $199 a month." + chr(10) + "## A day before, and a day after" + chr(10)
+          + "An illustration of one office manager's day. " * 40 + chr(10) + "## Build brief for Claude" + chr(10)
+          + ("- A milestone with tests." + chr(10)) * 40 + "## Sources" + chr(10) + "https://example.org/survey" + chr(10))
 SCORES = {"pain": 8, "willingness_to_pay": 7, "sells_itself": 6, "reach": 7, "speed_to_cash": 8, "defensibility": 5, "evidence": 6, "legal_safety": 9}
 
 
@@ -51,6 +55,8 @@ class LabRegistry(FixtureRegistry):
                                            ideas=[{"name": "Fax-to-EHR inbox for orthodontists", "improves": "Fax-to-EHR inbox", "price": "$199/month",
                                                    "change": "narrower buyer who pays more", "scores": {"willingness_to_pay": 8}},
                                                   {"name": "Crypto pump signals", "track": "big", "kill": True, "kill_reason": "not legal"}]))
+        if "FULL PRODUCT REPORT" in prompt:
+            return AgentResult(True, "Here it is." + chr(10) + REPORT)
         if "YOUR TURN: Build the offer" in prompt:
             return AgentResult(True, block(ideas=[{"name": "Fax-to-EHR inbox", "offer": "30-day free trial, setup done for you", "change": "offer built"}])
                                + " Sources: https://example.org/a https://example.org/b")
@@ -61,7 +67,7 @@ class LabRegistry(FixtureRegistry):
         return AgentResult(True, block(ideas=[{"name": "Fax-to-EHR inbox for orthodontists", "change": "re-scored", "scores": {"evidence": 8}}],
                                        questions=["What do orthodontists use today?"],
                                        report={"summary": "The fax inbox leads.", "floor": {"idea": "Fax-to-EHR inbox for orthodontists", "why": "Paid pain", "plan": ["Call 20 clinics"]},
-                                               "big": {"idea": "Tender alerts for EU SMEs", "why": "Large market", "plan": ["Check the rules"]}, "confidence": "low"}))
+                                               "big": {"idea": "Tender alerts for EU SMEs", "why": "Large market", "plan": ["Check the rules"]}, "confidence": "low", "ready": ["floor", "nonsense"]}))
 
 
 @pytest.fixture
@@ -272,3 +278,77 @@ def test_research_turns_get_45_minutes_and_maximum_effort(tmp_path):
 def test_sources_are_counted_once_each():
     parsed = {"notes": [{"source": "https://a.example/x"}, {"source": "estimate"}, {"source": "https://b.example/y."}]}
     assert research_lab.sources_in(parsed, "see https://a.example/x and (https://c.example/z)") == 3
+
+
+def test_a_ready_product_gets_a_full_report_on_the_phone_and_in_cerebra(lab_app):
+    client, app = lab_app
+    delivered = []
+    app.state.remote.send_report = lambda title, summary, files: delivered.append((title, summary, files)) or "telegram"
+    lab = client.post("/api/research", json={"pace": 3600}).json()
+    wait_for(lambda: client.get(f"/api/research/{lab['id']}").json()["turn"] >= 1)
+    for _ in range(4):
+        app.state.research.step(lab["id"])
+    state = client.get(f"/api/research/{lab['id']}").json()
+    assert state["pending_reports"] == [{"track": "floor", "idea": "Fax-to-EHR inbox for orthodontists", "tries": 0}]  # only real tracks
+    assert app.state.research.step(lab["id"]) == (True, "")  # the queued report comes before the next research turn
+    state = client.get(f"/api/research/{lab['id']}").json()
+    assert state["turn"] == 5 and state["pending_reports"] == []
+    [summary] = state["reports"]
+    assert summary["title"] == "Fax-to-EHR inbox: never retype a referral again" and summary["sent"] == "telegram" and "body" not in summary
+    assert summary["summary"] == "Orthodontists stop retyping faxed referrals. It costs $199 a month."
+    full = client.get(f"/api/research/reports/{summary['id']}").json()
+    assert full["body"].startswith("# Fax-to-EHR inbox") and "Build brief for Claude" in full["body"]
+    [(title, _, files)] = delivered
+    names = [name for name, _, _ in files]
+    assert names == ["Fax-to-EHR-inbox-for-orthodontists-report.html", "Fax-to-EHR-inbox-for-orthodontists-build-brief-for-Claude.md"]
+    assert b"<h2>Build brief for Claude</h2>" in files[0][1] and files[1][1].decode().startswith("# Fax-to-EHR inbox")
+    # The same product at about the same version isn't reported again by the next judgement.
+    with app.state.db.Session.begin() as session:
+        from ai_hq.models import ResearchLab
+        row = session.get(ResearchLab, lab["id"])
+        assert not app.state.research._queue_report(session, row, "floor", "Fax-to-EHR inbox for orthodontists")
+    client.post(f"/api/research/{lab['id']}/stop")
+
+
+def test_the_owner_can_ask_for_a_report_and_a_stopped_lab_writes_just_that(lab_app):
+    client, app = lab_app
+    app.state.remote.send_report = lambda title, summary, files: ""  # Telegram isn't set up
+    lab = client.post("/api/research", json={"pace": 3600}).json()
+    wait_for(lambda: client.get(f"/api/research/{lab['id']}").json()["turn"] >= 1)
+    client.post(f"/api/research/{lab['id']}/stop")
+    wait_for(lambda: not client.get(f"/api/research/{lab['id']}").json()["busy"])
+    assert client.post(f"/api/research/{lab['id']}/report", json={"track": "big"}).status_code == 400  # nothing in that track yet
+    asked = client.post(f"/api/research/{lab['id']}/report", json={"track": "floor"}).json()
+    assert "Fax-to-EHR inbox" in asked["message"]
+    report = wait_for(lambda: (client.get(f"/api/research/{lab['id']}").json()["reports"] or [None])[0])
+    assert report["sent"] == "not sent: phone alerts aren't set up"
+    wait_for(lambda: not client.get(f"/api/research/{lab['id']}").json()["busy"])
+    assert client.get(f"/api/research/{lab['id']}").json()["status"] == "stopped"
+    assert client.delete(f"/api/research/{lab['id']}").json() == {"deleted": True}
+    assert client.get(f"/api/research/reports/{report['id']}").status_code == 404
+
+
+def test_telegram_gets_the_message_then_each_file(lab_app):
+    _, app = lab_app
+    remote, posts = app.state.remote, []
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"ok": True}
+
+    class Client:
+        def post(self, url, json=None, data=None, files=None, timeout=None):
+            posts.append((url.rsplit("/", 1)[-1], json, data, files))
+            return Response()
+
+    remote._settings = lambda: {"token": "123:made-up", "chat": "42"}
+    original, remote.notifier.client = remote.notifier.client, Client()
+    try:
+        assert remote.send_report("Fax inbox", "In one minute.", [("a.html", b"<h1>x</h1>", "text/html"), ("a.md", b"# x", "text/markdown")]) == "telegram"
+    finally:
+        remote.notifier.client = original
+    assert [method for method, *_ in posts] == ["sendMessage", "sendDocument", "sendDocument"]
+    assert "Fax inbox" in posts[0][1]["text"] and posts[1][2] == {"chat_id": "42"} and posts[2][3]["document"][0] == "a.md"
+    remote._settings = lambda: None
+    assert remote.send_report("x", "y", []) == ""  # Telegram not set up

@@ -66,6 +66,21 @@ class Remote:
                                                             for label, data in row] for row in buttons]}
         return self._call(settings, "sendMessage", **payload)
 
+    def send_report(self, title, summary, files):
+        """A finished product report: a short message, then the report as files (to read on the phone, and to hand to
+        Claude). Returns "telegram" when it went, or "" when Telegram isn't set up."""
+        settings = self._settings()
+        if settings is None:
+            return ""
+        self.say(settings, f"New product report from the Research lab\n\n{title}\n\n{summary}\n\nThe full report is attached: "
+                           "open the .html file to read it, and give the .md file to Claude to build the product.")
+        for name, data, kind in files:
+            response = self.notifier.client.post(f"https://api.telegram.org/bot{settings['token']}/sendDocument",
+                                                 data={"chat_id": settings["chat"]}, files={"document": (name, data, kind)}, timeout=120)
+            if response.status_code != 200:
+                raise RuntimeError(f"Telegram didn't accept {name} (status {response.status_code})")
+        return "telegram"
+
     def poll(self, wait=25):
         """Read and handle new updates once. Returns how many were handled."""
         settings = self._settings()
