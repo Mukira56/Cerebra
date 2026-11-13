@@ -51,6 +51,9 @@ class LabRegistry(FixtureRegistry):
                                            ideas=[{"name": "Fax-to-EHR inbox for orthodontists", "improves": "Fax-to-EHR inbox", "price": "$199/month",
                                                    "change": "narrower buyer who pays more", "scores": {"willingness_to_pay": 8}},
                                                   {"name": "Crypto pump signals", "track": "big", "kill": True, "kill_reason": "not legal"}]))
+        if "YOUR TURN: Build the offer" in prompt:
+            return AgentResult(True, block(ideas=[{"name": "Fax-to-EHR inbox", "offer": "30-day free trial, setup done for you", "change": "offer built"}])
+                               + " Sources: https://example.org/a https://example.org/b")
         if "YOUR TURN: Be the customer" in prompt:
             return AgentResult(True, block(notes=[{"kind": "customer", "title": "Office managers hate retyping referrals", "source": "https://example.org/forum"}],
                                            ideas=[{"name": "Tender alerts for EU SMEs", "track": "big", "customer": "EU construction firms",
@@ -106,9 +109,9 @@ def test_score_weights_pain_and_payment_and_halves_unsafe_ideas():
 def test_roles_swap_each_round_and_the_lead_judges():
     service = research_lab.ResearchLabService(None, None, None)
     lead, other = {"provider": "claude"}, {"provider": "codex"}
-    order = [(stage, speaker["provider"]) for stage, speaker, _ in (service.speakers(number, [lead, other]) for number in range(1, 9))]
-    assert order == [("scout", "claude"), ("critic", "codex"), ("customer", "claude"), ("synthesis", "claude"),
-                     ("scout", "codex"), ("critic", "claude"), ("customer", "codex"), ("synthesis", "claude")]
+    order = [(stage, speaker["provider"]) for stage, speaker, _ in (service.speakers(number, [lead, other]) for number in range(1, 11))]
+    assert order == [("scout", "claude"), ("critic", "codex"), ("customer", "claude"), ("offer", "codex"), ("synthesis", "claude"),
+                     ("scout", "codex"), ("critic", "claude"), ("customer", "codex"), ("offer", "claude"), ("synthesis", "claude")]
 
 
 def test_a_lab_researches_improves_and_reports_until_stopped(lab_app, tmp_path):
@@ -116,7 +119,7 @@ def test_a_lab_researches_improves_and_reports_until_stopped(lab_app, tmp_path):
     lab = client.post("/api/research", json={"pace": 3600}).json()  # one turn, then a long pause: the rest run here, in order
     assert lab["status"] == "running" and "United States" in lab["goal"]
     wait_for(lambda: client.get(f"/api/research/{lab['id']}").json()["turn"] >= 1)
-    assert [app.state.research.step(lab["id"]) for _ in range(3)] == [(True, "")] * 3
+    assert [app.state.research.step(lab["id"]) for _ in range(4)] == [(True, "")] * 4
     assert client.post(f"/api/research/{lab['id']}/stop").status_code == 200
     wait_for(lambda: not client.get(f"/api/research/{lab['id']}").json()["busy"])
     state = client.get(f"/api/research/{lab['id']}").json()
@@ -128,7 +131,12 @@ def test_a_lab_researches_improves_and_reports_until_stopped(lab_app, tmp_path):
     improved = ideas["Fax-to-EHR inbox for orthodontists"]  # the critic renamed and improved the scout's idea
     assert "Fax-to-EHR inbox" not in ideas and improved["version"] >= 3 and improved["current"]["price"] == "$199/month"
     assert improved["current"]["customer"] == "US dental clinics"  # fields left out keep their value
-    assert [step["stage"] for step in improved["history"]][:3] == ["scout", "critic", "synthesis"]
+    assert [step["stage"] for step in improved["history"]][:4] == ["scout", "critic", "offer", "synthesis"]  # the offer turn found it by its old name
+    assert improved["current"]["offer"] == "30-day free trial, setup done for you"
+    turns = {turn["stage"]: turn for turn in state["turns"] if turn["stage"] != "owner"}
+    assert turns["offer"]["gains"]["sources"] == 2 and turns["offer"]["gains"]["needed"] == research_lab.MIN_SOURCES["offer"]
+    shallow = app.state.research.prompt(lab["id"], 6, "scout", {"provider": "codex", "provider_label": "Codex"}, {"provider": "claude", "provider_label": "Claude"}, [])
+    assert "Cite at least 15 distinct sources" in shallow
     assert "Crypto pump signals" not in ideas  # a kill of an unknown idea adds nothing
     risky = ideas["Tender alerts for EU SMEs"]
     assert risky["score"] < improved["score"]  # low legal safety halves the score
@@ -241,7 +249,26 @@ def test_deep_turns_use_the_strongest_claude_model_with_high_effort(tmp_path):
 
     registry = AgentRegistry()
     registry.adapters["claude"] = recorder = Recorder()
-    registry.research("claude", "find buyers", str(tmp_path))
-    assert recorder.seen == ("opus", True, "high")
+    registry.deep("claude", "discuss", str(tmp_path))
+    assert recorder.seen == ("opus", False, "high")
     registry.deep("claude", "discuss", str(tmp_path), "sonnet")
     assert recorder.seen == ("sonnet", False, "high")  # the owner's own choice of model wins
+
+
+def test_research_turns_get_45_minutes_and_maximum_effort(tmp_path):
+    from ai_hq.agents import AgentRegistry, AgentResult as Result, RESEARCH_SECONDS
+
+    class Recorder(ClaudeAdapter):
+        def chat(self, prompt, workdir, model="", cancel_event=None, web=False, effort="", timeout=None):
+            self.seen = (model, web, effort, timeout)
+            return Result(True, "ok")
+
+    registry = AgentRegistry()
+    registry.adapters["claude"] = recorder = Recorder()
+    registry.research("claude", "find buyers", str(tmp_path))
+    assert recorder.seen == ("opus", True, "max", RESEARCH_SECONDS) and RESEARCH_SECONDS == 2700
+
+
+def test_sources_are_counted_once_each():
+    parsed = {"notes": [{"source": "https://a.example/x"}, {"source": "estimate"}, {"source": "https://b.example/y."}]}
+    assert research_lab.sources_in(parsed, "see https://a.example/x and (https://c.example/z)") == 3

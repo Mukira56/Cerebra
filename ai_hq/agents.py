@@ -82,7 +82,11 @@ MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$")
 # Conversation turns (Support, AI discussion, research, writing) don't need a coding agent: Claude answers them as a plain
 # assistant with this short instruction instead of Claude Code's long coding-agent instructions and full tool set, which
 # saves most of the tokens per turn. Coding tasks (plan, build, review) keep the full agent.
-BEST_MODEL = {"claude": "opus"}  # Claude Code's alias for the newest Opus; ChatGPT (Codex) keeps the plan's own default model
+BEST_MODEL = {"claude": "opus"}
+# A research turn searches and reads dozens of sources before it answers, so it gets far longer than a chat turn, and
+# the most thinking each provider offers (Claude Code: max; Codex: high).
+RESEARCH_SECONDS = 45 * 60
+RESEARCH_EFFORT = {"claude": "max", "codex": "high"}  # Claude Code's alias for the newest Opus; ChatGPT (Codex) keeps the plan's own default model
 PLAIN_SYSTEM = ("You are Claude, a capable assistant answering for the owner of Cerebra, a desktop app on their Windows laptop. "
                 "Answer the request in the message directly and completely, in plain English. You can only read: use the "
                 "tools you have to read files in the working folder{web} when that helps; you can't change anything. "
@@ -294,7 +298,7 @@ class _CliAdapter:
             chosen += ["--system-prompt", PLAIN_SYSTEM.format(web=" and search and read the web" if web else "")] + (["--effort", effort] if effort else [])
         return [executable, "--print", "--output-format", "json", *chosen, "--permission-mode", "dontAsk", "--tools", ("Read,Grep,Glob,WebSearch,WebFetch" if web else "Read,Grep,Glob") if read_only else "Read,Grep,Glob,Edit,Write", "--allowedTools", *allowed, "--no-session-persistence", "--safe-mode", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--disallowedTools", "mcp__*", f"Edit({scope}/.git)", f"Edit({scope}/.git/**)"]
 
-    def chat(self, prompt: str, workdir: str, model: str = "", cancel_event=None, web=False, effort="") -> AgentResult:
+    def chat(self, prompt: str, workdir: str, model: str = "", cancel_event=None, web=False, effort="", timeout=None) -> AgentResult:
         """A read-only conversation turn. The agent may read the project but cannot change it. With web=True it may also
         search and read the web (research turns)."""
         if not self.allow_live:
@@ -307,7 +311,7 @@ class _CliAdapter:
         try:
             directory = Path(workdir).resolve(strict=True)
             args = self._command(info["executable"], directory, True, ["."], valid_model(model), web=web, plain=bool(info.get("plain")), effort=effort)
-            result = self.runner.run(args, directory, self.timeout, cancel_event, prompt, redact_output=False)
+            result = self.runner.run(args, directory, timeout or self.timeout, cancel_event, prompt, redact_output=False)
             if result.cancelled or result.timed_out or result.exit_code != 0:
                 reason = "cancelled" if result.cancelled else "timed out" if result.timed_out else f"exited with code {result.exit_code}"
                 detail = failure_detail(result.stderr or result.stdout)
@@ -438,7 +442,13 @@ class AgentRegistry:
     def research(self, name, prompt, workdir, model="", cancel_event=None):
         """A read-only turn that may also search the web, on the provider's strongest model thinking hard. Adapters
         without web search answer from what they know."""
-        return self.deep(name, prompt, workdir, model, cancel_event, web=True)
+        if type(self).chat is not AgentRegistry.chat:  # a stand-in registry (tests) answers every turn through its own chat
+            return self.chat(name, prompt, workdir, model, cancel_event)
+        adapter = self.get(name)
+        if isinstance(adapter, _CliAdapter):
+            return adapter.chat(prompt, workdir, model or BEST_MODEL.get(name, ""), cancel_event, web=True,
+                                effort=RESEARCH_EFFORT.get(name, "high"), timeout=max(RESEARCH_SECONDS, self.timeout or 0))
+        return adapter.chat(prompt, workdir, model, cancel_event)
 
     def deep(self, name, prompt, workdir, model="", cancel_event=None, web=False):
         """A turn that needs the best thinking (the AI discussion, the research lab): Claude's strongest model (Opus)

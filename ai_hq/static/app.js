@@ -984,7 +984,7 @@
   // ---------- business research lab: two models research and improve business ideas for as long as you let them ----------
   let labId = "", labPoll = 0, labShown = "", labDraft = "", labSearch = "", labKind = "";
   const labOpen = new Set();
-  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", customer: "tests as the customer", synthesis: "judges and re-scores", owner: "your note"};
+  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", customer: "tests as the customer", offer: "builds the offer that sells", synthesis: "judges and re-scores", owner: "your note"};
   const LAB_FIELDS = [["customer", "Customer"], ["problem", "Problem"], ["offer", "Offer"], ["price", "Price"], ["revenue_math", "Revenue math"], ["channel", "How buyers find it"],
     ["sells_itself", "Why it sells itself"], ["evidence", "Evidence"], ["risks", "Risks"], ["first_step", "First step"]];
   const LAB_SCORES = [["pain", "Pain"], ["willingness_to_pay", "Will pay"], ["sells_itself", "Sells itself"], ["reach", "Reach"], ["speed_to_cash", "Speed to cash"],
@@ -1023,7 +1023,8 @@
         labId = lab.id; labShown = ""; toast("The lab started. The lead researcher is searching the web."); load();
       });
       const intro = append(el("div", "lab-intro"),
-        el("p", "", "Two AI researchers work on one goal for as long as you let them, days or months. Every round, one researches and proposes, the other attacks with evidence, they test the best ideas as real customers would, and the lead judges and re-scores the board."),
+        el("p", "", "Two AI researchers work on one goal for as long as you let them, days or months. Every round, one researches and proposes, the other attacks with evidence, they test the best ideas as real customers would, turn the leader into an offer built to sell, and the lead judges and re-scores the board."),
+        el("p", "", "Every turn is deep research: up to 45 minutes and at least 15 sources, from Reddit, X, reviews and forums to ad libraries, search trends, government data and the frameworks of the classic sales and marketing books."),
         el("p", "", "Everything they learn goes into a shared research memory with sources, and every idea keeps all its versions and scores. Each turn must improve on the last. You can add your thoughts at any time."),
         el("p", "hint", "They only research: nothing is sent, bought or published. They keep to legal, honest businesses and say which licence or rule an idea needs."));
       return panel(first ? "Business research lab" : "Start another lab", body(intro, form));
@@ -1059,7 +1060,7 @@
           array(lead?.plan).length ? append(el("ol"), ...lead.plan.map(step => el("li", "", step))) : null));
       });
       parts.push(panel("Current leaders", body(leaders,
-        report.summary ? el("p", "", report.summary) : hint("The lead researcher names a leader for each track at the end of every round (every 4 turns)."),
+        report.summary ? el("p", "", report.summary) : hint("The lead researcher names a leader for each track at the end of every round (every 5 turns)."),
         report.confidence ? el("p", "hint", `How sure: ${report.confidence}`) : null, report.turn ? el("small", "", `As judged at turn ${report.turn}, ${relative(report.at)}.`) : null)));
       // Your thoughts
       const note = textarea("Add your thoughts: a market to look at, an idea, a doubt, a customer you know… The next turn reads it first and your words decide.", labDraft);
@@ -1083,7 +1084,7 @@
         ...killed.map(item => append(el("p"), el("strong", "", item.name), document.createTextNode(`: ${item.killed_reason}`)))));
       parts.push(panel("Idea board", body(board), null, array(state.ideas).length));
       // The research memory
-      const memory = el("div", "lab-memory"), search = input("Search the research memory"), kind = select([["", "All kinds"], ...["fact", "customer", "competitor", "price", "channel", "regulation", "market", "risk"].map(name => [name, nice(name)])], labKind);
+      const memory = el("div", "lab-memory"), search = input("Search the research memory"), kind = select([["", "All kinds"], ...["insight", "customer", "competitor", "demand", "ad", "framework", "price", "channel", "fact", "regulation", "market", "risk"].map(name => [name, nice(name)])], labKind);
       search.value = labSearch;
       let searchTimer = 0;
       const findNotes = async () => {
@@ -1102,7 +1103,8 @@
       [...array(state.turns)].reverse().forEach((turn, index) => {
         if (turn.stage === "owner") { turns.append(append(el("div", "lab-owner"), el("strong", "", "You: "), document.createTextNode(turn.content), el("small", "", ` ${relative(turn.created_at)}`))); return; }
         const gains = turn.gains || {}, added = [gains.notes ? counted(gains.notes, "note", "notes") : "", gains.new_ideas ? counted(gains.new_ideas, "new idea", "new ideas") : "",
-          gains.improved ? `${gains.improved} improved` : "", gains.killed ? `${gains.killed} killed` : ""].filter(Boolean).join(", ");
+          gains.improved ? `${gains.improved} improved` : "", gains.killed ? `${gains.killed} killed` : "",
+          gains.sources !== undefined ? `${counted(gains.sources, "source", "sources")}${gains.needed && gains.sources < gains.needed ? " (too shallow)" : ""}` : ""].filter(Boolean).join(", ");
         const open = labOpen.has(turn.id) || (index === 0 && !labOpen.size);
         const card = append(el("details", `lab-turn ${turn.status}`), el("summary", "", `Turn ${turn.number} · ${labWho(turn.provider)} ${LAB_STAGE[turn.stage] || turn.stage} · ${turn.status === "pending" ? "working…" : turn.status === "failed" ? "couldn't answer" : added || "nothing new"} · ${relative(turn.created_at)}`));
         card.open = open;
