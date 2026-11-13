@@ -115,9 +115,9 @@ def test_score_weights_pain_and_payment_and_halves_unsafe_ideas():
 def test_roles_swap_each_round_and_the_lead_judges():
     service = research_lab.ResearchLabService(None, None, None)
     lead, other = {"provider": "claude"}, {"provider": "codex"}
-    order = [(stage, speaker["provider"]) for stage, speaker, _ in (service.speakers(number, [lead, other]) for number in range(1, 11))]
-    assert order == [("scout", "claude"), ("critic", "codex"), ("customer", "claude"), ("offer", "codex"), ("synthesis", "claude"),
-                     ("scout", "codex"), ("critic", "claude"), ("customer", "codex"), ("offer", "claude"), ("synthesis", "claude")]
+    order = [(stage, speaker["provider"]) for stage, speaker, _ in (service.speakers(number, [lead, other]) for number in range(1, 13))]
+    assert order == [("scout", "claude"), ("critic", "codex"), ("customer", "claude"), ("offer", "codex"), ("synthesis", "claude"), ("winners", "codex"),
+                     ("scout", "codex"), ("critic", "claude"), ("customer", "codex"), ("offer", "claude"), ("synthesis", "claude"), ("winners", "claude")]
 
 
 def test_a_lab_researches_improves_and_reports_until_stopped(lab_app, tmp_path):
@@ -356,9 +356,9 @@ def test_telegram_gets_the_message_then_each_file(lab_app):
 
 def test_each_round_hunts_somewhere_new_and_thin_tracks_demand_new_ideas():
     service = research_lab.ResearchLabService(None, None, None)
-    grounds = [service.hunting_ground(number) for number in (1, 5, 6, 11)]
+    grounds = [service.hunting_ground(number) for number in (1, 6, 7, 13)]
     assert grounds[0] == grounds[1] != grounds[2] != grounds[3]  # one ground per round of five turns
-    assert len({service.hunting_ground(1 + 5 * n) for n in range(len(research_lab.HUNTING_GROUNDS))}) == len(research_lab.HUNTING_GROUNDS)
+    assert len({service.hunting_ground(1 + 6 * n) for n in range(len(research_lab.HUNTING_GROUNDS))}) == len(research_lab.HUNTING_GROUNDS)
 
     class Idea:
         def __init__(self, track, score):
@@ -394,3 +394,14 @@ def test_a_turn_that_stops_on_a_progress_note_is_finished_by_the_same_model(lab_
     assert finish[0] == registry.turns[0][0] and "It wrote only this:\n---\nI'm checking that distinction" in finish[1]
     assert any(idea["name"] == "Fax-to-EHR inbox" for idea in state["ideas"])
     client.post(f"/api/research/{lab['id']}/stop")
+
+
+def test_every_round_ends_by_studying_products_that_made_a_million_fast():
+    task = research_lab.STAGE_TASK["winners"]
+    for words in ("$1", "how the founder came up with the idea", "whether getting rich", "US, Canada and Europe", "'case' note", "'pattern' notes",
+                  "founder's claim", "failed the same way"):
+        assert words in task
+    assert research_lab.MIN_SOURCES["winners"] == 15 and {"case", "pattern"} <= set(research_lab.NOTE_KINDS)
+    service = research_lab.ResearchLabService(None, None, None)
+    assert "hunting ground" in service.direction(6, "winners", [])
+    assert "one in Canada" in research_lab.STAGE_TASK["customer"] and "US, Canada and Europe" in research_lab.PRODUCT_REPORT

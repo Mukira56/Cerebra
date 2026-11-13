@@ -14,7 +14,7 @@
     setup: ["WORKSPACE", "Get set up", "Choose what you want Cerebra to do, then connect only what that needs, one step at a time."],
     chat: ["WORKSPACE", "Ask for help", "Ask about a project or task, or have Cerebra plan, create and start the work."],
     council: ["BUILD", "AI discussion", "Codex and Claude discuss a project with each other, agree on ideas and who builds each one. You read every word."],
-    lab: ["BUILD", "Research lab", "Claude and Codex research business ideas for real US and European customers, attack each other's ideas and keep improving them for as long as you let them."],
+    lab: ["BUILD", "Research lab", "Claude and Codex research business ideas for real customers in the US, Canada and Europe, attack each other's ideas and keep improving them for as long as you let them."],
     marketing: ["OUTREACH", "Social media posts", "Posts that bring you clients on X, your Facebook Page and Instagram. Nothing goes out until you approve it."],
     chief: ["WORKSPACE", "Goals & helpers", "Your money goals and the workers that pursue them: each on its schedule, every run on the record. Anything that reaches other people waits for your yes."],
     prospects: ["OUTREACH", "Local customers", "Local businesses in the US that could use what you sell, from public data, each kept only with a reason seen on its own website. Nobody is contacted without you."],
@@ -984,7 +984,7 @@
   // ---------- business research lab: two models research and improve business ideas for as long as you let them ----------
   let labId = "", labPoll = 0, labShown = "", labDraft = "", labSearch = "", labKind = "";
   const labOpen = new Set();
-  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", customer: "tests as the customer", offer: "builds the offer that sells", synthesis: "judges and re-scores", report: "writes the product report", owner: "your note"};
+  const LAB_STAGE = {scout: "researches and proposes", critic: "attacks with evidence", winners: "studies fast winners", customer: "tests as the customer", offer: "builds the offer that sells", synthesis: "judges and re-scores", report: "writes the product report", owner: "your note"};
   const LAB_FIELDS = [["customer", "Customer"], ["problem", "Problem"], ["offer", "Offer"], ["price", "Price"], ["revenue_math", "Revenue math"], ["channel", "How buyers find it"],
     ["sells_itself", "Why it sells itself"], ["evidence", "Evidence"], ["risks", "Risks"], ["first_step", "First step"]];
   const LAB_SCORES = [["pain", "Pain"], ["willingness_to_pay", "Will pay"], ["sells_itself", "Sells itself"], ["reach", "Reach"], ["speed_to_cash", "Speed to cash"],
@@ -1023,7 +1023,7 @@
         labId = lab.id; labShown = ""; toast("The lab started. The lead researcher is searching the web."); load();
       });
       const intro = append(el("div", "lab-intro"),
-        el("p", "", "Two AI researchers work on one goal for as long as you let them, days or months. Every round, one researches and proposes, the other attacks with evidence, they test the best ideas as real customers would, turn the leader into an offer built to sell, and the lead judges and re-scores the board."),
+        el("p", "", "Two AI researchers work on one goal for as long as you let them, days or months. Every round, one studies products that made about $1 million within months and how their founders found the idea, one researches and proposes, the other attacks with evidence, they test the best ideas as real customers would, turn the leader into an offer built to sell, and the lead judges and re-scores the board."),
         el("p", "", "Every turn is deep research: up to 45 minutes and at least 15 sources, from Reddit, X, reviews and forums to ad libraries, search trends, government data and the frameworks of the classic sales and marketing books."),
         el("p", "", "Everything they learn goes into a shared research memory with sources, and every idea keeps all its versions and scores. Each turn must improve on the last. You can add your thoughts at any time."),
         el("p", "hint", "They only research: nothing is sent, bought or published. They keep to legal, honest businesses and say which licence or rule an idea needs."));
@@ -1063,7 +1063,7 @@
             () => mutate(`/api/research/${id}/report`, {track})).then(() => { labShown = ""; load(); }), "button small ghost") : null));
       });
       parts.push(panel("Current leaders", body(leaders,
-        report.summary ? el("p", "", report.summary) : hint("The lead researcher names a leader for each track at the end of every round (every 5 turns)."),
+        report.summary ? el("p", "", report.summary) : hint("The lead researcher names a leader for each track at the end of every round (every 6 turns)."),
         report.confidence ? el("p", "hint", `How sure: ${report.confidence}`) : null, report.turn ? el("small", "", `As judged at turn ${report.turn}, ${relative(report.at)}.`) : null)));
       // Product reports: written when a track's leader is ready, sent to the phone, kept here to read and hand to Claude
       const shelf = el("div", "lab-reports");
@@ -1106,7 +1106,7 @@
         ...killed.map(item => append(el("p"), el("strong", "", item.name), document.createTextNode(`: ${item.killed_reason}`)))));
       parts.push(panel("Idea board", body(board), null, array(state.ideas).length));
       // The research memory
-      const memory = el("div", "lab-memory"), search = input("Search the research memory"), kind = select([["", "All kinds"], ...["insight", "customer", "competitor", "demand", "ad", "framework", "price", "channel", "fact", "regulation", "market", "risk"].map(name => [name, nice(name)])], labKind);
+      const memory = el("div", "lab-memory"), search = input("Search the research memory"), kind = select([["", "All kinds"], ...["case", "pattern", "insight", "customer", "competitor", "demand", "ad", "framework", "price", "channel", "fact", "regulation", "market", "risk"].map(name => [name, nice(name)])], labKind);
       search.value = labSearch;
       let searchTimer = 0;
       const findNotes = async () => {

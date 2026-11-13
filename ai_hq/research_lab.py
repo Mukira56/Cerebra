@@ -24,15 +24,15 @@ from .models import Event, ResearchIdea, ResearchLab, ResearchNote, ResearchRepo
 from .profiles import get_profile
 from .security import redact
 
-STAGES = ("scout", "critic", "customer", "offer", "synthesis")
-STAGE_NAMES = {"scout": "researches and proposes", "critic": "attacks with evidence", "customer": "tests as the customer",
+STAGES = ("scout", "critic", "customer", "offer", "synthesis", "winners")
+STAGE_NAMES = {"winners": "studies fast winners", "scout": "researches and proposes", "critic": "attacks with evidence", "customer": "tests as the customer",
                "offer": "builds the offer that sells", "synthesis": "judges and re-scores", "report": "writes the product report",
                "owner": "your note"}
 TRACKS = {"big": "can grow to millions a year", "floor": "can reach $4,000+ a month within about 3 months"}
-NOTE_KINDS = ("fact", "customer", "competitor", "price", "channel", "demand", "ad", "framework", "insight", "regulation", "market", "risk", "question")
+NOTE_KINDS = ("fact", "customer", "competitor", "price", "channel", "demand", "ad", "framework", "insight", "case", "pattern", "regulation", "market", "risk", "question")
 # How deep a turn must go: distinct sources it cites (links in its notes and its text). A turn below this still counts,
 # but it is marked shallow and the next turn is told to dig deeper.
-MIN_SOURCES = {"scout": 15, "critic": 15, "customer": 15, "offer": 12, "synthesis": 5}
+MIN_SOURCES = {"winners": 15, "scout": 15, "critic": 15, "customer": 15, "offer": 12, "synthesis": 5}
 URL = re.compile(r"https?://[^\s)\]>\"']+")
 # Each idea is scored 1-10 on these; the weights say what matters most: real pain, buyers who pay, and a product that
 # spreads by being used. legal_safety is a gate, not a weight: below 6 the total is halved.
@@ -165,7 +165,7 @@ Five or six vivid sentences: what it is, who pays, what it costs, why it sells, 
 Tell the story of one specific buyer (name a believable role, company size and city; say it is an illustration) on a
 normal day today, with the pain and what it costs them, then the same day with the product.
 ## Who buys it
-Two or three buyer types in the US and Europe: who they are, where they spend time online, what they use today and
+Two or three buyer types in the US, Canada and Europe: who they are, where they spend time online, what they use today and
 pay for it, and their own words (short quotes with links).
 ## The proof
 The evidence the problem is real, urgent and paid for, with sources: demand, complaints repeated across platforms,
@@ -212,6 +212,18 @@ Finish the turn now: complete the research you started, then write the whole tur
 researcher) and end with the cerebra-research block. Don't stop to report progress; reply with the finished turn."""
 
 STAGE_TASK = {
+    "winners": "Study the fast winners. Find at least five real products launched in the last ten years that reached about $1 "
+               "million in revenue within months (or sold out within days of release), as close as possible to this round's "
+               "hunting ground and to buyers in the US, Canada and Europe. For each one, from its founders' own words "
+               "(interviews, podcasts, posts, Indie Hackers, Starter Story, launch threads) and from independent reporting: what "
+               "problem it solved, how the founder came up with the idea (their own pain, a job they knew, a trend they spotted, "
+               "a gap in a marketplace, an audience they already had, or a deliberate search for money), whether getting rich "
+               "was the goal or a side effect, what they launched first and at what price, how the first buyers found it, and "
+               "what made it spread so fast. Save each as a 'case' note with its sources; mark revenue figures as the founder's "
+               "claim unless independently confirmed, and count the products that failed the same way too, so the lesson isn't "
+               "only luck. Then save the repeated patterns as 'pattern' notes (how the ideas were found, what the first offer was, "
+               "how they spread), and apply them: propose at least two ideas for this lab built the way those winners were built, "
+               "for buyers in the US, Canada and Europe.",
     "scout": "Research and propose. Answer the open questions first. Then dig through buyer communities (Reddit, X, forums, "
              "reviews) for problems people complain about again and again and already spend money on, check the demand and the "
              "ads that keep running, and find new opportunities or make the best ideas on the board stronger. Add at least "
@@ -219,7 +231,7 @@ STAGE_TASK = {
     "critic": "Attack. Take the leading ideas and {other}'s last turn and look for what would kill them: who already does it, at "
               "what price, with what reviews; why buyers don't pay; legal blockers; what reaching buyers really costs. Kill the "
               "weak ones with reasons. For the survivors, give the fix that makes them stronger. Propose at most one better alternative.",
-    "customer": "Be the customer. For each of the top three ideas, become two specific buyers (one in the US, one in Europe) and use "
+    "customer": "Be the customer. For each of the top three ideas, become three specific buyers (one in the US, one in Canada, one in Europe) and use "
                 "real buyer voices as evidence (reviews, forums, Reddit, G2, Capterra, job posts). Would you pay that price? What "
                 "would you pay instead? What would make you tell others? Re-score willingness_to_pay and sells_itself honestly.",
     "offer": "Build the offer that must sell, for the leading idea of each track. Using the evidence in the memory and fresh "
@@ -508,7 +520,7 @@ class ResearchLabService:
         stage = STAGES[(number - 1) % len(STAGES)]
         round_number = (number - 1) // len(STAGES)
         scout, critic = (profiles[0], profiles[1]) if round_number % 2 == 0 else (profiles[1], profiles[0])
-        speaker = {"scout": scout, "critic": critic, "customer": scout, "offer": critic, "synthesis": profiles[0]}[stage]
+        speaker = {"winners": critic, "scout": scout, "critic": critic, "customer": scout, "offer": critic, "synthesis": profiles[0]}[stage]
         return stage, speaker, profiles[1] if speaker is profiles[0] else profiles[0]
 
     def step(self, lab_id, stop=None):
@@ -815,7 +827,7 @@ class ResearchLabService:
         """Keep the lab ambitious and wide: a hunting ground for every scout, and a demand for new ideas when a track is
         thin (fewer than MIN_ALIVE ideas) or weak (nothing at GOOD_SCORE)."""
         lines = ["DIRECTION FOR THIS TURN:"]
-        if stage == "scout":
+        if stage in ("scout", "winners"):
             lines.append(f"- This round's hunting ground: {self.hunting_ground(number)}. Spend most of your searching there and bring at "
                          "least two new ideas from it, unless the owner's notes point elsewhere. Bring the best idea you find anywhere too.")
         for track, meaning in TRACKS.items():
