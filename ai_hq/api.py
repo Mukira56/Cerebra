@@ -2005,7 +2005,24 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         with db.Session() as session:
             selected = prospect_writer.profile_for(session)
         return prospect_writer._ask(selected, prompt)
-    partners.write = partners.research.write = partner_write
+    def research_write(prompt):
+        """A company's research summary from pages Cerebra already fetched: the hub's research route (a free model such
+        as Gemini), falling back to the owner's writing model, so hundreds of summaries don't use up the Claude plan."""
+        from . import modelhub as hubs
+        from .prospects import _json
+        hub = getattr(app.state, "hub", None)
+        if hub is None:
+            return partner_write(prompt)
+        with db.Session() as session:
+            selected = prospect_writer.profile_for(session)
+        workdir = settings.data_dir / "chat-workspace"
+        workdir.mkdir(parents=True, exist_ok=True)
+        result = hubs.chat_for(hub, "research", chat_registry, selected, prompt, workdir)
+        if not result.success:
+            raise ValueError(result.error or "The research model couldn't summarise this company")
+        return _json(result.output)
+    partners.write = partner_write
+    partners.research.write = research_write
     app.state.partners = partners
     registry.add("partners", "Pitch companies", "Reads the websites of the companies on Company pitches for their public role addresses, sends your pitch "
                  "within your daily number and one follow-up, and stops on any reply; never writes again to anyone who says no.", partners.tick, 20, outward=True)

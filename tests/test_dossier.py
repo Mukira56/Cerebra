@@ -203,3 +203,11 @@ def test_a_sending_problem_does_not_hold_up_research(client):  # noqa: F811
     result = robot.tick()
     assert "Waiting for you" in result["message"] and "research and drafts carry on" in result["message"]
     assert len(site.read) >= 3  # its website was still read
+
+
+def test_company_research_goes_to_the_free_research_route_not_the_writing_plan(client):  # noqa: F811
+    from ai_hq.agents import AgentResult
+    hub, asked = client.app.state.hub, []
+    hub.chat_signed_in = lambda category, route, prompt, workdir=None: asked.append((category, route)) or AgentResult(True, '{"summary": "Voice Co builds speech tools."}')
+    assert client.app.state.partners.research.write("Summarise Voice Co") == {"summary": "Voice Co builds speech tools."}
+    assert asked == [("research", "account:gemini")]
