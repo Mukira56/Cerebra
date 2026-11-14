@@ -508,6 +508,8 @@ OTHER_MODEL = {"codex": "claude", "claude": "codex"}
 LOG_LINE = re.compile(r"^\s*\d{4}-\d{2}-\d{2}T\S+\s+(ERROR|WARN|INFO|DEBUG)\b")
 
 
+SIGNED_IN_NAMES = {"account:gemini": "Gemini", "account:qwen": "Qwen"}
+
 def failure_kind(error):
     """Why a model couldn't write: "limit", "network", or "" when it's something another model wouldn't fix."""
     from .agents import OFFLINE_MARKERS
@@ -604,6 +606,16 @@ class Writer:
         check = getattr(self, "subscription_status", None)
         if other is None or check is None or not failure_kind(error):
             return None, ""
+        hub = getattr(self, "hub", None)
+        if hub is not None and failure_kind(error) == "limit":
+            # A free model the owner signed in to (Gemini) writes first, so a used-up ChatGPT doesn't drain the Claude plan.
+            for route in hub.working_signed_in():
+                spare = hub.chat_signed_in("writing", route, prompt, workdir)
+                if spare.success and (spare.output or "").strip():
+                    with self.db.Session.begin() as session:
+                        session.add(Event(kind="prospects", message=f"{plain_failure(provider, error)} {SIGNED_IN_NAMES.get(route, 'A free model')} "
+                                                                    "wrote this draft instead, free.", data={}))
+                    return spare.output, ""
         name = MODEL_NAMES[other]
         try:
             check(other)

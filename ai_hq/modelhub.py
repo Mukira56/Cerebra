@@ -456,6 +456,15 @@ class Hub:
             return AgentResult(False, "", error=f"{used} returned no answer")
         return AgentResult(True, text)
 
+    def working_signed_in(self, days=7):
+        """The free signed-in models (Gemini, Qwen) that answered at least once in the last `days` days, best first: the
+        ones worth trying when a paid plan's limit stops a writing turn. One never used is never tried blind."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self.db.Session() as session:
+            rows = session.execute(select(ModelUsage.model, func.count()).where(ModelUsage.model.in_(list(SIGNED_IN)), ModelUsage.ok.is_(True),
+                                                                               ModelUsage.at >= since).group_by(ModelUsage.model)).all()
+        return [route for route, _ in sorted(rows, key=lambda row: -row[1])]
+
     def chat_signed_in(self, category, route, prompt, workdir=None):
         """One read-only turn with a model the owner signed in to (Gemini, Qwen), measured like every other call."""
         from . import signin_models

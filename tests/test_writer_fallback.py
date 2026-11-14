@@ -129,3 +129,20 @@ def test_a_timeout_does_not_make_it_rest(client):  # noqa: F811
 def test_a_named_model_that_works_is_used_with_no_switch(client):  # noqa: F811
     _, calls, checks, smile = prepared(client, {})
     assert draft(client, smile).status_code == 200 and [name for name, _ in calls] == ["codex"] and "claude" not in checks
+
+
+def test_a_working_free_gemini_writes_before_claude_is_used(client):  # noqa: F811
+    from ai_hq.models import ModelUsage
+    state, calls, _, smile = prepared(client, {"codex": "You\u2019ve hit your usage limit."})
+    hub, asked = state.prospect_writer.hub, []
+    assert hub.working_signed_in() == []  # never answered: never tried blind
+    with state.db.Session.begin() as session:
+        session.add(ModelUsage(category="bulk", model="account:gemini", ok=True, seconds=1.0))
+        session.add(ModelUsage(category="bulk", model="account:qwen", ok=False, seconds=1.0))
+    assert hub.working_signed_in() == ["account:gemini"]
+    written = '{"subject": "Quick idea for Smile Dental", "body": "Hi, a short note about your booking page."}'
+    hub.chat_signed_in = lambda category, route, prompt, workdir=None: asked.append((category, route)) or AgentResult(True, written)
+    assert draft(client, smile).status_code == 200
+    assert asked == [("writing", "account:gemini")] and [name for name, _ in calls] == ["codex"]  # Claude never asked
+    with state.db.Session() as session:
+        assert any("Gemini wrote this draft instead, free" in item.message for item in session.query(Event).all())
