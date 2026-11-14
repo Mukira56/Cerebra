@@ -18,6 +18,12 @@ NOW = datetime(2026, 10, 26, 22, 13)
     ("5-hour limit reached - resets at 1:30am", (3 * 60 + 17) * 60 + 60),
     ("Rate limited. Try again in 2 hours 5 minutes", 2 * 3600 + 5 * 60 + 60),
     ("retry in 45m", 45 * 60 + 60),
+    ("You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at "
+     "Oct 28th, 2026 8:14 AM.", (34 * 60 + 1) * 60 + 60),  # Codex's weekly limit: a day and a half away
+    ("try again at Nov 3, 9:00 PM", ((7 * 24 + 22) * 60 + 47) * 60 + 60),  # no year: this year
+    ("resets Nov 20th, 2026 at 9am", 8 * 86400),  # capped at 8 days
+    ("try again at Oct 20th, 2026 8:14 AM", None),  # already past
+    ("try again at Feb 30th, 2027 8:14 AM", None),
     ("usage limit reached", None),
     ("try again at 25:99", None),
 ])

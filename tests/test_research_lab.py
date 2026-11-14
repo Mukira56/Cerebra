@@ -414,3 +414,10 @@ def test_every_round_ends_by_studying_products_that_made_a_million_fast():
     service = research_lab.ResearchLabService(None, None, None)
     assert "hunting ground" in service.direction(6, "winners", [])
     assert "one in Canada" in research_lab.STAGE_TASK["customer"] and "US, Canada and Europe" in research_lab.PRODUCT_REPORT
+
+
+def test_a_lab_out_of_usage_waits_until_the_first_reset_instead_of_every_hour(monkeypatch):
+    monkeypatch.setattr(research_lab, "reset_in", lambda text: {"claude resets 4:30am": 9000, "codex try again at 7:10 AM": 5400}.get(text))
+    assert research_lab.wait_after(["claude resets 4:30am", "codex try again at 7:10 AM"], 3) == 5400  # the first one back
+    assert research_lab.wait_after(["claude resets 4:30am", "codex exited with code 1"], 1) == 300  # one gave no time: usual wait
+    assert research_lab.wait_after(["codex exited with code 1"], 9) == 3600 and research_lab.wait_after([], 2) == 600

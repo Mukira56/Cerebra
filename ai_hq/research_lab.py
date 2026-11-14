@@ -21,6 +21,7 @@ from pathlib import Path
 from sqlalchemy import func, or_, select
 
 from .agents import BEST_MODEL
+from .usage import reset_in
 from .models import Event, ResearchIdea, ResearchLab, ResearchNote, ResearchReport, ResearchTurn, as_dict, now, uid
 from .profiles import get_profile
 from .security import redact
@@ -322,6 +323,17 @@ def prose(text, limit=3500):
 
 
 
+def wait_after(failures, count):
+    """Seconds to wait after a turn neither model could take. When every model said when its usage limit resets
+    ("resets 4:30am", "try again at 10:31 PM"), wait until the first of those resets instead of asking again every
+    hour and failing; otherwise wait 5 minutes, doubling up to an hour."""
+    backoff = min(WAIT_MOST, WAIT_FIRST * 2 ** (count - 1))
+    resets = [reset_in(text) for text in failures]
+    if failures and all(resets):
+        return max(WAIT_FIRST, min(resets))
+    return backoff
+
+
 def turn_model(profile, deciding):
     """The model a lab turn asks for: the owner's own choice when they picked one; otherwise Opus for the turns that
     decide (synthesis and product reports) and the research default (Sonnet) for the turns that gather evidence."""
@@ -338,6 +350,7 @@ class ResearchLabService:
         self.db, self.settings, self.registry_source = db, settings, registry_source
         self._lock = threading.Lock()
         self._running: dict[str, threading.Event] = {}
+        self._failed: dict[str, list] = {}  # why each model failed the last turn (read for when its usage comes back)
         self.on_report = None  # set by the API: tells the owner (phone) when a track gets a new leader
         self.on_product_report = None  # set by the API: sends a finished product report to the owner's phone
 
@@ -510,7 +523,7 @@ class ResearchLabService:
                     stop.wait(pace)
                     continue
                 failures += 1
-                delay = min(WAIT_MOST, WAIT_FIRST * 2 ** (failures - 1))
+                delay = wait_after(self._failed.pop(lab_id, []), failures)
                 until = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
                 self._set(lab_id, status="waiting", error=reason[:600], next_at=until)
                 stop.wait(delay)
@@ -550,7 +563,7 @@ class ResearchLabService:
         stage, speaker, other = self.speakers(number, profiles)
         folder = self.folder(lab_id)
         self.export(lab_id, folder)
-        failure = ""
+        failure, self._failed[lab_id] = "", []
         for attempt, (speaking, listening) in enumerate(((speaker, other), (other, speaker))):
             if attempt and stop.is_set():
                 break
@@ -590,6 +603,7 @@ class ResearchLabService:
             self._finish(turn_id, success, content, failure, gains)
             if success:
                 return True, ""
+            self._failed.setdefault(lab_id, []).append(failure)
         if owner_notes:  # not read by any turn: keep them for the next one
             with self.db.Session.begin() as session:
                 row = session.get(ResearchLab, lab_id)
