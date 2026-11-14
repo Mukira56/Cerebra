@@ -207,7 +207,10 @@ def test_a_sending_problem_does_not_hold_up_research(client):  # noqa: F811
 
 def test_company_research_goes_to_the_free_research_route_not_the_writing_plan(client):  # noqa: F811
     from ai_hq.agents import AgentResult
+    from ai_hq.models import ModelUsage
     hub, asked = client.app.state.hub, []
+    with client.app.state.db.Session.begin() as session:
+        session.add(ModelUsage(category="bulk", model="account:gemini", ok=True, seconds=1.0))  # Gemini has answered: it's trusted
     hub.chat_signed_in = lambda category, route, prompt, workdir=None: asked.append((category, route)) or AgentResult(True, '{"summary": "Voice Co builds speech tools."}')
     assert client.app.state.partners.research.write("Summarise Voice Co") == {"summary": "Voice Co builds speech tools."}
     assert asked == [("research", "account:gemini")]

@@ -2011,8 +2011,10 @@ def create_app(settings=None, bootstrap_key=None, start_worker=True):
         from . import modelhub as hubs
         from .prospects import _json
         hub = getattr(app.state, "hub", None)
-        if hub is None:
-            return partner_write(prompt)
+        route = hub.route("research") if hub is not None else ""
+        trusted = route in hub.working_signed_in() if route in hubs.SIGNED_IN else             route not in hubs.ACCOUNTS and bool(route) and (route.startswith(hubs.LOCAL) or hub.ready())
+        if not trusted:
+            return partner_write(prompt)  # no free model proven to work here: the owner's writing model, as before
         with db.Session() as session:
             selected = prospect_writer.profile_for(session)
         workdir = settings.data_dir / "chat-workspace"
