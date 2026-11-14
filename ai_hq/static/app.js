@@ -1011,7 +1011,7 @@
     }
     function startPanel(first) {
       const form = el("form"), goal = textarea("What should the lab find?", LAB_GOAL);
-      const models = [["claude", "Claude (Opus, your Claude plan)"], ["codex", "ChatGPT (your ChatGPT plan's model)"], ...roleChoices().filter(([id]) => id !== "auto")];
+      const models = [["claude", "Claude (Sonnet researches, Opus decides; your Claude plan)"], ["codex", "ChatGPT (your ChatGPT plan's model)"], ...roleChoices().filter(([id]) => id !== "auto")];
       const lead = select(models, "claude"), second = select(models, "codex"), pace = select(Object.entries({0: "No pause", 60: "1 minute", 300: "5 minutes", 900: "15 minutes", 3600: "1 hour"}), "60");
       append(form, field("The goal", goal, "Both models read this before every turn. Your notes during the research count even more."),
         field("Lead researcher (opens, and judges every round)", lead), field("Challenger", second),
@@ -1126,7 +1126,8 @@
         if (turn.stage === "owner") { turns.append(append(el("div", "lab-owner"), el("strong", "", "You: "), document.createTextNode(turn.content), el("small", "", ` ${relative(turn.created_at)}`))); return; }
         const gains = turn.gains || {}, added = [gains.notes ? counted(gains.notes, "note", "notes") : "", gains.new_ideas ? counted(gains.new_ideas, "new idea", "new ideas") : "",
           gains.improved ? `${gains.improved} improved` : "", gains.killed ? `${gains.killed} killed` : "",
-          gains.sources !== undefined ? `${counted(gains.sources, "source", "sources")}${gains.needed && gains.sources < gains.needed ? " (too shallow)" : ""}` : ""].filter(Boolean).join(", ");
+          gains.sources !== undefined ? `${counted(gains.sources, "source", "sources")}${gains.needed && gains.sources < gains.needed ? " (too shallow)" : ""}` : "",
+          gains.tokens ? `${gains.tokens >= 1000 ? `${Math.round(gains.tokens / 1000)}k` : gains.tokens} tokens${turn.model ? ` on ${nice(turn.model)}` : ""}` : ""].filter(Boolean).join(", ");
         const open = labOpen.has(turn.id) || (index === 0 && !labOpen.size);
         const card = append(el("details", `lab-turn ${turn.status}`), el("summary", "", `Turn ${turn.number} · ${labWho(turn.provider)} ${LAB_STAGE[turn.stage] || turn.stage} · ${turn.status === "pending" ? "working…" : turn.status === "failed" ? "couldn't answer" : added || "nothing new"} · ${relative(turn.created_at)}`));
         card.open = open;

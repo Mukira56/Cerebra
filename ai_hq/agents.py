@@ -83,10 +83,13 @@ MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}$")
 # assistant with this short instruction instead of Claude Code's long coding-agent instructions and full tool set, which
 # saves most of the tokens per turn. Coding tasks (plan, build, review) keep the full agent.
 BEST_MODEL = {"claude": "opus"}
-# A research turn searches and reads dozens of sources before it answers, so it gets far longer than a chat turn, and
-# the most thinking each provider offers (Claude Code: max; Codex: high).
+# A research turn searches and reads dozens of sources before it answers, so it gets far longer than a chat turn. Its
+# quality comes from the sources it reads more than from extra thinking, so gathering turns run on Sonnet (a fraction of
+# Opus's share of the Claude plan) with high effort; the turns that decide (the lab's synthesis and product reports) ask
+# for Opus by passing it as the model. ChatGPT (Codex) keeps the plan's own default model.
 RESEARCH_SECONDS = 45 * 60
-RESEARCH_EFFORT = {"claude": "max", "codex": "high"}  # Claude Code's alias for the newest Opus; ChatGPT (Codex) keeps the plan's own default model
+RESEARCH_MODEL = {"claude": "sonnet"}
+RESEARCH_EFFORT = {"claude": "high", "codex": "high"}
 PLAIN_SYSTEM = ("You are Claude, a capable assistant answering for the owner of Cerebra, a desktop app on their Windows laptop. "
                 "Answer the request in the message directly and completely, in plain English. You can only read: use the "
                 "tools you have to read files in the working folder{web} when that helps; you can't change anything. "
@@ -353,7 +356,7 @@ class _CliAdapter:
             text = final_text(result.stdout)
             if not text.strip():
                 return AgentResult(False, "", error=f"{self.name} returned no answer")
-            return AgentResult(True, redact(text))
+            return AgentResult(True, redact(text), usage=usage_of(_records(result.stdout)))
         except (OSError, ValueError, RuntimeError) as exc:
             return AgentResult(False, "", error=redact(str(exc)))
 
@@ -475,13 +478,13 @@ class AgentRegistry:
         return self.get(name).chat(prompt, workdir, model, cancel_event)
 
     def research(self, name, prompt, workdir, model="", cancel_event=None):
-        """A read-only turn that may also search the web, on the provider's strongest model thinking hard. Adapters
-        without web search answer from what they know."""
+        """A read-only turn that may also search the web: Sonnet with high effort unless a model is passed (the lab passes
+        Opus for its deciding turns). Adapters without web search answer from what they know."""
         if type(self).chat is not AgentRegistry.chat:  # a stand-in registry (tests) answers every turn through its own chat
             return self.chat(name, prompt, workdir, model, cancel_event)
         adapter = self.get(name)
         if isinstance(adapter, _CliAdapter):
-            return adapter.chat(prompt, workdir, model or BEST_MODEL.get(name, ""), cancel_event, web=True,
+            return adapter.chat(prompt, workdir, model or RESEARCH_MODEL.get(name, ""), cancel_event, web=True,
                                 effort=RESEARCH_EFFORT.get(name, "high"), timeout=max(RESEARCH_SECONDS, self.timeout or 0))
         return adapter.chat(prompt, workdir, model, cancel_event)
 

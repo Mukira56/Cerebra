@@ -261,7 +261,7 @@ def test_deep_turns_use_the_strongest_claude_model_with_high_effort(tmp_path):
     assert recorder.seen == ("sonnet", False, "high")  # the owner's own choice of model wins
 
 
-def test_research_turns_get_45_minutes_and_maximum_effort(tmp_path):
+def test_research_turns_get_45_minutes_on_sonnet_unless_opus_is_asked_for(tmp_path):
     from ai_hq.agents import AgentRegistry, AgentResult as Result, RESEARCH_SECONDS
 
     class Recorder(ClaudeAdapter):
@@ -272,7 +272,16 @@ def test_research_turns_get_45_minutes_and_maximum_effort(tmp_path):
     registry = AgentRegistry()
     registry.adapters["claude"] = recorder = Recorder()
     registry.research("claude", "find buyers", str(tmp_path))
-    assert recorder.seen == ("opus", True, "max", RESEARCH_SECONDS) and RESEARCH_SECONDS == 2700
+    assert recorder.seen == ("sonnet", True, "high", RESEARCH_SECONDS) and RESEARCH_SECONDS == 2700
+    registry.research("claude", "pick the winner", str(tmp_path), "opus")
+    assert recorder.seen == ("opus", True, "high", RESEARCH_SECONDS)
+
+
+def test_only_the_deciding_turns_ask_for_opus_and_the_owners_choice_wins():
+    claude, codex = {"provider": "claude", "model": ""}, {"provider": "codex", "model": ""}
+    assert research_lab.turn_model(claude, True) == "opus" and research_lab.turn_model(claude, False) == ""
+    assert research_lab.turn_model(codex, True) == "" and research_lab.turn_model({"provider": "claude", "model": "haiku"}, True) == "haiku"
+    assert research_lab.tokens_of([{"input_tokens": 1200, "output_tokens": 300, "cached_tokens": 9000}, None, {"output_tokens": 5}]) == 1505
 
 
 def test_sources_are_counted_once_each():
