@@ -43,6 +43,7 @@ IDEA_FIELDS = ("customer", "problem", "offer", "price", "revenue_math", "channel
 PACES = {0: "no pause", 60: "1 minute", 300: "5 minutes", 900: "15 minutes", 3600: "1 hour"}
 MAX_NOTES_PER_TURN, MAX_IDEAS_PER_TURN = 40, 6
 WAIT_FIRST, WAIT_MOST = 300, 3600  # after a failed turn: wait 5 minutes, doubling up to an hour
+ALONE_PACE = 1800  # while one plan is out of usage, the other takes every turn: at most one every 30 minutes, so it lasts
 MAX_RUNNING = 2
 # Where each round's scout hunts first, in turn, so the lab explores the whole market instead of digging one niche for
 # ever (a live lab drifted into narrow compliance niches whose best idea scored 47). The scout may still bring the best
@@ -323,6 +324,12 @@ def prose(text, limit=3500):
 
 
 
+def out_of_usage(failures):
+    """True when the first model's failure was its plan's usage limit (not a network or sign-in problem)."""
+    from .prospects import failure_kind
+    return bool(failures) and failure_kind(failures[0]) == "limit"
+
+
 def wait_after(failures, count):
     """Seconds to wait after a turn neither model could take. When every model said when its usage limit resets
     ("resets 4:30am", "try again at 10:31 PM"), wait until the first of those resets instead of asking again every
@@ -350,6 +357,7 @@ class ResearchLabService:
         self.db, self.settings, self.registry_source = db, settings, registry_source
         self._lock = threading.Lock()
         self._running: dict[str, threading.Event] = {}
+        self._alone: dict[str, str] = {}  # set when one model took a turn because the other is out of usage
         self._failed: dict[str, list] = {}  # why each model failed the last turn (read for when its usage comes back)
         self.on_report = None  # set by the API: tells the owner (phone) when a track gets a new leader
         self.on_product_report = None  # set by the API: sends a finished product report to the owner's phone
@@ -519,6 +527,12 @@ class ResearchLabService:
                     return
                 if ok:
                     failures = 0
+                    alone = self._alone.pop(lab_id, "")
+                    if alone and pace < ALONE_PACE:
+                        until = (datetime.now(timezone.utc) + timedelta(seconds=ALONE_PACE)).isoformat()
+                        self._set(lab_id, status="waiting", error=alone, next_at=until)
+                        stop.wait(ALONE_PACE)
+                        continue
                     self._set(lab_id, status="running", error="", next_at="")
                     stop.wait(pace)
                     continue
@@ -563,7 +577,7 @@ class ResearchLabService:
         stage, speaker, other = self.speakers(number, profiles)
         folder = self.folder(lab_id)
         self.export(lab_id, folder)
-        failure, self._failed[lab_id] = "", []
+        failure, self._failed[lab_id], self._alone[lab_id] = "", [], ""
         for attempt, (speaking, listening) in enumerate(((speaker, other), (other, speaker))):
             if attempt and stop.is_set():
                 break
@@ -602,6 +616,10 @@ class ResearchLabService:
                 gains["tokens"] = tokens_of(used)
             self._finish(turn_id, success, content, failure, gains)
             if success:
+                if attempt and out_of_usage(self._failed.get(lab_id, [])):
+                    self._alone[lab_id] = (f"{speaker['provider_label']} is out of usage, so {speaking['provider_label']} takes every turn: one every "
+                                           f"{ALONE_PACE // 60} minutes until {speaker['provider_label']} is back, so your "
+                                           f"{speaking['provider_label']} plan lasts.")
                 return True, ""
             self._failed.setdefault(lab_id, []).append(failure)
         if owner_notes:  # not read by any turn: keep them for the next one

@@ -188,6 +188,19 @@ def test_when_one_model_is_out_of_usage_the_other_takes_the_turn(lab_app):
     client.post(f"/api/research/{lab['id']}/stop")
     turns = client.get(f"/api/research/{lab['id']}").json()["turns"]
     assert turns[0]["provider"] == "claude" and turns[0]["status"] == "failed" and turns[1]["provider"] == "codex" and turns[1]["status"] == "done"
+    state = wait_for(lambda: (lambda value: value if value["status"] in ("waiting", "stopped") else None)(client.get(f"/api/research/{lab['id']}").json()))
+    if state["status"] == "waiting":  # stopped first otherwise: the pause is only set after the turn
+        assert "is out of usage" in state["error"] and "one every 30 minutes" in state["error"]
+
+
+def test_while_one_plan_is_out_the_other_takes_a_turn_at_most_every_30_minutes(lab_app):
+    client, app = lab_app
+    app.state.supervisor.registry.failing = {"claude"}
+    lab = client.post("/api/research", json={"pace": 60}).json()
+    state = wait_for(lambda: (lambda value: value if value["status"] == "waiting" else None)(client.get(f"/api/research/{lab['id']}").json()))
+    client.post(f"/api/research/{lab['id']}/stop")
+    assert "is out of usage, so" in state["error"] and "takes every turn: one every 30 minutes" in state["error"] and state["next_at"]
+    assert research_lab.out_of_usage(["usage limit reached"]) and not research_lab.out_of_usage(["couldn't reach its servers"]) and not research_lab.out_of_usage([])
 
 
 def test_when_both_are_out_the_lab_waits_and_carries_on_by_itself(lab_app):
